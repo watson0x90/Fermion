@@ -192,6 +192,10 @@
 		</div>
 
 		<div id="DataContainer" class="dataFrame">
+			<div class="ui fluid action input" style="margin-bottom: 10px; margin-top: 5px; padding: 0px 5px;">
+				<input id="procSearch" type="text" placeholder="Search by PID or process name..." style="-webkit-app-region: no-drag;">
+				<button id="clearSearch" class="ui grey button" style="-webkit-app-region: no-drag;">Clear</button>
+			</div>
 			<table id="ProcSet" style="font-family: monospace; font-size: 12px; border: 0px; background: #e2e2e2; margin-bottom: 12px;" class="ui sortable striped table unstackable">
 				<thead>
 					<tr>
@@ -332,6 +336,10 @@
 				function(th, td, tablesort) {
 				return parseInt(td.text());
 			});
+
+			// Initialize search functionality after table is populated
+			setupProcessSearch();
+
 		}).catch((err) => {
 			$("#ProcSet").remove();
 			var node = document.createElement("p");
@@ -375,6 +383,49 @@
 		document.getElementById("CloseDevice").onclick = function () {
 			window.close();
 		}
+
+		// Process search functionality
+		function setupProcessSearch() {
+			const searchInput = document.getElementById('procSearch');
+			const clearButton = document.getElementById('clearSearch');
+			
+			// Function to filter the table rows based on search input
+			function filterTable() {
+				const filter = searchInput.value.toLowerCase();
+				const table = document.getElementById('ProcSet');
+				const rows = table.getElementsByTagName('tr');
+				
+				// Skip the header row (index 0)
+				for (let i = 1; i < rows.length; i++) {
+					const pidCell = rows[i].cells[2]; // PID column
+					const nameCell = rows[i].cells[4]; // Process name column
+					
+					if (pidCell && nameCell) {
+						const pidText = pidCell.textContent || pidCell.innerText;
+						const nameText = nameCell.textContent || nameCell.innerText;
+						
+						// Show row if PID or process name contains the search string
+						if (pidText.includes(filter) || nameText.toLowerCase().includes(filter)) {
+							rows[i].style.display = '';
+						} else {
+							rows[i].style.display = 'none';
+						}
+					}
+				}
+			}
+			
+			// Add event listeners
+			searchInput.addEventListener('keyup', filterTable);
+			
+			// Clear search and reset table
+			clearButton.addEventListener('click', function() {
+				searchInput.value = '';
+				filterTable();
+				searchInput.focus();
+			});
+		}
+		
+
 	</script>
 </body>
 
