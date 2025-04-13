@@ -24,6 +24,16 @@ let logMutex = new MutexPromise('48011b2b9a930ee19e26320e5adbffa2e309663c');
 let RunningLog = [];
 var deviceId = 'local';
 
+// Enhanced Frida Output variables
+let currentFontSize = 0.8; // em units
+let isVertical = true;
+let searchRegex = null;
+let bgColor = '#423636';
+let textColor = '#ffffff';
+let highlightColor = '#ffff00';
+let highlightTextColor = '#000000';
+let originalSplit = null;
+
 // Instrument
 //////////////////////////////////////////////////
 
@@ -565,6 +575,11 @@ function appendFridaLog(data) {
 	}
 
 	FridaOut.scrollTop = FridaOut.scrollHeight;
+
+	// If search is active, update highlights
+	if (searchRegex) {
+		performSearch();
+	}
 }
 
 function ChangeLogExclusive(mutex, locktype, data) {
@@ -706,7 +721,7 @@ document.getElementById("FermionOpen").onclick = function () {
 				currentFilePath = result.filePaths[0];
 			});
 		}
-	}).catch(err =>{
+	}).catch(err => {
 		appendFridaLog("[!] Error opening file: " + err)
 	})
 }
@@ -731,7 +746,7 @@ document.getElementById("FermionSave").onclick = function () {
 				currentFilePath = result.filePath;
 			});
 		}
-	}).catch(err =>{
+	}).catch(err => {
 		appendFridaLog("[!] Error saving file: " + err)
 	})
 }
@@ -758,10 +773,10 @@ document.getElementById("getDeviceDetail").onclick = function () {
 			if (result.hasOwnProperty("name")) {
 				appendFridaLog("    |_ Host Name   : " + result.name + "\n");
 			}
-		}).catch(err =>{
+		}).catch(err => {
 			appendFridaLog("[!] Failed to enumerate device properties: " + err + "\n");
 		});
-	}).catch(err =>{
+	}).catch(err => {
 		appendFridaLog("[!] Failed to acquire device context: " + err + "\n");
 	});
 }
@@ -832,5 +847,778 @@ document.addEventListener("keydown", function (e) {
 		e.preventDefault();
 		// Trigger script reload
 		document.getElementById("FridaReload").click();
+	}
+}, false);
+
+//////////////////////////////////////////////////
+// Frida Output Enhancement Functions
+//////////////////////////////////////////////////
+
+// Store DOM references
+const fridaOut = document.getElementById('FridaOut');
+const copyButton = document.getElementById('copy-output');
+const decreaseFontButton = document.getElementById('decrease-font');
+const increaseFontButton = document.getElementById('increase-font');
+const regexSearch = document.getElementById('regex-search');
+const searchButton = document.getElementById('search-button');
+const toggleLayoutButton = document.getElementById('toggle-layout');
+const colorSettingsButton = document.getElementById('color-settings');
+const colorModal = document.getElementById('color-modal');
+const closeModalBtn = document.querySelector('.close-modal');
+const applyColorsButton = document.getElementById('apply-colors');
+const resetColorsButton = document.getElementById('reset-colors');
+const bgColorPicker = document.getElementById('background-color');
+const bgColorHex = document.getElementById('background-color-hex');
+const textColorPicker = document.getElementById('text-color');
+const textColorHex = document.getElementById('text-color-hex');
+const highlightColorPicker = document.getElementById('highlight-color');
+const highlightColorHex = document.getElementById('highlight-color-hex');
+const highlightOverlay = document.getElementById('highlight-overlay');
+
+// Initialize features when DOM is loaded
+document.addEventListener('DOMContentLoaded', function () {
+	// Make sure window.split is available before storing it
+	setTimeout(() => {
+		if (window.split) {
+			originalSplit = window.split;
+		}
+	}, 500);
+
+	// Load saved settings from localStorage
+	loadSettings();
+
+	// Add event listeners
+	addEventListeners();
+
+	// Initialize the layout button icon
+	initLayoutButton();
+
+	// Initial UI adjustment
+	setTimeout(adjustUIForSidebar, 100);
+
+	// Initialize search functionality
+	setTimeout(initSearchFunctionality, 500);
+
+});
+
+// Add event listeners to UI elements
+function addEventListeners() {
+	// Copy button functionality
+	copyButton.addEventListener('click', copyOutputToClipboard);
+
+	// Font size controls
+	decreaseFontButton.addEventListener('click', decreaseFontSize);
+	increaseFontButton.addEventListener('click', increaseFontSize);
+
+	// Search functionality
+	searchButton.addEventListener('click', performSearch);
+	regexSearch.addEventListener('keypress', function (e) {
+		if (e.key === 'Enter') {
+			performSearch();
+		}
+	});
+	regexSearch.addEventListener('input', function () {
+		if (this.value.trim() === '') {
+			clearHighlights();
+			searchRegex = null;
+		}
+	});
+
+	// Layout toggle
+	toggleLayoutButton.addEventListener('click', toggleLayout);
+
+	// Color settings
+	colorSettingsButton.addEventListener('click', function () {
+		colorModal.style.display = 'block';
+	});
+
+	closeModalBtn.addEventListener('click', function () {
+		colorModal.style.display = 'none';
+	});
+
+	window.addEventListener('click', function (event) {
+		if (event.target === colorModal) {
+			colorModal.style.display = 'none';
+		}
+	});
+
+	// Link color pickers with hex inputs
+	bgColorPicker.addEventListener('input', function () {
+		bgColorHex.value = this.value;
+	});
+
+	bgColorHex.addEventListener('input', function () {
+		if (/^#[0-9A-F]{6}$/i.test(this.value)) {
+			bgColorPicker.value = this.value;
+		}
+	});
+
+	textColorPicker.addEventListener('input', function () {
+		textColorHex.value = this.value;
+	});
+
+	textColorHex.addEventListener('input', function () {
+		if (/^#[0-9A-F]{6}$/i.test(this.value)) {
+			textColorPicker.value = this.value;
+		}
+	});
+
+	highlightColorPicker.addEventListener('input', function () {
+		highlightColorHex.value = this.value;
+	});
+
+	highlightColorHex.addEventListener('input', function () {
+		if (/^#[0-9A-F]{6}$/i.test(this.value)) {
+			highlightColorPicker.value = this.value;
+		}
+	});
+
+	// Apply and reset buttons
+	applyColorsButton.addEventListener('click', applyColors);
+	resetColorsButton.addEventListener('click', resetColors);
+
+	// Sync scrolling between textarea and highlight overlay
+	fridaOut.addEventListener('scroll', function () {
+		highlightOverlay.scrollTop = fridaOut.scrollTop;
+		highlightOverlay.scrollLeft = fridaOut.scrollLeft;
+	});
+
+	// Handle textarea input and content changes for highlighting
+	fridaOut.addEventListener('input', function () {
+		// If search is active, update highlights
+		if (searchRegex) {
+			performSearch();
+		}
+	});
+
+	// Monitor textarea size changes to adjust highlight overlay
+	new ResizeObserver(() => {
+		if (searchRegex) {
+			performSearch();
+		}
+	}).observe(fridaOut);
+
+	// Add event listeners for sidebar state changes and window resize
+	window.addEventListener('resize', adjustUIForSidebar);
+
+	// Add a listener for possible sidebar toggle events
+	document.addEventListener('click', function (event) {
+		// Check if click might be related to sidebar toggle
+		if (event.target.closest('nav') || event.target.closest('.navbar-menu')) {
+			// Wait a moment for DOM to update
+			setTimeout(adjustUIForSidebar, 100);
+		}
+	});
+}
+
+// Copy output to clipboard
+function copyOutputToClipboard() {
+	fridaOut.select();
+	document.execCommand('copy');
+	window.getSelection().removeAllRanges();
+
+	showNotification('Copied to clipboard!');
+}
+
+// Show notification
+function showNotification(message) {
+	// Remove any existing notifications
+	const existingNotification = document.querySelector('.notification');
+	if (existingNotification) {
+		existingNotification.remove();
+	}
+
+	// Create notification element
+	const notification = document.createElement('div');
+	notification.className = 'notification';
+	notification.textContent = message;
+	document.body.appendChild(notification);
+
+	// Remove after 2 seconds
+	setTimeout(() => {
+		if (notification.parentNode) {
+			notification.parentNode.removeChild(notification);
+		}
+	}, 2000);
+}
+
+// Decrease font size
+function decreaseFontSize() {
+	if (currentFontSize > 0.5) {
+		currentFontSize -= 0.1;
+		currentFontSize = Math.round(currentFontSize * 10) / 10; // Round to 1 decimal place
+		fridaOut.style.fontSize = currentFontSize + 'em';
+		highlightOverlay.style.fontSize = currentFontSize + 'em';
+		saveSettings();
+
+		// Reapply search highlighting if active
+		if (searchRegex) {
+			performSearch();
+		}
+	}
+}
+
+// Increase font size
+function increaseFontSize() {
+	if (currentFontSize < 2.0) {
+		currentFontSize += 0.1;
+		currentFontSize = Math.round(currentFontSize * 10) / 10; // Round to 1 decimal place
+		fridaOut.style.fontSize = currentFontSize + 'em';
+		highlightOverlay.style.fontSize = currentFontSize + 'em';
+		saveSettings();
+
+		// Reapply search highlighting if active
+		if (searchRegex) {
+			performSearch();
+		}
+	}
+}
+
+// Improved synchronization function for textarea and overlay
+function syncOverlayDimensions() {
+	if (!highlightOverlay || !fridaOut) return;
+
+	// Get computed dimensions from the textarea
+	const computedStyle = window.getComputedStyle(fridaOut);
+
+	// Apply exact dimensions and properties to the overlay
+	highlightOverlay.style.width = computedStyle.width;
+	highlightOverlay.style.height = computedStyle.height;
+	highlightOverlay.style.padding = computedStyle.padding;
+	highlightOverlay.style.boxSizing = computedStyle.boxSizing;
+	highlightOverlay.style.fontFamily = computedStyle.fontFamily;
+	highlightOverlay.style.fontSize = computedStyle.fontSize;
+	highlightOverlay.style.lineHeight = computedStyle.lineHeight;
+	highlightOverlay.style.letterSpacing = computedStyle.letterSpacing;
+	highlightOverlay.style.wordSpacing = computedStyle.wordSpacing;
+	highlightOverlay.style.textAlign = computedStyle.textAlign;
+	highlightOverlay.style.whiteSpace = 'pre-wrap'; // This matches textarea behavior
+
+	// Sync scroll position
+	highlightOverlay.scrollTop = fridaOut.scrollTop;
+	highlightOverlay.scrollLeft = fridaOut.scrollLeft;
+}
+
+
+// Updated CSS to apply to the highlight overlay
+function updateOverlayStyles() {
+	const style = document.createElement('style');
+	style.textContent = `
+	  .highlight-overlay {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		color: transparent;
+		overflow: auto;
+		font-family: monospace;
+		font-size: 0.8em;
+		line-height: 1.7em;
+		padding: 8px;
+		box-sizing: border-box;
+		border: 1px solid transparent;
+		z-index: 5;
+		white-space: pre-wrap; /* Match textarea behavior */
+	  }
+  
+	  .highlight-match {
+		background-color: var(--highlight-bg, #ffff00);
+		color: var(--highlight-text, #000000) !important;
+		padding: 0;
+		border-radius: 2px;
+		display: inline;
+	  }
+	`;
+	document.head.appendChild(style);
+}
+
+// Enhanced function to adjust UI based on sidebar state
+function adjustUIForSidebar() {
+	// Get the actual width of the container
+	const containerWidth = document.getElementById('split-1').offsetWidth;
+
+	// Adjust search container width based on available space
+	const searchContainer = document.querySelector('.search-container');
+	if (searchContainer) {
+		// Make search container narrower if space is limited
+		if (containerWidth < 300) {
+			searchContainer.style.maxWidth = '100px';
+			searchContainer.style.minWidth = '60px';
+		} else {
+			searchContainer.style.maxWidth = '180px';
+			searchContainer.style.minWidth = '80px';
+		}
+	}
+
+	// Update overlay dimensions after sidebar changes
+	syncOverlayDimensions();
+
+	// If search is active, reapply highlights
+	if (searchRegex) {
+		performSearch();
+	}
+}
+
+// Initialize the search-related functionality
+function initSearchFunctionality() {
+	// Update overlay styles
+	updateOverlayStyles();
+
+	// Set clear button event
+	document.getElementById('clear-search').addEventListener('click', clearSearch);
+
+	// Handle input changes for search box
+	document.getElementById('regex-search').addEventListener('input', function () {
+		if (this.value.trim() === '') {
+			clearSearch();
+		}
+	});
+
+	// Handle search button clicks
+	document.getElementById('search-button').addEventListener('click', performSearch);
+
+	// Handle Enter key in search box
+	document.getElementById('regex-search').addEventListener('keypress', function (e) {
+		if (e.key === 'Enter') {
+			performSearch();
+		}
+	});
+
+	// Sync scrolling between textarea and highlight overlay
+	document.getElementById('FridaOut').addEventListener('scroll', function () {
+		document.getElementById('highlight-overlay').scrollTop = this.scrollTop;
+		document.getElementById('highlight-overlay').scrollLeft = this.scrollLeft;
+	});
+}
+
+// Perform search
+function performSearch() {
+	const searchTerm = document.getElementById('regex-search').value.trim();
+
+	if (searchTerm === '') {
+		searchRegex = null;
+		clearHighlights();
+		return;
+	}
+
+	try {
+		// Create a new regex object
+		searchRegex = new RegExp(searchTerm, 'gi');
+		highlightMatches();
+	} catch (error) {
+		showNotification('Invalid regular expression: ' + error.message);
+		searchRegex = null;
+		clearHighlights();
+	}
+}
+
+// Function to clear the search
+function clearSearch() {
+	const searchInput = document.getElementById('regex-search');
+	searchInput.value = '';
+	searchRegex = null;
+	clearHighlights();
+
+	// Remove match indicator if present
+	const matchIndicator = document.querySelector('.match-indicator');
+	if (matchIndicator) {
+		matchIndicator.parentNode.removeChild(matchIndicator);
+	}
+}
+
+// Add event listener for the clear button
+document.getElementById('clear-search').addEventListener('click', clearSearch);
+
+// Clear search function listener
+document.getElementById('regex-search').addEventListener('input', function () {
+	if (this.value.trim() === '') {
+		clearSearch();
+	}
+});
+
+// Enhanced highlight function
+function highlightMatches() {
+	if (!searchRegex) return;
+
+	// Clear previous highlights
+	highlightOverlay.innerHTML = '';
+
+	// Get the current text
+	const content = fridaOut.value;
+	if (!content) return;
+
+	// Ensure overlay dimensions match textarea exactly
+	syncOverlayDimensions();
+
+	// Count total matches
+	let totalMatches = 0;
+	let tempContent = content;
+	let tempMatch;
+	// Create a fresh regex to avoid lastIndex issues
+	const countRegex = new RegExp(searchRegex.source, 'gi');
+	while ((tempMatch = countRegex.exec(tempContent)) !== null) {
+		totalMatches++;
+		// Prevent infinite loops for zero-length matches
+		if (tempMatch.index === countRegex.lastIndex) {
+			countRegex.lastIndex++;
+		}
+	}
+
+	// Create a fresh regex for the actual processing
+	const processRegex = new RegExp(searchRegex.source, 'gi');
+
+	// Transform content to HTML with highlights
+	let htmlContent = '';
+	let lastIndex = 0;
+	let match;
+
+	while ((match = processRegex.exec(content)) !== null) {
+		// Add text before the match
+		htmlContent += content.substring(lastIndex, match.index);
+
+		// Add the highlighted match
+		htmlContent += `<span class="highlight-match">${match[0]}</span>`;
+
+		lastIndex = processRegex.lastIndex;
+
+		// Prevent infinite loops for zero-length matches
+		if (match.index === processRegex.lastIndex) {
+			processRegex.lastIndex++;
+		}
+	}
+
+	// Add remaining text after the last match
+	if (lastIndex < content.length) {
+		htmlContent += content.substring(lastIndex);
+	}
+
+	// Replace newlines with <br> tags for proper display
+	htmlContent = htmlContent.replace(/\n/g, '<br>');
+
+	// Set the HTML content
+	highlightOverlay.innerHTML = htmlContent;
+
+	// Show match count if matches found
+	if (totalMatches > 0) {
+		showMatchCount(totalMatches);
+	} else {
+		showNotification('No matches found');
+	}
+}
+
+
+// Show match count indicator
+function showMatchCount(count) {
+	// Remove any existing indicators
+	const existingIndicator = document.querySelector('.match-indicator');
+	if (existingIndicator) {
+		existingIndicator.remove();
+	}
+
+	// Create indicator
+	const indicator = document.createElement('div');
+	indicator.className = 'match-indicator';
+	indicator.textContent = count + ' matches';
+	document.querySelector('.textarea-container').appendChild(indicator);
+
+	// Remove after 3 seconds
+	setTimeout(() => {
+		if (indicator.parentNode) {
+			indicator.parentNode.removeChild(indicator);
+		}
+	}, 3000);
+}
+
+// Clear highlights
+function clearHighlights() {
+	highlightOverlay.innerHTML = '';
+
+	// Remove match indicator if present
+	const matchIndicator = document.querySelector('.match-indicator');
+	if (matchIndicator) {
+		matchIndicator.parentNode.removeChild(matchIndicator);
+	}
+}
+
+
+const verticalIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+  <line x1="12" y1="3" x2="12" y2="21"></line>
+</svg>`;
+
+const horizontalIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+  <line x1="3" y1="12" x2="21" y2="12"></line>
+</svg>`;
+
+// Toggle layout direction
+function toggleLayout() {
+	// Toggle the layout state
+	isVertical = !isVertical;
+
+	// Ensure split instance exists
+	if (typeof window.split !== 'undefined') {
+		// Get elements we'll need to manipulate
+		const split0 = document.getElementById('split-0');
+		const split1 = document.getElementById('split-1');
+		const container = document.getElementById('container');
+		const fridaOutContainer = document.querySelector('.textarea-container');
+		const splitContainer = document.querySelector('.split');
+
+		// Force visibility of the output area during transition
+		fridaOut.style.display = 'block';
+
+		// Destroy existing split
+		window.split.destroy();
+
+		// Remove all inline styles that might interfere
+		split0.removeAttribute('style');
+		split1.removeAttribute('style');
+
+		// Apply basic required styles
+		split0.style.overflow = 'hidden';
+		split1.style.overflow = 'hidden';
+		container.style.width = '100%';
+		container.style.height = '100%';
+
+		// Update container classes
+		if (isVertical) {
+			splitContainer.classList.remove('horizontal');
+		} else {
+			splitContainer.classList.add('horizontal');
+		}
+
+		// Create new split with a delay to ensure DOM updates
+		setTimeout(() => {
+			window.split = Split(['#split-0', '#split-1'], {
+				direction: isVertical ? 'vertical' : 'horizontal',
+				sizes: isVertical ? [63, 37] : [50, 50],
+				minSize: 100,
+				gutterSize: 8,
+				onDragEnd: function () {
+					window.dispatchEvent(new Event('resize'));
+					if (MonacoCodeEditor) {
+						MonacoCodeEditor.layout();
+					}
+				}
+			});
+
+			// Force output container to take full width/height
+			fridaOutContainer.style.width = '100%';
+			fridaOutContainer.style.height = '100%';
+			fridaOut.style.width = '100%';
+			fridaOut.style.height = '100%';
+
+			// Force Monaco editor layout update
+			if (MonacoCodeEditor) {
+				MonacoCodeEditor.layout();
+			}
+
+			// Update layout button icon
+			updateLayoutButtonIcon();
+
+			// Sync overlay dimensions
+			syncOverlayDimensions();
+		}, 50);
+
+		// Save settings
+		saveSettings();
+	}
+}
+
+
+// Function to update the layout button icon based on current state
+function updateLayoutButtonIcon() {
+	const toggleButton = document.getElementById('toggle-layout');
+
+	// Note: We've swapped the logic here - show what layout we're CURRENTLY in
+	// (not what we'll switch to next)
+	toggleButton.innerHTML = isVertical ? verticalIcon : horizontalIcon;
+	toggleButton.title = isVertical ? "Switch to horizontal layout" : "Switch to vertical layout";
+}
+
+function initLayoutButton() {
+	// Set the initial icon based on the current layout
+	updateLayoutButtonIcon();
+}
+
+// Apply colors
+function applyColors() {
+	bgColor = bgColorPicker.value;
+	textColor = textColorPicker.value;
+	highlightColor = highlightColorPicker.value;
+	highlightTextColor = getContrastColor(highlightColor);
+
+	// Apply colors to textarea
+	fridaOut.style.backgroundColor = bgColor;
+	fridaOut.style.color = textColor;
+
+	// Set CSS variables for highlight colors
+	document.documentElement.style.setProperty('--highlight-bg', highlightColor);
+	document.documentElement.style.setProperty('--highlight-text', highlightTextColor);
+
+	// Close modal
+	colorModal.style.display = 'none';
+
+	// Save settings
+	saveSettings();
+
+	// Reapply highlighting if active
+	if (searchRegex) {
+		performSearch();
+	}
+}
+
+// Reset colors to defaults
+function resetColors() {
+	// Default colors
+	bgColor = '#423636';
+	textColor = '#ffffff';
+	highlightColor = '#ffff00';
+	highlightTextColor = '#000000';
+
+	// Update color pickers and hex inputs
+	bgColorPicker.value = bgColor;
+	bgColorHex.value = bgColor;
+	textColorPicker.value = textColor;
+	textColorHex.value = textColor;
+	highlightColorPicker.value = highlightColor;
+	highlightColorHex.value = highlightColor;
+
+	// Apply colors
+	fridaOut.style.backgroundColor = bgColor;
+	fridaOut.style.color = textColor;
+
+	// Set CSS variables
+	document.documentElement.style.setProperty('--highlight-bg', highlightColor);
+	document.documentElement.style.setProperty('--highlight-text', highlightTextColor);
+
+	// Close modal
+	colorModal.style.display = 'none';
+
+	// Save settings
+	saveSettings();
+
+	// Reapply highlighting if active
+	if (searchRegex) {
+		performSearch();
+	}
+}
+
+// Get contrast color (black or white) based on background color
+function getContrastColor(hexColor) {
+	// Convert hex to RGB
+	const r = parseInt(hexColor.substr(1, 2), 16);
+	const g = parseInt(hexColor.substr(3, 2), 16);
+	const b = parseInt(hexColor.substr(5, 2), 16);
+
+	// Calculate luminance - standard formula for perceived brightness
+	const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+
+	// Return black for light colors, white for dark
+	return luminance > 0.5 ? '#000000' : '#ffffff';
+}
+
+// Save settings to localStorage
+function saveSettings() {
+	const settings = {
+		fontSize: currentFontSize,
+		bgColor: bgColor,
+		textColor: textColor,
+		highlightColor: highlightColor,
+		isVertical: isVertical
+	};
+
+	localStorage.setItem('fermion_output_settings', JSON.stringify(settings));
+}
+
+// Load settings from localStorage
+function loadSettings() {
+	const savedSettings = localStorage.getItem('fermion_output_settings');
+	if (savedSettings) {
+		try {
+			const settings = JSON.parse(savedSettings);
+
+			// Apply font size
+			if (settings.fontSize && !isNaN(settings.fontSize)) {
+				currentFontSize = settings.fontSize;
+				fridaOut.style.fontSize = currentFontSize + 'em';
+				highlightOverlay.style.fontSize = currentFontSize + 'em';
+			}
+
+			// Apply colors
+			if (settings.bgColor) {
+				bgColor = settings.bgColor;
+				bgColorPicker.value = bgColor;
+				bgColorHex.value = bgColor;
+				fridaOut.style.backgroundColor = bgColor;
+			}
+
+			if (settings.textColor) {
+				textColor = settings.textColor;
+				textColorPicker.value = textColor;
+				textColorHex.value = textColor;
+				fridaOut.style.color = textColor;
+			}
+
+			if (settings.highlightColor) {
+				highlightColor = settings.highlightColor;
+				highlightColorPicker.value = highlightColor;
+				highlightColorHex.value = highlightColor;
+				highlightTextColor = getContrastColor(highlightColor);
+			}
+
+			// Set CSS variables
+			document.documentElement.style.setProperty('--highlight-bg', highlightColor);
+			document.documentElement.style.setProperty('--highlight-text', highlightTextColor);
+
+			// Apply layout direction
+			if (settings.hasOwnProperty('isVertical')) {
+				isVertical = settings.isVertical;
+
+				// If not vertical, toggle the layout after a short delay
+				if (!isVertical && typeof window.split !== 'undefined') {
+					setTimeout(function () {
+						toggleLayout();
+					}, 500);
+				}
+			}
+		} catch (error) {
+			console.error('Error loading settings:', error);
+		}
+	}
+}
+
+// Initialize on load
+window.addEventListener('load', function () {
+	// Make sure highlighting overlay has the correct initial font size
+	highlightOverlay.style.fontSize = currentFontSize + 'em';
+
+	// Add the color modal to the document body if it's not already there
+	if (!document.getElementById('color-modal')) {
+		const modalHTML = document.getElementById('color-modal');
+		document.body.appendChild(modalHTML);
+	}
+});
+
+// Prevent default actions for F5 and Ctrl+R
+// This is to prevent the default refresh behavior of the browser
+document.addEventListener("keydown", function (e) {
+	// Prevent F5 key
+	if (e.key === 'F5' || e.keyCode === 116) {
+		e.preventDefault();
+		// For Debug purposes
+		//appendFridaLog('[i] Refresh prevented (F5)');
+		return false;
+	}
+
+	// Prevent Ctrl+R
+	if ((window.navigator.platform.match("Mac") ? e.metaKey : e.ctrlKey) && (e.key === 'r' || e.keyCode === 82)) {
+		e.preventDefault();
+		// For Debug purposes
+		//appendFridaLog('[i] Refresh prevented (Ctrl+R)');
+		return false;
 	}
 }, false);
