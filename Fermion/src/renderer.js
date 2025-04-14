@@ -34,6 +34,13 @@ let highlightColor = '#ffff00';
 let highlightTextColor = '#000000';
 let originalSplit = null;
 
+// Add these new search-related variables
+let matchPositions = [];
+let currentMatchIndex = -1;
+let totalMatches = 0;
+let currentMatchColor = '#FFD300';
+let currentMatchTextColor = '#000000';
+
 // Instrument
 //////////////////////////////////////////////////
 
@@ -874,6 +881,11 @@ const textColorHex = document.getElementById('text-color-hex');
 const highlightColorPicker = document.getElementById('highlight-color');
 const highlightColorHex = document.getElementById('highlight-color-hex');
 const highlightOverlay = document.getElementById('highlight-overlay');
+const currentMatchColorPicker = document.getElementById('current-match-color');
+const currentMatchColorHex = document.getElementById('current-match-color-hex');
+const clearOutputButton = document.getElementById('clear-output');
+const saveOutputButton = document.getElementById('save-output');
+
 
 // Initialize features when DOM is loaded
 document.addEventListener('DOMContentLoaded', function () {
@@ -896,9 +908,16 @@ document.addEventListener('DOMContentLoaded', function () {
 	// Initial UI adjustment
 	setTimeout(adjustUIForSidebar, 100);
 
-	// Initialize search functionality
-	setTimeout(initSearchFunctionality, 500);
+	// Initialize Monaco editor with custom theme
+	setTimeout(addMonacoSettingsListeners, 1500);
 
+	// Initialize search functionality with new features
+	setTimeout(() => {
+		initSearchFunctionality();
+		addSearchNavButtons();
+		addSearchKeyboardShortcuts();
+		addSearchStyles();
+	}, 500);
 });
 
 // Add event listeners to UI elements
@@ -914,13 +933,17 @@ function addEventListeners() {
 	searchButton.addEventListener('click', performSearch);
 	regexSearch.addEventListener('keypress', function (e) {
 		if (e.key === 'Enter') {
-			performSearch();
+			if (searchRegex) {
+				navigateToNextMatch();
+			} else {
+				performSearch();
+			}
 		}
 	});
+
 	regexSearch.addEventListener('input', function () {
 		if (this.value.trim() === '') {
-			clearHighlights();
-			searchRegex = null;
+			clearSearch();
 		}
 	});
 
@@ -936,9 +959,24 @@ function addEventListeners() {
 		colorModal.style.display = 'none';
 	});
 
+	clearOutputButton.addEventListener('click', clearOutputArea);
+
+	saveOutputButton.addEventListener('click', saveOutputArea);
+
+
 	window.addEventListener('click', function (event) {
 		if (event.target === colorModal) {
 			colorModal.style.display = 'none';
+		}
+	});
+
+	currentMatchColorPicker.addEventListener('input', function () {
+		currentMatchColorHex.value = this.value;
+	});
+
+	currentMatchColorHex.addEventListener('input', function () {
+		if (/^#[0-9A-F]{6}$/i.test(this.value)) {
+			currentMatchColorPicker.value = this.value;
 		}
 	});
 
@@ -972,6 +1010,7 @@ function addEventListeners() {
 			highlightColorPicker.value = this.value;
 		}
 	});
+
 
 	// Apply and reset buttons
 	applyColorsButton.addEventListener('click', applyColors);
@@ -1009,6 +1048,130 @@ function addEventListeners() {
 			setTimeout(adjustUIForSidebar, 100);
 		}
 	});
+}
+
+// Function to add navigation buttons to the toolbar
+function addSearchNavButtons() {
+	// First check if buttons already exist
+	if (document.getElementById('prev-match') || document.getElementById('next-match')) {
+		return;
+	}
+
+	const searchContainer = document.querySelector('.search-container');
+
+	// Create navigation buttons
+	const navContainer = document.createElement('div');
+	navContainer.className = 'search-nav-buttons';
+	navContainer.style.display = 'none'; // Hidden by default
+
+	const prevButton = document.createElement('button');
+	prevButton.id = 'prev-match';
+	prevButton.className = 'toolbar-button';
+	prevButton.title = 'Previous match (Shift+Enter)';
+	prevButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>`;
+
+	const nextButton = document.createElement('button');
+	nextButton.id = 'next-match';
+	nextButton.className = 'toolbar-button';
+	nextButton.title = 'Next match (Enter)';
+	nextButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
+
+	navContainer.appendChild(prevButton);
+	navContainer.appendChild(nextButton);
+
+	// Insert before the search button
+	const searchButton = document.getElementById('search-button');
+	searchContainer.insertBefore(navContainer, searchButton);
+
+	// Add event listeners
+	prevButton.addEventListener('click', navigateToPreviousMatch);
+	nextButton.addEventListener('click', navigateToNextMatch);
+}
+
+// Function to navigate to the previous match
+function navigateToPreviousMatch() {
+	if (matchPositions.length === 0) return;
+
+	currentMatchIndex = (currentMatchIndex <= 0) ? matchPositions.length - 1 : currentMatchIndex - 1;
+	highlightCurrentMatch();
+	scrollToCurrentMatch();
+	updateMatchCounter();
+}
+
+// Function to navigate to the next match
+function navigateToNextMatch() {
+	if (matchPositions.length === 0) return;
+
+	currentMatchIndex = (currentMatchIndex >= matchPositions.length - 1) ? 0 : currentMatchIndex + 1;
+	highlightCurrentMatch();
+	scrollToCurrentMatch();
+	updateMatchCounter();
+}
+
+// Function to scroll the textarea to show the current match
+function scrollToCurrentMatch() {
+	if (currentMatchIndex < 0 || matchPositions.length === 0) return;
+
+	const fridaOut = document.getElementById('FridaOut');
+	const match = matchPositions[currentMatchIndex];
+
+	// Calculate position in the textarea
+	const textBeforeMatch = fridaOut.value.substring(0, match.start);
+	const lines = textBeforeMatch.split('\n');
+
+	// Create a temporary element to measure text dimensions
+	const temp = document.createElement('div');
+	temp.style.position = 'absolute';
+	temp.style.visibility = 'hidden';
+	temp.style.whiteSpace = 'pre';
+	temp.style.font = window.getComputedStyle(fridaOut).font;
+	document.body.appendChild(temp);
+
+	// Calculate the line height
+	temp.textContent = 'M';
+	const lineHeight = temp.offsetHeight;
+
+	// Calculate approximate scroll position
+	const lineNumber = lines.length - 1;
+	const approximateScrollTop = lineNumber * lineHeight;
+
+	// Remove the temporary element
+	document.body.removeChild(temp);
+
+	// Scroll to position, with some offset to center it in the view
+	const viewportHeight = fridaOut.clientHeight;
+	fridaOut.scrollTop = approximateScrollTop - (viewportHeight / 2) + lineHeight;
+}
+
+// Function to update the UI counter showing current match position
+function updateMatchCounter() {
+	// Update or create the match counter
+	let counter = document.querySelector('.match-indicator');
+
+	if (!counter) {
+		counter = document.createElement('div');
+		counter.className = 'match-indicator';
+		document.querySelector('.textarea-container').appendChild(counter);
+	}
+
+	if (matchPositions.length > 0) {
+		counter.textContent = `${currentMatchIndex + 1} of ${matchPositions.length} matches`;
+		counter.style.display = 'block';
+
+		// Show navigation buttons
+		const navButtons = document.querySelector('.search-nav-buttons');
+		if (navButtons) {
+			navButtons.style.display = 'flex';
+		}
+	} else {
+		counter.style.display = 'none';
+
+		// Hide navigation buttons
+		const navButtons = document.querySelector('.search-nav-buttons');
+		if (navButtons) {
+			navButtons.style.display = 'none';
+		}
+	}
 }
 
 // Copy output to clipboard
@@ -1099,7 +1262,6 @@ function syncOverlayDimensions() {
 	highlightOverlay.scrollLeft = fridaOut.scrollLeft;
 }
 
-
 // Updated CSS to apply to the highlight overlay
 function updateOverlayStyles() {
 	const style = document.createElement('style');
@@ -1147,7 +1309,7 @@ function adjustUIForSidebar() {
 			searchContainer.style.maxWidth = '100px';
 			searchContainer.style.minWidth = '60px';
 		} else {
-			searchContainer.style.maxWidth = '180px';
+			searchContainer.style.maxWidth = '220px'; // Updated to accommodate navigation buttons
 			searchContainer.style.minWidth = '80px';
 		}
 	}
@@ -1182,7 +1344,11 @@ function initSearchFunctionality() {
 	// Handle Enter key in search box
 	document.getElementById('regex-search').addEventListener('keypress', function (e) {
 		if (e.key === 'Enter') {
-			performSearch();
+			if (searchRegex) {
+				navigateToNextMatch();
+			} else {
+				performSearch();
+			}
 		}
 	});
 
@@ -1193,13 +1359,95 @@ function initSearchFunctionality() {
 	});
 }
 
+// Add keyboard shortcuts for search
+function addSearchKeyboardShortcuts() {
+	// Global Ctrl+F to focus search box
+	document.addEventListener('keydown', function (e) {
+		// Check if this is Ctrl+F (or Cmd+F on Mac)
+		if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+			// Don't intercept if user is typing in Monaco editor (it has its own search)
+			const activeElement = document.activeElement;
+			const isInMonacoEditor = activeElement &&
+				(activeElement.closest('.monaco-editor') ||
+					document.querySelector('.monaco-editor').contains(activeElement));
+
+			if (!isInMonacoEditor) {
+				e.preventDefault();
+				// Focus the search box
+				const searchInput = document.getElementById('regex-search');
+				searchInput.focus();
+				searchInput.select();
+			}
+		}
+	});
+
+	// Search box keyboard navigation
+	const searchInput = document.getElementById('regex-search');
+	searchInput.addEventListener('keydown', function (e) {
+		if (e.key === 'Enter') {
+			// Shift+Enter to go to previous match
+			if (e.shiftKey) {
+				e.preventDefault();
+				navigateToPreviousMatch();
+			}
+			// Enter to go to next match
+			else {
+				e.preventDefault();
+				// If we have an active search, navigate to next match
+				if (searchRegex) {
+					navigateToNextMatch();
+				}
+				// Otherwise, perform search
+				else {
+					performSearch();
+				}
+			}
+		}
+		// Escape to clear search
+		else if (e.key === 'Escape') {
+			e.preventDefault();
+			clearSearch();
+		}
+	});
+
+	// Textarea Esc key to clear search
+	document.getElementById('FridaOut').addEventListener('keydown', function (e) {
+		if (e.key === 'Escape' && searchRegex) {
+			e.preventDefault();
+			clearSearch();
+		}
+	});
+}
+
+// Add search styles
+function addSearchStyles() {
+	const styleEl = document.createElement('style');
+	styleEl.textContent = `
+	  .highlight-match.current-match {
+		background-color: var(--current-match-bg, ${currentMatchColor}) !important;
+		color: var(--current-match-text, ${currentMatchTextColor}) !important;
+	  }
+	  
+	  .search-nav-buttons {
+		display: flex;
+		align-items: center;
+		margin-right: 5px;
+	  }
+	`;
+	document.head.appendChild(styleEl);
+
+	// Set initial CSS variables
+	document.documentElement.style.setProperty('--current-match-bg', currentMatchColor);
+	document.documentElement.style.setProperty('--current-match-text', currentMatchTextColor);
+}
+
 // Perform search
 function performSearch() {
 	const searchTerm = document.getElementById('regex-search').value.trim();
 
 	if (searchTerm === '') {
 		searchRegex = null;
-		clearHighlights();
+		clearSearch();
 		return;
 	}
 
@@ -1219,7 +1467,27 @@ function clearSearch() {
 	const searchInput = document.getElementById('regex-search');
 	searchInput.value = '';
 	searchRegex = null;
+	matchPositions = [];
+	currentMatchIndex = -1;
+	totalMatches = 0;
 	clearHighlights();
+
+	// Hide match indicator
+	const matchIndicator = document.querySelector('.match-indicator');
+	if (matchIndicator) {
+		matchIndicator.style.display = 'none';
+	}
+
+	// Hide navigation buttons
+	const navButtons = document.querySelector('.search-nav-buttons');
+	if (navButtons) {
+		navButtons.style.display = 'none';
+	}
+}
+
+// Clear highlights
+function clearHighlights() {
+	highlightOverlay.innerHTML = '';
 
 	// Remove match indicator if present
 	const matchIndicator = document.querySelector('.match-indicator');
@@ -1227,16 +1495,6 @@ function clearSearch() {
 		matchIndicator.parentNode.removeChild(matchIndicator);
 	}
 }
-
-// Add event listener for the clear button
-document.getElementById('clear-search').addEventListener('click', clearSearch);
-
-// Clear search function listener
-document.getElementById('regex-search').addEventListener('input', function () {
-	if (this.value.trim() === '') {
-		clearSearch();
-	}
-});
 
 // Enhanced highlight function
 function highlightMatches() {
@@ -1249,22 +1507,12 @@ function highlightMatches() {
 	const content = fridaOut.value;
 	if (!content) return;
 
+	// Reset match tracking
+	matchPositions = [];
+	totalMatches = 0;
+
 	// Ensure overlay dimensions match textarea exactly
 	syncOverlayDimensions();
-
-	// Count total matches
-	let totalMatches = 0;
-	let tempContent = content;
-	let tempMatch;
-	// Create a fresh regex to avoid lastIndex issues
-	const countRegex = new RegExp(searchRegex.source, 'gi');
-	while ((tempMatch = countRegex.exec(tempContent)) !== null) {
-		totalMatches++;
-		// Prevent infinite loops for zero-length matches
-		if (tempMatch.index === countRegex.lastIndex) {
-			countRegex.lastIndex++;
-		}
-	}
 
 	// Create a fresh regex for the actual processing
 	const processRegex = new RegExp(searchRegex.source, 'gi');
@@ -1278,10 +1526,18 @@ function highlightMatches() {
 		// Add text before the match
 		htmlContent += content.substring(lastIndex, match.index);
 
-		// Add the highlighted match
-		htmlContent += `<span class="highlight-match">${match[0]}</span>`;
+		// Store match position
+		matchPositions.push({
+			start: match.index,
+			end: processRegex.lastIndex,
+			text: match[0]
+		});
+
+		// Add the highlighted match with a data attribute for the match index
+		htmlContent += `<span class="highlight-match" data-match-index="${matchPositions.length - 1}">${match[0]}</span>`;
 
 		lastIndex = processRegex.lastIndex;
+		totalMatches++;
 
 		// Prevent infinite loops for zero-length matches
 		if (match.index === processRegex.lastIndex) {
@@ -1300,48 +1556,52 @@ function highlightMatches() {
 	// Set the HTML content
 	highlightOverlay.innerHTML = htmlContent;
 
-	// Show match count if matches found
-	if (totalMatches > 0) {
-		showMatchCount(totalMatches);
-	} else {
-		showNotification('No matches found');
-	}
-}
-
-
-// Show match count indicator
-function showMatchCount(count) {
-	// Remove any existing indicators
-	const existingIndicator = document.querySelector('.match-indicator');
-	if (existingIndicator) {
-		existingIndicator.remove();
-	}
-
-	// Create indicator
-	const indicator = document.createElement('div');
-	indicator.className = 'match-indicator';
-	indicator.textContent = count + ' matches';
-	document.querySelector('.textarea-container').appendChild(indicator);
-
-	// Remove after 3 seconds
-	setTimeout(() => {
-		if (indicator.parentNode) {
-			indicator.parentNode.removeChild(indicator);
+	// If we have matches, set the current match to the first one
+	if (matchPositions.length > 0) {
+		// Default to first match if we don't have a current match index
+		if (currentMatchIndex < 0 || currentMatchIndex >= matchPositions.length) {
+			currentMatchIndex = 0;
 		}
-	}, 3000);
-}
 
-// Clear highlights
-function clearHighlights() {
-	highlightOverlay.innerHTML = '';
+		// Highlight the current match
+		highlightCurrentMatch();
 
-	// Remove match indicator if present
-	const matchIndicator = document.querySelector('.match-indicator');
-	if (matchIndicator) {
-		matchIndicator.parentNode.removeChild(matchIndicator);
+		// Show match counter
+		updateMatchCounter();
+
+		// Scroll to the current match
+		scrollToCurrentMatch();
+	} else {
+		// No matches found
+		currentMatchIndex = -1;
+		showNotification('No matches found');
+
+		// Hide navigation buttons
+		const navButtons = document.querySelector('.search-nav-buttons');
+		if (navButtons) {
+			navButtons.style.display = 'none';
+		}
 	}
 }
 
+// Function to highlight the current match
+function highlightCurrentMatch() {
+	// Remove any existing current-match classes
+	const allMatches = highlightOverlay.querySelectorAll('.highlight-match');
+	allMatches.forEach(match => {
+		match.style.backgroundColor = highlightColor;
+		match.style.color = highlightTextColor;
+	});
+
+	// Apply current match highlighting
+	if (currentMatchIndex >= 0 && currentMatchIndex < matchPositions.length) {
+		const currentMatch = highlightOverlay.querySelector(`.highlight-match[data-match-index="${currentMatchIndex}"]`);
+		if (currentMatch) {
+			currentMatch.style.backgroundColor = currentMatchColor;
+			currentMatch.style.color = currentMatchTextColor;
+		}
+	}
+}
 
 const verticalIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
@@ -1428,7 +1688,6 @@ function toggleLayout() {
 	}
 }
 
-
 // Function to update the layout button icon based on current state
 function updateLayoutButtonIcon() {
 	const toggleButton = document.getElementById('toggle-layout');
@@ -1450,6 +1709,8 @@ function applyColors() {
 	textColor = textColorPicker.value;
 	highlightColor = highlightColorPicker.value;
 	highlightTextColor = getContrastColor(highlightColor);
+	currentMatchColor = currentMatchColorPicker.value;
+	currentMatchTextColor = getContrastColor(currentMatchColor);
 
 	// Apply colors to textarea
 	fridaOut.style.backgroundColor = bgColor;
@@ -1458,6 +1719,8 @@ function applyColors() {
 	// Set CSS variables for highlight colors
 	document.documentElement.style.setProperty('--highlight-bg', highlightColor);
 	document.documentElement.style.setProperty('--highlight-text', highlightTextColor);
+	document.documentElement.style.setProperty('--current-match-bg', currentMatchColor);
+	document.documentElement.style.setProperty('--current-match-text', currentMatchTextColor);
 
 	// Close modal
 	colorModal.style.display = 'none';
@@ -1478,6 +1741,8 @@ function resetColors() {
 	textColor = '#ffffff';
 	highlightColor = '#ffff00';
 	highlightTextColor = '#000000';
+	currentMatchColor = '#FFD300';
+	currentMatchTextColor = '#000000';
 
 	// Update color pickers and hex inputs
 	bgColorPicker.value = bgColor;
@@ -1486,6 +1751,8 @@ function resetColors() {
 	textColorHex.value = textColor;
 	highlightColorPicker.value = highlightColor;
 	highlightColorHex.value = highlightColor;
+	currentMatchColorPicker.value = currentMatchColor;
+	currentMatchColorHex.value = currentMatchColor;
 
 	// Apply colors
 	fridaOut.style.backgroundColor = bgColor;
@@ -1494,6 +1761,8 @@ function resetColors() {
 	// Set CSS variables
 	document.documentElement.style.setProperty('--highlight-bg', highlightColor);
 	document.documentElement.style.setProperty('--highlight-text', highlightTextColor);
+	document.documentElement.style.setProperty('--current-match-bg', currentMatchColor);
+	document.documentElement.style.setProperty('--current-match-text', currentMatchTextColor);
 
 	// Close modal
 	colorModal.style.display = 'none';
@@ -1523,15 +1792,104 @@ function getContrastColor(hexColor) {
 
 // Save settings to localStorage
 function saveSettings() {
+	// Get the current Monaco theme
+	const themeSelect = document.getElementById("MonacoThemeSelect");
+	const currentTheme = themeSelect ? themeSelect.value : "Kuroir"; // Default if not found
+
+	// Get the current wrap state
+	const wrapToggle = document.getElementById("FermionMonacoWrap");
+	const isWrapEnabled = wrapToggle && wrapToggle.children[0] ?
+		wrapToggle.children[0].checked : false;
+
 	const settings = {
 		fontSize: currentFontSize,
 		bgColor: bgColor,
 		textColor: textColor,
 		highlightColor: highlightColor,
-		isVertical: isVertical
+		currentMatchColor: currentMatchColor,
+		isVertical: isVertical,
+		// Add Monaco Editor settings
+		monacoTheme: currentTheme,
+		monacoWrap: isWrapEnabled
 	};
 
 	localStorage.setItem('fermion_output_settings', JSON.stringify(settings));
+}
+
+// Function to clear the output area
+function clearOutputArea() {
+	// Get the textarea
+	const fridaOut = document.getElementById('FridaOut');
+
+	// Clear the textarea content
+	fridaOut.value = '';
+
+	// Clear highlights if search is active
+	clearHighlights();
+
+	// Reset search-related variables
+	searchRegex = null;
+	matchPositions = [];
+	currentMatchIndex = -1;
+	totalMatches = 0;
+
+	// Hide match indicator
+	const matchIndicator = document.querySelector('.match-indicator');
+	if (matchIndicator) {
+		matchIndicator.style.display = 'none';
+	}
+
+	// Hide navigation buttons
+	const navButtons = document.querySelector('.search-nav-buttons');
+	if (navButtons) {
+		navButtons.style.display = 'none';
+	}
+
+	// Show notification
+	showNotification('Output cleared');
+}
+
+
+// Function to save the output area content to a file
+function saveOutputArea() {
+	// Get the content from the textarea
+	const fridaOut = document.getElementById('FridaOut');
+	const content = fridaOut.value;
+
+	// If content is empty, show notification and return
+	if (!content.trim()) {
+		showNotification('Nothing to save');
+		return;
+	}
+
+	// Show save dialog
+	dialog.showSaveDialog(
+		{
+			title: "Save Frida Output",
+			defaultPath: "frida-output.txt",
+			filters: [
+				{ name: 'Text Files', extensions: ['txt'] },
+				{ name: 'Log Files', extensions: ['log'] },
+				{ name: 'All Files', extensions: ['*'] }
+			]
+		}
+	).then(result => {
+		if (result.filePath) {
+			// Write the content to the file
+			fs.writeFile(result.filePath, content, (err) => {
+				if (err) {
+					appendFridaLog("[!] Error saving output: " + err.message);
+					return;
+				} else {
+					showNotification('Output saved successfully');
+					appendFridaLog("[+] Output saved..");
+					appendFridaLog("    |-> Path: " + result.filePath);
+				}
+			});
+		}
+	}).catch(err => {
+		appendFridaLog("[!] Error saving output: " + err);
+	});
 }
 
 // Load settings from localStorage
@@ -1570,9 +1928,18 @@ function loadSettings() {
 				highlightTextColor = getContrastColor(highlightColor);
 			}
 
+			if (settings.currentMatchColor) {
+				currentMatchColor = settings.currentMatchColor;
+				currentMatchColorPicker.value = currentMatchColor;
+				currentMatchColorHex.value = currentMatchColor;
+				currentMatchTextColor = getContrastColor(currentMatchColor);
+			}
+
 			// Set CSS variables
 			document.documentElement.style.setProperty('--highlight-bg', highlightColor);
 			document.documentElement.style.setProperty('--highlight-text', highlightTextColor);
+			document.documentElement.style.setProperty('--current-match-bg', currentMatchColor);
+			document.documentElement.style.setProperty('--current-match-text', currentMatchTextColor);
 
 			// Apply layout direction
 			if (settings.hasOwnProperty('isVertical')) {
@@ -1584,6 +1951,38 @@ function loadSettings() {
 						toggleLayout();
 					}, 500);
 				}
+			}
+
+			// Apply Monaco Editor theme
+			if (settings.monacoTheme) {
+				// Wait for Monaco editor to be fully initialized
+				setTimeout(function () {
+					const themeSelect = document.getElementById("MonacoThemeSelect");
+					if (themeSelect) {
+						// Set the dropdown value
+						themeSelect.value = settings.monacoTheme;
+						// Apply the theme
+						setMonacoTheme();
+					}
+				}, 1000); // Allow time for Monaco to initialize
+			}
+
+			// Apply Monaco Editor wrap setting
+			if (settings.hasOwnProperty('monacoWrap')) {
+				setTimeout(function () {
+					const wrapToggle = document.getElementById("FermionMonacoWrap");
+					if (wrapToggle && wrapToggle.children[0]) {
+						// Set the checkbox state
+						wrapToggle.children[0].checked = settings.monacoWrap;
+
+						// Apply the wrap setting to Monaco
+						if (MonacoCodeEditor) {
+							MonacoCodeEditor.updateOptions({
+								wordWrap: settings.monacoWrap ? "on" : "off"
+							});
+						}
+					}
+				}, 1000); // Allow time for Monaco to initialize
 			}
 		} catch (error) {
 			console.error('Error loading settings:', error);
@@ -1622,3 +2021,26 @@ document.addEventListener("keydown", function (e) {
 		return false;
 	}
 }, false);
+
+// Add event listeners to save settings when Monaco editor settings change
+function addMonacoSettingsListeners() {
+	// Theme change listener
+	const themeSelect = document.getElementById("MonacoThemeSelect");
+	if (themeSelect) {
+		themeSelect.addEventListener('change', function () {
+			// The setMonacoTheme function is already called by the onchange attribute,
+			// so we just need to save the settings
+			setTimeout(saveSettings, 100);
+		});
+	}
+
+	// Wrap toggle listener - add this only if the existing onclick doesn't save settings
+	const wrapToggle = document.getElementById("FermionMonacoWrap");
+	if (wrapToggle) {
+		wrapToggle.addEventListener('click', function () {
+			// The existing onclick handler toggles the wrap state,
+			// we just need to save the settings afterward
+			setTimeout(saveSettings, 100);
+		});
+	}
+}
