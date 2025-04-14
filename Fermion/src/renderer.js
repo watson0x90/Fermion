@@ -857,6 +857,16 @@ document.addEventListener("keydown", function (e) {
 	}
 }, false);
 
+document.getElementById('clear-output').title = "Clear output (Alt+C)";
+// Add keyboard shortcut for clearing output panel
+document.addEventListener("keydown", function (e) {
+	// Clear Output with Alt+C
+	if (e.altKey && e.keyCode == 67) {
+		e.preventDefault();
+		clearOutputArea();
+	}
+}, false);
+
 //////////////////////////////////////////////////
 // Frida Output Enhancement Functions
 //////////////////////////////////////////////////
