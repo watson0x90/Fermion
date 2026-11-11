@@ -114,6 +114,18 @@ export function themeNames(): string[] {
   return [DEFAULT_THEME, ...keys.filter((k) => k !== DEFAULT_THEME)];
 }
 
+// Display metadata for the Settings theme picker.
+export function themeMeta(name: string): { label: string; swatch: string; dark: boolean } {
+  const theme = themes()[name];
+  const bg = theme?.colors?.['editor.background'];
+  const label = name.replace(/([a-z])([A-Z])/g, '$1 $2'); // idleFingers -> idle Fingers
+  return {
+    label: label.charAt(0).toUpperCase() + label.slice(1),
+    swatch: bg ? toHex(parseHex(bg)) : '#888888',
+    dark: theme ? isDarkTheme(theme) : true,
+  };
+}
+
 export function loadSavedTheme(): string {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);

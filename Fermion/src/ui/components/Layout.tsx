@@ -1,10 +1,11 @@
 import { useEffect } from 'react';
 import { TitleBar } from './TitleBar';
-import { ActivityBar } from './ActivityBar';
+import { Rail } from './Rail';
 import { Sidebar } from './Sidebar';
 import { LeftToolbox } from './LeftToolbox';
 import { OutputPane } from './OutputPane';
 import { StatusBar } from './StatusBar';
+import { Settings } from './Settings';
 import { useKeybinds } from '../hooks/useKeybinds';
 import { useAppSelector } from '../store';
 import { applyTheme } from '../theme/themeEngine';
@@ -23,10 +24,11 @@ export function Layout() {
     <div className={'app' + (railOpen ? ' rail-open' : '')} data-testid="app-root">
       <TitleBar />
       <div className="body">
-        <ActivityBar />
+        <Rail />
         <Sidebar />
         <LeftToolbox />
         <OutputPane />
+        <Settings />
       </div>
       <StatusBar />
     </div>
