@@ -496,8 +496,8 @@ document.getElementById("FermionTools").onclick = function () {
 		}
 	})
 
-	// Node 14+ patch, jesus node devs, just leave us alone with remote already..
-	require("@electron/remote").require("@electron/remote/main").enable(TraceWin.webContents);
+	// @electron/remote is enabled for this window by the main process
+	// (browser-window-created handler in core.js).
 
 	TraceWin.loadFile(modalPath);
 	TraceWin.once('ready-to-show', () => {

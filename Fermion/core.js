@@ -4,7 +4,16 @@ const path = require('path');
 const ipcMain = require('electron').ipcMain;
 var bWin;
 app.commandLine.appendSwitch('disable-features', 'CrossOriginOpenerPolicy');
-require('@electron/remote/main').initialize();
+const remoteMain = require('@electron/remote/main');
+remoteMain.initialize();
+// Enable @electron/remote for every window created in the main process,
+// including child windows the renderer opens (e.g. the Trace window). Doing it
+// in the main process avoids the renderer calling
+// remote.require('@electron/remote/main'), which no longer resolves under
+// modern Electron (the remote server's module lookup fails).
+app.on('browser-window-created', (_event, win) => {
+  remoteMain.enable(win.webContents);
+});
 
 function createWindow() {
   // Create the browser window.
@@ -27,9 +36,7 @@ function createWindow() {
     }
   });
   
-  // needed after electron v14.0.1
-  // https://stackoverflow.com/questions/69059668/enableremotemodule-is-missing-from-electron-v14-typescript-type-definitions/69059669#69059669
-  require('@electron/remote/main').enable(bWin.webContents);
+  // (remote is enabled for every window by the browser-window-created handler above)
 
   // and load the index.html of the app.
   bWin.loadFile(path.join(__dirname, '/pages/index.html'));
