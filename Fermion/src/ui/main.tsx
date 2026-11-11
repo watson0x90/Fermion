@@ -1,5 +1,6 @@
 import { createRoot } from 'react-dom/client';
 import { Provider } from 'react-redux';
+import './styles/fonts.css';
 import { store } from './store';
 import { initBridge } from './bridge';
 import { exposeTestSurface } from './testSurface';
