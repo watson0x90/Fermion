@@ -50,15 +50,17 @@ const args = packaged
     const win = await app.firstWindow();
     await win.waitForLoadState('domcontentloaded');
 
-    // Monaco editor must actually mount.
-    await win.waitForSelector('.monaco-editor', { timeout: 30000 });
+    // Monaco editor must actually mount. Allow a generous timeout: a cold CI
+    // runner (especially macOS, where Gatekeeper assesses the freshly ad-hoc
+    // signed app on first launch) can be slow to render.
+    await win.waitForSelector('.monaco-editor', { timeout: 60000 });
 
     // The startup banner must reach the output pane (proves renderer + Frida
     // version lookup ran).
     await win.waitForFunction(() => {
       const el = document.getElementById('FridaOut');
       return el && /Frida v\d/.test(el.value);
-    }, { timeout: 30000 });
+    }, { timeout: 60000 });
 
     const fridaLine = await win.evaluate(() => {
       const el = document.getElementById('FridaOut');
