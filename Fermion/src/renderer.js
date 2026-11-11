@@ -1,16 +1,14 @@
 const electron = require('electron');
-const path = require('path');
 const ipc = require('electron').ipcRenderer;
 const remote = require('@electron/remote');
-const BrowserWindow = remote.BrowserWindow;
 const dialog = remote.dialog;
 var fs = require('fs');
 const frida = require('frida');
-const { wrapExtraArgs } = require('../src/helper.js');
 const { createTerminal } = require('../src/terminal.js');
 const { formatMessage } = require('../src/output-model.js');
 const { readSettings, writeSettings } = require('../src/settings.js');
 const { createLayout } = require('../src/layout.js');
+const { openWindow } = require('../src/windows.js');
 
 // Overwrite default node.js prop to get Jquery working
 window.$ = window.jQuery = require('jquery');
@@ -302,33 +300,7 @@ async function trace(scriptBody) {
 // -= Device Selector =-
 
 document.getElementById("setDevice").onclick = function () {
-	const modalPath = path.join(__dirname, 'device.html');
-	let ProcWin = new BrowserWindow({
-		contextIsolation: false,
-		width: 420,
-		height: 615,
-		frame: false,
-		resizable: false,
-		show: false,
-		backgroundColor: '#E0E1E2',
-		webPreferences: {
-			nodeIntegration: true,
-			nodeIntegrationInWorker: true,
-			enableRemoteModule: true,
-			contextIsolation: false,
-			webviewTag: true,
-			additionalArguments: wrapExtraArgs([deviceId])
-		}
-	})
-
-	ProcWin.loadFile(modalPath);
-	ProcWin.once('ready-to-show', () => {
-		setTimeout(function () {
-			ProcWin.show();
-			ProcWin.focus();
-		}, 50);
-	});
-	ProcWin.on('close', function () { ProcWin = null })
+	openWindow('device.html', { width: 420, height: 615, extraArgs: [deviceId] });
 }
 
 ipc.on('new-device', async (event, message) => {
@@ -351,166 +323,37 @@ ipc.on('new-device', async (event, message) => {
 // -= Process Listing =-
 
 document.getElementById("FridaProc").onclick = function () {
-	const modalPath = path.join(__dirname, 'proc.html');
-	let ProcWin = new BrowserWindow({
-		contextIsolation: false,
-		width: 570,
-		height: 600,
-		frame: false,
-		resizable: false,
-		show: false,
-		backgroundColor: '#E0E1E2',
-		webPreferences: {
-			nodeIntegration: true,
-			nodeIntegrationInWorker: true,
-			enableRemoteModule: true,
-			contextIsolation: false,
-			webviewTag: true,
-			additionalArguments: wrapExtraArgs([deviceId])
-		}
-	})
-
-	ProcWin.loadFile(modalPath);
-	ProcWin.once('ready-to-show', () => {
-		setTimeout(function () {
-			ProcWin.show();
-			ProcWin.focus();
-		}, 50);
-	});
-	ProcWin.on('close', function () { ProcWin = null })
+	openWindow('proc.html', { width: 570, height: 600, extraArgs: [deviceId] });
 }
 
 // -= Instrument Manager =-
 
 document.getElementById("FridaAttach").onclick = function () {
-	const modalPath = path.join(__dirname, 'instrument.html');
-	let ProcWin = new BrowserWindow({
-		contextIsolation: false,
-		width: 420,
-		height: 595,
-		frame: false,
-		resizable: false,
-		show: false,
-		backgroundColor: '#E0E1E2',
-		webPreferences: {
-			nodeIntegration: true,
-			nodeIntegrationInWorker: true,
-			enableRemoteModule: true,
-			contextIsolation: false,
-			webviewTag: true
-		}
-	})
-
-	ProcWin.loadFile(modalPath);
-	ProcWin.once('ready-to-show', () => {
-		setTimeout(function () {
-			ProcWin.show();
-			ProcWin.focus();
-		}, 50);
-	});
-	ProcWin.on('close', function () { ProcWin = null })
+	openWindow('instrument.html', { width: 420, height: 595 });
 }
 
 // -= About =-
 
 document.getElementById("FermionAbout").onclick = function () {
-	const modalPath = path.join(__dirname, 'about.html');
-	let ProcWin = new BrowserWindow({
-		contextIsolation: false,
-		width: 460,
-		height: 270,
-		frame: false,
-		resizable: false,
-		show: false,
-		backgroundColor: '#E0E1E2',
-		webPreferences: {
-			nodeIntegration: true,
-			nodeIntegrationInWorker: true,
-			enableRemoteModule: true,
-			contextIsolation: false,
-			webviewTag: true,
-			additionalArguments: wrapExtraArgs([deviceId])
-		}
-	})
-
-	ProcWin.loadFile(modalPath);
-	ProcWin.once('ready-to-show', () => {
-		setTimeout(function () {
-			ProcWin.show();
-			ProcWin.focus();
-		}, 50);
-	});
-	ProcWin.on('close', function () { ProcWin = null })
+	openWindow('about.html', { width: 460, height: 270, extraArgs: [deviceId] });
 }
 
 // -= JS API Docs =-
 
 document.getElementById("FermionDocs").onclick = function () {
-	const modalPath = path.join(__dirname, 'docs.html');
-	let ProcWin = new BrowserWindow({
-		contextIsolation: false,
-		width: 800,
-		height: 800,
-		frame: false,
-		resizable: false,
-		show: false,
-		backgroundColor: '#E0E1E2',
-		webPreferences: {
-			nodeIntegration: true,
-			nodeIntegrationInWorker: true,
-			enableRemoteModule: true,
-			contextIsolation: false,
-			webviewTag: true
-		}
-	})
-
-	ProcWin.loadFile(modalPath);
-	ProcWin.once('ready-to-show', () => {
-		setTimeout(function () {
-			ProcWin.show();
-			ProcWin.focus();
-		}, 50);
-	});
-	ProcWin.on('close', function () { ProcWin = null })
+	openWindow('docs.html', { width: 800, height: 800 });
 }
 
 // -= Trace =-
 
 let TraceWin = null;
 document.getElementById("FermionTools").onclick = function () {
-	const modalPath = path.join(__dirname, 'trace.html');
 	if (sessionPID == null || sessionPID.length == 0) {
 		sessionPID = "null";
 	}
-	TraceWin = new BrowserWindow({
-		contextIsolation: false,
-		width: 425,
-		height: 615,
-		frame: false,
-		resizable: false,
-		show: false,
-		backgroundColor: '#E0E1E2',
-		webPreferences: {
-			nodeIntegration: true,
-			nodeIntegrationInWorker: true,
-			enableRemoteModule: true,
-			contextIsolation: false,
-			webviewTag: true,
-			additionalArguments: wrapExtraArgs([sessionPID])
-		}
-	})
-
 	// @electron/remote is enabled for this window by the main process
 	// (browser-window-created handler in core.js).
-
-	TraceWin.loadFile(modalPath);
-	TraceWin.once('ready-to-show', () => {
-		setTimeout(function () {
-			TraceWin.show();
-			TraceWin.focus();
-		}, 50);
-	});
-	TraceWin.on('close', function () { TraceWin = null })
+	TraceWin = openWindow('trace.html', { width: 425, height: 615, extraArgs: [sessionPID] });
 }
 
 // Create IPC sender
