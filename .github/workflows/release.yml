@@ -104,7 +104,8 @@ jobs:
         run: |
           cd build
           APPDIR=$(ls -d */ | head -n1)
-          ZIP="fermion-${{ matrix.os }}-${GITHUB_REF_NAME}.zip"
+          REF="${GITHUB_REF_NAME//\//-}"   # branch names can contain '/'
+          ZIP="fermion-${{ matrix.os }}-${REF}.zip"
           if command -v zip >/dev/null 2>&1; then
             ( cd "$APPDIR" && zip -qr "../$ZIP" . )
           else
