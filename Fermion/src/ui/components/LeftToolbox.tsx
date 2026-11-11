@@ -1,5 +1,6 @@
 import { useAppDispatch, useAppSelector } from '../store';
 import { uiActions, ToolboxTab } from '../store/uiSlice';
+import { EditorPane } from './EditorPane';
 
 const TABS: { id: ToolboxTab; label: string }[] = [
   { id: 'editor', label: 'Editor' },
@@ -14,7 +15,9 @@ const TABS: { id: ToolboxTab; label: string }[] = [
 function PanelBody({ tab }: { tab: ToolboxTab }) {
   return (
     <div className="panel-body" data-testid={`panel-${tab}`}>
-      <div className="stub">{TABS.find((t) => t.id === tab)?.label} — coming soon</div>
+      {tab === 'editor'
+        ? <EditorPane />
+        : <div className="stub">{TABS.find((t) => t.id === tab)?.label} — coming soon</div>}
     </div>
   );
 }

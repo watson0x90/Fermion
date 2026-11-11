@@ -15,6 +15,8 @@ export interface TerminalSink {
 }
 let sink: TerminalSink | null = null;
 export function setTerminalSink(s: TerminalSink | null) { sink = s; }
+// Write a status/meta line to the terminal (e.g. the startup version banner).
+export function writeTerminal(kind: string, text: string) { sink?.write(kind, text); }
 
 let traceSink: ((payload: unknown) => void) | null = null;
 export function setTraceSink(fn: ((payload: unknown) => void) | null) { traceSink = fn; }
