@@ -35,6 +35,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
       # Electron needs a virtual display and its GUI runtime libraries to launch
       # headlessly on a CI runner.
       - name: Install Linux GUI runtime deps

@@ -4,7 +4,8 @@
   "description": "Fermion is a stand-alone Frida electron tool.",
   "main": "core.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "lint": "eslint ."
   },
   "repository": "github:FuzzySecurity/Fermion",
   "author": "Ruben Boonen (@FuzzySec)",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",
+    "eslint": "9.37.0",
     "playwright-core": "1.65.0"
   }
 }
