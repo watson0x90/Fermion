@@ -9,6 +9,7 @@ const frida = require('frida');
 const { wrapExtraArgs } = require('../src/helper.js');
 const { createTerminal } = require('../src/terminal.js');
 const { formatMessage } = require('../src/output-model.js');
+const { readSettings, writeSettings } = require('../src/settings.js');
 
 // Overwrite default node.js prop to get Jquery working
 window.$ = window.jQuery = require('jquery');
@@ -1106,7 +1107,7 @@ function saveSettings() {
 		monacoWrap: isWrapEnabled
 	};
 
-	localStorage.setItem('fermion_output_settings', JSON.stringify(settings));
+	writeSettings(settings);
 }
 
 // Function to clear the output area
@@ -1159,11 +1160,9 @@ function saveOutputArea() {
 
 // Load settings from localStorage
 function loadSettings() {
-	const savedSettings = localStorage.getItem('fermion_output_settings');
-	if (savedSettings) {
-		try {
-			const settings = JSON.parse(savedSettings);
-
+	const settings = readSettings();
+	if (settings) {
+		{
 			// Apply layout direction. The app starts vertical (isVertical = true)
 			// and toggleLayout() both flips isVertical and rebuilds the split, so
 			// restore a saved HORIZONTAL layout by calling toggleLayout() once.
@@ -1208,8 +1207,6 @@ function loadSettings() {
 					}
 				}, 1000); // Allow time for Monaco to initialize
 			}
-		} catch (error) {
-			console.error('Error loading settings:', error);
 		}
 	}
 }
