@@ -10,6 +10,7 @@ const { wrapExtraArgs } = require('../src/helper.js');
 const { createTerminal } = require('../src/terminal.js');
 const { formatMessage } = require('../src/output-model.js');
 const { readSettings, writeSettings } = require('../src/settings.js');
+const { createLayout } = require('../src/layout.js');
 
 // Overwrite default node.js prop to get Jquery working
 window.$ = window.jQuery = require('jquery');
@@ -40,8 +41,10 @@ var sessionPID = null;
 var deviceId = 'local';
 
 // Enhanced Frida Output variables
-let isVertical = true;
 let originalSplit = null;
+// Layout controller (src/layout.js), built in the DOMContentLoaded handler
+// once the DOM + split instance exist. Owns the live isVertical state.
+let layout = null;
 
 // Instrument
 //////////////////////////////////////////////////
@@ -819,7 +822,6 @@ document.addEventListener("keydown", function (e) {
 //////////////////////////////////////////////////
 
 // Store DOM references
-const fridaOut = document.getElementById('FridaOut');
 const copyButton = document.getElementById('copy-output');
 const decreaseFontButton = document.getElementById('decrease-font');
 const increaseFontButton = document.getElementById('increase-font');
@@ -832,6 +834,14 @@ const saveOutputButton = document.getElementById('save-output');
 
 // Initialize features when DOM is loaded
 document.addEventListener('DOMContentLoaded', function () {
+	// Build the layout controller first — loadSettings() may call
+	// layout.toggleLayout() to restore a saved horizontal layout.
+	layout = createLayout({
+		getTerminal: () => fermionTerminal,
+		getEditor: () => MonacoCodeEditor,
+		onChange: saveSettings,
+	});
+
 	// Make sure window.split is available before storing it
 	setTimeout(() => {
 		if (window.split) {
@@ -846,10 +856,10 @@ document.addEventListener('DOMContentLoaded', function () {
 	addEventListeners();
 
 	// Initialize the layout button icon
-	initLayoutButton();
+	layout.initLayoutButton();
 
 	// Initial UI adjustment
-	setTimeout(adjustUIForSidebar, 100);
+	setTimeout(() => layout.adjustUIForSidebar(), 100);
 
 	// Initialize Monaco editor with custom theme
 	setTimeout(addMonacoSettingsListeners, 1500);
@@ -907,21 +917,21 @@ function addEventListeners() {
 	increaseFontButton.addEventListener('click', increaseFontSize);
 
 	// Layout toggle
-	toggleLayoutButton.addEventListener('click', toggleLayout);
+	toggleLayoutButton.addEventListener('click', () => layout.toggleLayout());
 
 	// Output clear / save
 	clearOutputButton.addEventListener('click', clearOutputArea);
 	saveOutputButton.addEventListener('click', saveOutputArea);
 
 	// Sidebar state changes and window resize
-	window.addEventListener('resize', adjustUIForSidebar);
+	window.addEventListener('resize', () => layout.adjustUIForSidebar());
 
 	// Add a listener for possible sidebar toggle events
 	document.addEventListener('click', function (event) {
 		// Check if click might be related to sidebar toggle
 		if (event.target.closest('nav') || event.target.closest('.navbar-menu')) {
 			// Wait a moment for DOM to update
-			setTimeout(adjustUIForSidebar, 100);
+			setTimeout(() => layout.adjustUIForSidebar(), 100);
 		}
 	});
 }
@@ -969,125 +979,6 @@ function increaseFontSize() {
 	fermionTerminal.setFontSize(Math.min(28, fermionTerminal.getFontSize() + 1));
 }
 
-// Enhanced function to adjust UI based on sidebar state
-function adjustUIForSidebar() {
-	// Get the actual width of the container
-	const containerWidth = document.getElementById('split-1').offsetWidth;
-
-	// Adjust search container width based on available space
-	const searchContainer = document.querySelector('.search-container');
-	if (searchContainer) {
-		// Make search container narrower if space is limited
-		if (containerWidth < 300) {
-			searchContainer.style.maxWidth = '100px';
-			searchContainer.style.minWidth = '60px';
-		} else {
-			searchContainer.style.maxWidth = '220px'; // Updated to accommodate navigation buttons
-			searchContainer.style.minWidth = '80px';
-		}
-	}
-
-}
-
-const verticalIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-  <line x1="12" y1="3" x2="12" y2="21"></line>
-</svg>`;
-
-const horizontalIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-  <line x1="3" y1="12" x2="21" y2="12"></line>
-</svg>`;
-
-// Toggle layout direction
-function toggleLayout() {
-	// Toggle the layout state
-	isVertical = !isVertical;
-
-	// Ensure split instance exists
-	if (typeof window.split !== 'undefined') {
-		// Get elements we'll need to manipulate
-		const split0 = document.getElementById('split-0');
-		const split1 = document.getElementById('split-1');
-		const container = document.getElementById('container');
-		const fridaOutContainer = document.querySelector('.textarea-container');
-		const splitContainer = document.querySelector('.split');
-
-		// Force visibility of the output area during transition
-		fridaOut.style.display = 'block';
-
-		// Destroy existing split
-		window.split.destroy();
-
-		// Remove all inline styles that might interfere
-		split0.removeAttribute('style');
-		split1.removeAttribute('style');
-
-		// Apply basic required styles
-		split0.style.overflow = 'hidden';
-		split1.style.overflow = 'hidden';
-		container.style.width = '100%';
-		container.style.height = '100%';
-
-		// Update container classes
-		if (isVertical) {
-			splitContainer.classList.remove('horizontal');
-		} else {
-			splitContainer.classList.add('horizontal');
-		}
-
-		// Create new split with a delay to ensure DOM updates
-		setTimeout(() => {
-			window.split = Split(['#split-0', '#split-1'], {
-				direction: isVertical ? 'vertical' : 'horizontal',
-				sizes: isVertical ? [63, 37] : [50, 50],
-				minSize: 100,
-				gutterSize: 8,
-				onDragEnd: function () {
-					window.dispatchEvent(new Event('resize'));
-					if (MonacoCodeEditor) {
-						MonacoCodeEditor.layout();
-					}
-				}
-			});
-
-			// Force output container to take full width/height
-			fridaOutContainer.style.width = '100%';
-			fridaOutContainer.style.height = '100%';
-			fridaOut.style.width = '100%';
-			fridaOut.style.height = '100%';
-
-			// Force Monaco editor layout update
-			if (MonacoCodeEditor) {
-				MonacoCodeEditor.layout();
-			}
-
-			// Update layout button icon
-			updateLayoutButtonIcon();
-
-			// Refit the terminal to the new split dimensions
-			if (fermionTerminal) fermionTerminal.fit();
-		}, 50);
-
-		// Save settings
-		saveSettings();
-	}
-}
-
-// Function to update the layout button icon based on current state
-function updateLayoutButtonIcon() {
-	const toggleButton = document.getElementById('toggle-layout');
-
-	// Note: We've swapped the logic here - show what layout we're CURRENTLY in
-	// (not what we'll switch to next)
-	toggleButton.innerHTML = isVertical ? verticalIcon : horizontalIcon;
-	toggleButton.title = isVertical ? "Switch to horizontal layout" : "Switch to vertical layout";
-}
-
-function initLayoutButton() {
-	// Set the initial icon based on the current layout
-	updateLayoutButtonIcon();
-}
 
 // Save settings to localStorage
 function saveSettings() {
@@ -1101,7 +992,7 @@ function saveSettings() {
 		wrapToggle.children[0].checked : false;
 
 	const settings = {
-		isVertical: isVertical,
+		isVertical: layout ? layout.isVertical() : true,
 		// Monaco Editor settings
 		monacoTheme: currentTheme,
 		monacoWrap: isWrapEnabled
@@ -1172,7 +1063,7 @@ function loadSettings() {
 			if (settings.hasOwnProperty('isVertical') && settings.isVertical === false
 				&& typeof window.split !== 'undefined') {
 				setTimeout(function () {
-					toggleLayout();
+					layout.toggleLayout();
 				}, 500);
 			}
 
