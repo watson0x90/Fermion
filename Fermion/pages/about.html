@@ -48,9 +48,9 @@
 	    	window.close();
 	    }
 
-        // Visit GitHub
+        // Visit GitHub (opened in the user's browser by the main process)
         document.getElementById("OpenGitHub").onclick = function () {
-	    	require("electron").shell.openExternal("https://github.com/FuzzySecurity/Fermion");
+	    	window.fermion.openExternal("https://github.com/FuzzySecurity/Fermion");
 	    }
 	</script>
 </html>

@@ -20,7 +20,6 @@ function buildWindowOptions({ width, height, extraArgs }) {
 		nodeIntegration: false,
 		contextIsolation: true,
 		sandbox: false,
-		webviewTag: true,
 	};
 	if (extraArgs && extraArgs.length) {
 		webPreferences.additionalArguments = wrapExtraArgs(extraArgs);

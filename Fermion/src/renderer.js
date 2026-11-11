@@ -469,7 +469,7 @@ document.addEventListener("keydown", function (e) {
 			}).then(result => {
 				if (result.response == 0) {
 					const content = window.MonacoCodeEditor.getValue();
-					fapi.saveFileTo(currentFilePath, content).then(() => {
+					fapi.saveCurrentFile(content).then(() => {
 						appendFridaLog("[+] File saved..");
 						appendFridaLog("    |-> Path: " + currentFilePath);
 					}).catch(err => {

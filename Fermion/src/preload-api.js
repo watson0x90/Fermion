@@ -41,8 +41,9 @@ function buildApi(ipcRenderer) {
 		openDevTools: () => ipcRenderer.invoke('fermion:openDevTools'),
 		openFile: () => ipcRenderer.invoke('fermion:openFile'),
 		saveFile: (content, opts) => ipcRenderer.invoke('fermion:saveFile', content, opts),
-		saveFileTo: (filePath, content) => ipcRenderer.invoke('fermion:saveFileTo', filePath, content),
+		saveCurrentFile: (content) => ipcRenderer.invoke('fermion:saveCurrent', content),
 		messageBox: (options) => ipcRenderer.invoke('fermion:messageBox', options),
+		openExternal: (url) => ipcRenderer.invoke('fermion:openExternal', url),
 		openWindow: (page, dims) => ipcRenderer.invoke('fermion:openWindow', page, dims),
 		renderGraph: (dot) => ipcRenderer.invoke('fermion:renderGraph', dot),
 		// Child windows -> main -> main window (relays).
