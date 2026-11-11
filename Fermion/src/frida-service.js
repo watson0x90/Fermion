@@ -22,6 +22,17 @@ function routeMessage(kind, traceMode) {
 	return (traceMode && kind === 'SEND') ? 'trace' : 'terminal';
 }
 
+// Frida model objects (Process, Device, parameters) are not own-enumerable, so
+// they structured-clone to {} over IPC. Convert to a plain, JSON-safe object
+// (drops binary like a process icon) before returning across the seam.
+function toPlain(value) {
+	try {
+		return JSON.parse(JSON.stringify(value));
+	} catch {
+		return {};
+	}
+}
+
 // Pure: classify a device spec. 'socket@HOST' selects a remote device named by
 // HOST; anything else is a plain device id.
 function parseDeviceSpec(spec) {
@@ -91,7 +102,10 @@ class FridaService extends EventEmitter {
 	async enumerateProcesses() {
 		const frida = this._getFrida();
 		const device = await frida.getDevice(this._deviceId);
-		return device.enumerateProcesses();
+		const procs = await device.enumerateProcesses();
+		// Return IPC-serializable plain objects (pid/name + sanitized parameters,
+		// which carry ppid/path/etc. for the process tree; binary icon dropped).
+		return procs.map((p) => ({ pid: p.pid, name: p.name, parameters: toPlain(p.parameters) }));
 	}
 
 	// Device name + system parameters for the "Device Info" readout. Returns a
@@ -103,9 +117,10 @@ class FridaService extends EventEmitter {
 		let params = null;
 		let paramsError = null;
 		try {
-			params = await dev.querySystemParameters();
+			params = toPlain(await dev.querySystemParameters());
 		} catch (e) {
-			paramsError = e;
+			// IPC-serializable: a string, not an Error object.
+			paramsError = (e && e.message) ? e.message : String(e);
 		}
 		return { name: dev.name, params, paramsError };
 	}

@@ -9,7 +9,6 @@ const { readSettings, writeSettings } = require('../src/settings.js');
 const { createLayout } = require('../src/layout.js');
 const { openWindow } = require('../src/windows.js');
 const { initEditor, setMonacoTheme, toggleWrap } = require('../src/editor.js');
-const { FridaService, routeMessage } = require('../src/frida-service.js');
 // Inline index.html handlers (onchange="setMonacoTheme()", onclick="exitFermion()")
 // resolve against window; the renderer is bundled (IIFE) so top-level functions
 // are no longer implicit globals — expose the ones HTML references.
@@ -39,12 +38,21 @@ let fermionTerminal = null;
 
 var currentFilePath = null;
 
-// All frida-node interaction goes through this service (src/frida-service.js).
-// The UI subscribes to its message/log/detached events (wired below, after
-// traceSender exists) and calls its async methods. `traceMode` is a UI-side
-// flag: while on, SEND payloads are forwarded to the trace window instead of
-// the terminal (see onServiceMessage + routeMessage).
-const service = new FridaService();
+// All frida-node interaction runs in the MAIN process; the renderer drives it
+// through the preload bridge (window.fermion) and keeps a small local state
+// mirror for synchronous UI guards (the bridge is async-only). Events
+// (message/log/detached) are subscribed below, after traceSender exists.
+const fapi = window.fermion;
+let fstate = { deviceId: 'local', isAttached: false, hasScript: false, currentPid: null };
+function refreshState() { return fapi.getState().then((s) => { fstate = s; return s; }); }
+
+// Pure trace routing (was frida-service.routeMessage): a SEND payload goes to
+// the trace window only while trace mode is on, otherwise to the terminal.
+function routeMessage(kind, mode) { return (mode && kind === 'SEND') ? 'trace' : 'terminal'; }
+
+// UI-side flag: while on, SEND payloads route to the trace window (see
+// onServiceMessage). Tied to the loaded script (reset on user-script load +
+// detach; set once the tracer is live).
 let traceMode = false;
 
 // Enhanced Frida Output variables
@@ -61,12 +69,13 @@ let layout = null;
 // create+load the editor's script. Status text ("[+] Injecting => …") is
 // logged by the caller, as before.
 function injectVia(pid) {
-	service.attach(pid)
-		.then(() => {
-			traceSender.postMessage(service.currentPid);
-			return service.loadScript(window.MonacoCodeEditor.getValue());
+	fapi.attach(pid)
+		.then(() => refreshState())
+		.then((s) => {
+			traceSender.postMessage(s.currentPid);
+			return fapi.loadScript(window.MonacoCodeEditor.getValue());
 		})
-		.then(() => { traceMode = false; })  // user script loaded -> terminal routing
+		.then(() => { fstate.hasScript = true; traceMode = false; })  // user script loaded -> terminal routing
 		.catch(e => { appendFridaLog(e); });
 }
 
@@ -74,22 +83,25 @@ function injectVia(pid) {
 // Matches the old start(): spawn+attach -> publish PID -> "[+] Injecting" ->
 // load script -> resume -> "[+] Process start success".
 function startVia(ProcPath, ProcArgs) {
-	service.spawn(ProcPath, ProcArgs)
-		.then(({ pid }) => {
-			traceSender.postMessage(service.currentPid);
-			appendFridaLog('[+] Injecting => PID: ' + pid + ', Name: ' + ProcPath);
-			return service.loadScript(window.MonacoCodeEditor.getValue()).then(() => service.resume(pid));
+	let spawnedPid;
+	fapi.spawn(ProcPath, ProcArgs)
+		.then(({ pid }) => { spawnedPid = pid; return refreshState(); })
+		.then((s) => {
+			traceSender.postMessage(s.currentPid);
+			appendFridaLog('[+] Injecting => PID: ' + spawnedPid + ', Name: ' + ProcPath);
+			return fapi.loadScript(window.MonacoCodeEditor.getValue()).then(() => fapi.resume(spawnedPid));
 		})
-		.then(() => { traceMode = false; appendFridaLog('[+] Process start success'); })
+		.then(() => { fstate.hasScript = true; traceMode = false; appendFridaLog('[+] Process start success'); })
 		.catch(e => { appendFridaLog(e); });
 }
 
 // -= Detach =-
 
 document.getElementById("FridaDetach").onclick = function () {
-	if (service.isAttached) {
+	if (fstate.isAttached) {
 		appendFridaLog('[+] Detaching..');
-		service.detach();
+		fapi.detach();
+		fstate.isAttached = false;
 		traceSender.postMessage(null);
 	} else {
 		appendFridaLog('[!] Not currently attached..');
@@ -99,9 +111,9 @@ document.getElementById("FridaDetach").onclick = function () {
 // -= Reload Script =-
 
 document.getElementById("FridaReload").onclick = function () {
-	if (service.isAttached) {
-		if (service.hasScript) {
-			service.reloadScript(window.MonacoCodeEditor.getValue())
+	if (fstate.isAttached) {
+		if (fstate.hasScript) {
+			fapi.reloadScript(window.MonacoCodeEditor.getValue())
 				.then(() => { traceMode = false; appendFridaLog('[+] Script reloaded..'); })
 				.catch(e => { appendFridaLog(e); });
 		} else {
@@ -115,9 +127,9 @@ document.getElementById("FridaReload").onclick = function () {
 // -= Shim for process list attach =-
 
 ipc.on('attach-process', async (event, message) => {
-	if (!service.isAttached) {
+	if (!fstate.isAttached) {
 		appendFridaLog('[?] Attempting process attach..');
-		service.enumerateProcesses().then(data => {
+		fapi.enumerateProcesses().then(data => {
 			// Search active processes
 			var resultArray = [];
 			data.find(function (element) {
@@ -152,9 +164,9 @@ ipc.on('attach-process', async (event, message) => {
 // -= Shim for attach invocation =-
 
 ipc.on('attach-process-shim', async (event, message) => {
-	if (!service.isAttached) {
+	if (!fstate.isAttached) {
 		appendFridaLog('[?] Attempting process attach..');
-		service.enumerateProcesses().then(data => {
+		fapi.enumerateProcesses().then(data => {
 			// What are we searching for?
 			var ProcName = message[0];
 			var ProcId = message[1];
@@ -206,7 +218,7 @@ ipc.on('attach-process-shim', async (event, message) => {
 // -= Shim for start invocation =-
 
 ipc.on('start-process-shim', async (event, message) => {
-	if (!service.isAttached) {
+	if (!fstate.isAttached) {
 		appendFridaLog('[?] Attempting process start..');
 		var ProcPath = message[0];
 		var ProcAgrs = message[1];
@@ -227,17 +239,18 @@ ipc.on('start-process-shim', async (event, message) => {
 // -= Device Selector =-
 
 document.getElementById("setDevice").onclick = function () {
-	openWindow('device.html', { width: 420, height: 615, extraArgs: [service.deviceId] });
+	openWindow('device.html', { width: 420, height: 615, extraArgs: [fstate.deviceId] });
 }
 
 ipc.on('new-device', async (event, message) => {
-	await service.setDevice(message);
+	const id = await fapi.setDevice(message);
+	fstate.deviceId = id;
 });
 
 // -= Process Listing =-
 
 document.getElementById("FridaProc").onclick = function () {
-	openWindow('proc.html', { width: 570, height: 600, extraArgs: [service.deviceId] });
+	openWindow('proc.html', { width: 570, height: 600, extraArgs: [fstate.deviceId] });
 }
 
 // -= Instrument Manager =-
@@ -249,7 +262,7 @@ document.getElementById("FridaAttach").onclick = function () {
 // -= About =-
 
 document.getElementById("FermionAbout").onclick = function () {
-	openWindow('about.html', { width: 460, height: 270, extraArgs: [service.deviceId] });
+	openWindow('about.html', { width: 460, height: 270, extraArgs: [fstate.deviceId] });
 }
 
 // -= JS API Docs =-
@@ -263,8 +276,8 @@ document.getElementById("FermionDocs").onclick = function () {
 let TraceWin = null;
 document.getElementById("FermionTools").onclick = function () {
 	// The trace window expects a PID string; use "null" when not attached.
-	const pidArg = (service.currentPid == null || service.currentPid.length == 0)
-		? "null" : service.currentPid;
+	const pidArg = (fstate.currentPid == null || fstate.currentPid.length == 0)
+		? "null" : fstate.currentPid;
 	// @electron/remote is enabled for this window by the main process
 	// (browser-window-created handler in core.js).
 	TraceWin = openWindow('trace.html', { width: 425, height: 615, extraArgs: [pidArg] });
@@ -286,9 +299,9 @@ traceSender.onmessage = function (message) {
 		appendFridaLog('    |_ Reloading script in Monaco editor\n');
 		document.getElementById("FridaReload").click();
 	} else {
-		if (service.isAttached) {
-			if (service.hasScript) {
-				service.reloadScript(message.data)
+		if (fstate.isAttached) {
+			if (fstate.hasScript) {
+				fapi.reloadScript(message.data)
 					.then(() => {
 						// Flip to trace routing only once the tracer is live, so a
 						// send() during the reload gap still goes to the terminal.
@@ -319,14 +332,23 @@ function onServiceMessage(message) {
 		fermionTerminal.write(kind, text);
 	}
 }
-service.on('message', onServiceMessage);
-service.on('log', (level, text) => handleScriptMessage({ type: 'log', level, payload: text }));
-service.on('detached', (reason) => {
+fapi.onMessage(onServiceMessage);
+fapi.onLog((level, text) => handleScriptMessage({ type: 'log', level, payload: text }));
+fapi.onDetached((reason) => {
 	traceMode = false;  // no active script -> routing resets (fixes trace->detach->re-attach misroute)
+	fstate.isAttached = false;
 	traceSender.postMessage(null);
 	appendFridaLog(`[+] Exit Reason: ${reason}`);
 });
-if (window.__fermion) window.__fermion.service = service;
+// Prime the local state mirror from the main-process service.
+refreshState();
+// Sync view of the service state for the Playwright suite (bridge is async).
+if (window.__fermion) window.__fermion.service = {
+	get isAttached() { return fstate.isAttached; },
+	get hasScript() { return fstate.hasScript; },
+	get currentPid() { return fstate.currentPid; },
+	get deviceId() { return fstate.deviceId; },
+};
 
 // Logging
 //////////////////////////////////////////////////
@@ -418,8 +440,8 @@ document.getElementById("FermionSave").onclick = function () {
 }
 
 document.getElementById("getDeviceDetail").onclick = function () {
-	appendFridaLog("\n[>] Device --> " + service.deviceId);
-	service.getDeviceInfo().then(({ name, params, paramsError }) => {
+	appendFridaLog("\n[>] Device --> " + fstate.deviceId);
+	fapi.getDeviceInfo().then(({ name, params, paramsError }) => {
 		appendFridaLog("    |_ Device Name : " + name);
 		if (paramsError) {
 			appendFridaLog("[!] Failed to enumerate device properties: " + paramsError + "\n");
