@@ -5,7 +5,8 @@
   "main": "core.js",
   "scripts": {
     "start": "electron .",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "repository": "github:FuzzySecurity/Fermion",
   "author": "Ruben Boonen (@FuzzySec)",
@@ -24,7 +25,9 @@
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",
+    "@types/node": "^22.10.2",
     "eslint": "9.37.0",
-    "playwright-core": "1.65.0"
+    "playwright-core": "1.65.0",
+    "typescript": "^5.9.2"
   }
 }

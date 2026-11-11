@@ -1,3 +1,4 @@
+// @ts-check
 // The Frida seam: all frida-node interaction lives behind this EventEmitter.
 // The UI calls its async methods and subscribes to its events; it never touches
 // the DOM, the terminal, the trace window, or status text. This method+event

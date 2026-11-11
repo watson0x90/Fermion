@@ -1,3 +1,4 @@
+// @ts-check
 // Monaco editor setup, theme/wrap handling, and the startup version banner —
 // moved out of pages/index.html's inline scripts. initEditor() resolves the
 // Fermion/Frida versions synchronously (so the editor banner art can embed
@@ -41,7 +42,7 @@ function setMonacoTheme() {
 		SolarizedDark, SolarizedLight, BirdsOfParadise, Clouds, Kuroir,
 		NightOwl, Textmate, Amy, OceanicNext, TomorrowNightBlue, VibrantInk,
 	} = window.FermionThemes || {};
-	var theme = document.getElementById("MonacoThemeSelect").value;
+	var theme = /** @type {HTMLSelectElement} */ (document.getElementById("MonacoThemeSelect")).value;
 	var refCodeContainer = document.getElementById("Container");
 	if (theme == "idleFingers") {
 		monaco.editor.defineTheme("idleFingers", idleFingers);
@@ -104,12 +105,13 @@ function setMonacoTheme() {
 function toggleWrap() {
 	// Toggle the current state
 	var wrapState = document.getElementById("FermionMonacoWrap");
-	if (wrapState.children[0].checked == false) {
+	var checkbox = /** @type {HTMLInputElement} */ (wrapState.children[0]);
+	if (checkbox.checked == false) {
 		window.MonacoCodeEditor.updateOptions({ wordWrap: "on" });
-		wrapState.children[0].checked = true;
+		checkbox.checked = true;
 	} else {
 		window.MonacoCodeEditor.updateOptions({ wordWrap: "off" });
-		wrapState.children[0].checked = false;
+		checkbox.checked = false;
 	}
 }
 

@@ -1,3 +1,4 @@
+// @ts-check
 // localStorage persistence primitives for Fermion's output/editor settings.
 // Only the persistence mechanism lives here; collecting current state from the
 // DOM and applying restored state are owned by the modules that own those

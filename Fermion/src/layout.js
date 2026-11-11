@@ -1,3 +1,4 @@
+// @ts-check
 // Output/editor split layout: toggle vertical<->horizontal, persist the
 // choice, keep the toolbar icon in sync, and adjust the search box to the
 // sidebar width. Owns the live `isVertical` state. The split library (Split)
@@ -35,7 +36,7 @@ function createLayout(deps) {
 			const split0 = document.getElementById('split-0');
 			const split1 = document.getElementById('split-1');
 			const container = document.getElementById('container');
-			const fridaOutContainer = document.querySelector('.textarea-container');
+			const fridaOutContainer = /** @type {HTMLElement} */ (document.querySelector('.textarea-container'));
 			const splitContainer = document.querySelector('.split');
 
 			// Force visibility of the output area during transition
@@ -123,7 +124,7 @@ function createLayout(deps) {
 		const containerWidth = document.getElementById('split-1').offsetWidth;
 
 		// Adjust search container width based on available space
-		const searchContainer = document.querySelector('.search-container');
+		const searchContainer = /** @type {HTMLElement | null} */ (document.querySelector('.search-container'));
 		if (searchContainer) {
 			// Make search container narrower if space is limited
 			if (containerWidth < 300) {

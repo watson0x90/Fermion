@@ -1,3 +1,4 @@
+// @ts-check
 // One factory for Fermion's child windows (device, proc, instrument, about,
 // docs, trace), replacing six near-identical `new BrowserWindow` blocks.
 //
