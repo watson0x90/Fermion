@@ -70,5 +70,8 @@ jobs:
       - name: Terminal toolbar (filter/search/clear)
         run: xvfb-run -a node scripts/ui-test-toolbar.js
 
+      - name: Trace window remote enabled
+        run: xvfb-run -a node scripts/ui-test-trace-remote.js
+
       - name: Layout persistence regression
         run: xvfb-run -a node scripts/ui-test-layout.js
