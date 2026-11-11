@@ -222,15 +222,6 @@
                           <line x1="12" y1="3" x2="12" y2="21"></line>
                         </svg>
                       </button>
-                      <button id="color-settings" class="toolbar-button" title="Color settings">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <circle cx="12" cy="12" r="3"></circle>
-                          <path
-                            d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z">
-                          </path>
-                        </svg>
-                      </button>
                       <button id="clear-output" class="toolbar-button" title="Clear output">
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
                           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -249,6 +240,15 @@
                           <polyline points="7 3 7 8 15 8"></polyline>
                         </svg>
                       </button>
+                    </div>
+                    <div class="filter-chips">
+                      <span class="flt-label">filter:</span>
+                      <button id="flt-log" class="flt-chip on" data-kind="LOG" title="Toggle console.log">LOG</button>
+                      <button id="flt-warn" class="flt-chip on" data-kind="WARN" title="Toggle console.warn">WARN</button>
+                      <button id="flt-err" class="flt-chip on" data-kind="ERR" title="Toggle errors">ERR</button>
+                      <button id="flt-send" class="flt-chip on" data-kind="SEND" title="Toggle send()">SEND</button>
+                      <button id="flt-status" class="flt-chip on" data-kind="STATUS" title="Toggle status">STATUS</button>
+                      <button id="term-follow" class="toolbar-button on" title="Follow output tail">&#8615;</button>
                     </div>
                     <div class="search-container">
                       <input type="text" id="regex-search" placeholder="Search...">
@@ -269,51 +269,10 @@
                     </div>
                   </div>
                   <div class="textarea-container">
-                    <textarea spellcheck="false" id="FridaOut" autofocus="true"></textarea>
-                    <div id="highlight-overlay" class="highlight-overlay"></div>
+                    <div id="FridaOut" class="terminal-host"></div>
                   </div>
                 </div>
                 <!-- UPDATED FRIDA OUTPUT SECTION END -->
-
-                <!-- Color settings modal -->
-                <div id="color-modal" class="color-modal">
-                  <div class="color-modal-content">
-                    <span class="close-modal">&times;</span>
-                    <h3>Color Settings</h3>
-                    <div class="color-setting">
-                      <label for="background-color">Background Color:</label>
-                      <div class="color-input-group">
-                        <input type="color" id="background-color" value="#423636">
-                        <input type="text" id="background-color-hex" value="#423636">
-                      </div>
-                    </div>
-                    <div class="color-setting">
-                      <label for="text-color">Text Color:</label>
-                      <div class="color-input-group">
-                        <input type="color" id="text-color" value="#ffffff">
-                        <input type="text" id="text-color-hex" value="#ffffff">
-                      </div>
-                    </div>
-                    <div class="color-setting">
-                      <label for="highlight-color">Highlight Color:</label>
-                      <div class="color-input-group">
-                        <input type="color" id="highlight-color" value="#ffff00">
-                        <input type="text" id="highlight-color-hex" value="#ffff00">
-                      </div>
-                    </div>
-                    <div class="color-setting">
-                      <label for="current-match-color">Current Match Color:</label>
-                      <div class="color-input-group">
-                        <input type="color" id="current-match-color" value="#FFD300">
-                        <input type="text" id="current-match-color-hex" value="#FFD300">
-                      </div>
-                    </div>
-                    <div class="modal-buttons">
-                      <button id="apply-colors">Apply</button>
-                      <button id="reset-colors">Reset</button>
-                    </div>
-                  </div>
-                </div>
               </div>
             </div>
         </div>
@@ -326,6 +285,7 @@
     <script src="../src/renderer.js"></script>
     <script defer src="../src/lang/monaco-theme.js"></script>
     <script src="../src/frameworks/split-1.6.4.js"></script>
+    <link rel="stylesheet" type="text/css" href="../node_modules/@xterm/xterm/css/xterm.css">
     <link rel="stylesheet" type="text/css" href="../src/custom.css">
     <link rel="stylesheet" type="text/css" href="../src/frameworks/tailwind/tailwind.min.css">
     <link rel="stylesheet" type="text/css" href="../src/frameworks/semantic/semantic.css">

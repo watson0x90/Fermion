@@ -1,16 +1,32 @@
 const electron = require('electron');
 const path = require('path');
 const ipc = require('electron').ipcRenderer;
-var MutexPromise = require('mutex-promise');
 const remote = require('@electron/remote');
 const BrowserWindow = remote.BrowserWindow;
 const dialog = remote.dialog;
 var fs = require('fs');
 const frida = require('frida');
 const { wrapExtraArgs } = require('../src/helper.js');
+const { createTerminal } = require('../src/terminal.js');
+const { formatMessage } = require('../src/output-model.js');
 
 // Overwrite default node.js prop to get Jquery working
 window.$ = window.jQuery = require('jquery');
+
+// -= Output terminal =-
+// Replaces the old <textarea>. The #FridaOut host is parsed above this script,
+// so it exists now; creating the terminal here means the startup banner
+// (printed from index.html after this script) lands in it.
+let fermionTerminal = null;
+(function () {
+	const host = document.getElementById('FridaOut');
+	if (host) {
+		fermionTerminal = createTerminal(host);
+		window.__fermion = { terminal: fermionTerminal, handleScriptMessage };
+		window.addEventListener('resize', function () { if (fermionTerminal) fermionTerminal.fit(); });
+		setTimeout(function () { if (fermionTerminal) fermionTerminal.fit(); }, 300);
+	}
+})();
 
 // Globals
 //////////////////////////////////////////////////
@@ -20,26 +36,11 @@ var currentFilePath = null;
 let script = null;
 var session = null;
 var sessionPID = null;
-let logMutex = new MutexPromise('48011b2b9a930ee19e26320e5adbffa2e309663c');
-let RunningLog = [];
 var deviceId = 'local';
 
 // Enhanced Frida Output variables
-let currentFontSize = 0.8; // em units
 let isVertical = true;
-let searchRegex = null;
-let bgColor = '#423636';
-let textColor = '#ffffff';
-let highlightColor = '#ffff00';
-let highlightTextColor = '#000000';
 let originalSplit = null;
-
-// Add these new search-related variables
-let matchPositions = [];
-let currentMatchIndex = -1;
-let totalMatches = 0;
-let currentMatchColor = '#FFD300';
-let currentMatchTextColor = '#000000';
 
 // Instrument
 //////////////////////////////////////////////////
@@ -62,18 +63,7 @@ async function inject(AttachTo) {
 	// it will lock the UI on big volumes of data. Instead we append
 	// to an array using a mutex and every X ms we flush the array
 	// to the text area
-	script.message.connect(message => {
-		if (message.type == "send") {
-			ChangeLogExclusive(logMutex, 'Append', message.payload);
-		} else {
-			ChangeLogExclusive(logMutex, 'Append', "[!] Runtime error: " + message.stack);
-		}
-		setTimeout(function () {
-			if (RunningLog.length > 0) {
-				ChangeLogExclusive(logMutex, 'Write', null);
-			}
-		}, 500);
-	});
+	script.message.connect(message => handleScriptMessage(message));
 	await script.load();
 }
 
@@ -102,18 +92,7 @@ async function start(Path, Args) {
 	// it will lock the UI on big volumes of data. Instead we append
 	// to an array using a mutex and every X ms we flush the array
 	// to the text area
-	script.message.connect(message => {
-		if (message.type == "send") {
-			ChangeLogExclusive(logMutex, 'Append', message.payload);
-		} else {
-			ChangeLogExclusive(logMutex, 'Append', "[!] Runtime error: " + message.stack);
-		}
-		setTimeout(function () {
-			if (RunningLog.length > 0) {
-				ChangeLogExclusive(logMutex, 'Write', null);
-			}
-		}, 500);
-	});
+	script.message.connect(message => handleScriptMessage(message));
 
 	appendFridaLog('[+] Injecting => PID: ' + procID + ', Name: ' + Path);
 	await script.load();
@@ -155,18 +134,7 @@ document.getElementById("FridaReload").onclick = async function () {
 		if (script != null) {
 			script.unload();
 			script = await session.createScript(MonacoCodeEditor.getValue());
-			script.message.connect(message => {
-				if (message.type == "send") {
-					ChangeLogExclusive(logMutex, 'Append', message.payload);
-				} else {
-					ChangeLogExclusive(logMutex, 'Append', "[!] Runtime error: " + message.stack);
-				}
-				setTimeout(function () {
-					if (RunningLog.length > 0) {
-						ChangeLogExclusive(logMutex, 'Write', null);
-					}
-				}, 500);
-			});
+			script.message.connect(message => handleScriptMessage(message));
 			appendFridaLog('[+] Script reloaded..');
 			await script.load();
 		} else {
@@ -308,20 +276,11 @@ async function trace(scriptBody) {
 		if (script != null) {
 			script.unload();
 			script = await session.createScript(scriptBody);
-			script.message.connect(message => {
-				if (message.type == "send") {
-					ChangeLogExclusive(logMutex, 'Append', "[>] Received Graphviz trace data");
-					// Send it back to trace window
-					traceSender.postMessage(message.payload);
-				} else {
-					ChangeLogExclusive(logMutex, 'Append', "[!] Runtime error: " + message.stack);
-				}
-				setTimeout(function () {
-					if (RunningLog.length > 0) {
-						ChangeLogExclusive(logMutex, 'Write', null);
-					}
-				}, 500);
-			});
+			script.message.connect(message => handleScriptMessage(message, function (payload) {
+				appendFridaLog("[>] Received Graphviz trace data");
+				// Forward the DOT payload to the trace window (not printed here).
+				traceSender.postMessage(payload);
+			}));
 			appendFridaLog('\n[+] Current script unloaded..');
 			appendFridaLog('    |_ Graphviz tracer loaded\n');
 			await script.load();
@@ -567,51 +526,25 @@ traceSender.onmessage = function (message) {
 // Logging
 //////////////////////////////////////////////////
 
-function appendFridaLog(data) {
-	var FridaOut = document.getElementById('FridaOut');
-	FridaOut.value += (data + "\n");
-
-	// DIY garbage collection
-	// |-> If the textarea grows too large it locks up the app
-	var aFridaOut = FridaOut.value.split("\n");
-	var iMaxLen = 5000; // max line count in textarea
-	if (aFridaOut.length > iMaxLen) {
-		var iRemCount = aFridaOut.length - iMaxLen;
-		aFridaOut.splice(0, iRemCount);
-		FridaOut.value = aFridaOut.join("\n");
+// Shared handler for every Frida script.message. Maps the message to a typed
+// line (console.log->LOG, warn->WARN, error-level log / throw->ERR, send->SEND,
+// unknown->STATUS) and writes it to the terminal. The `send` branch is
+// parameterized: when `onSend` is given (the trace site) the raw payload is
+// forwarded instead of printed.
+function handleScriptMessage(message, onSend) {
+	const { kind, text } = formatMessage(message);
+	if (kind === 'SEND' && typeof onSend === 'function') {
+		onSend(message.payload);
+		return;
 	}
-
-	FridaOut.scrollTop = FridaOut.scrollHeight;
-
-	// If search is active, refresh highlights for the new output. performSearch
-	// navigates to (and scrolls to) the first match, which would yank the
-	// viewport away from the live tail on every appended line, so re-assert the
-	// tail-follow scroll afterwards to match the non-search streaming behavior.
-	if (searchRegex) {
-		performSearch();
-		FridaOut.scrollTop = FridaOut.scrollHeight;
-	}
+	if (fermionTerminal) fermionTerminal.write(kind, text);
 }
 
-function ChangeLogExclusive(mutex, locktype, data) {
-	return mutex.promise()
-		.then(function (mutex) {
-			mutex.lock();
-			if (locktype == "Append") {
-				RunningLog.push(data);
-			} else if (locktype == "Write") {
-				appendFridaLog(RunningLog.join("\n"));
-				RunningLog = [];
-			}
-		})
-		.then(function (res) {
-			mutex.unlock();
-			return res;
-		})
-		.catch(function (e) {
-			mutex.unlock();
-			throw e;
-		});
+// Status/meta output goes to the terminal as the STATUS kind. The terminal
+// owns its own scrollback cap and follow-tail behavior (replacing the old
+// textarea trim + overlay-search).
+function appendFridaLog(data) {
+	if (fermionTerminal) fermionTerminal.write('STATUS', data);
 }
 
 // Monaco Editor
@@ -883,20 +816,6 @@ const increaseFontButton = document.getElementById('increase-font');
 const regexSearch = document.getElementById('regex-search');
 const searchButton = document.getElementById('search-button');
 const toggleLayoutButton = document.getElementById('toggle-layout');
-const colorSettingsButton = document.getElementById('color-settings');
-const colorModal = document.getElementById('color-modal');
-const closeModalBtn = document.querySelector('.close-modal');
-const applyColorsButton = document.getElementById('apply-colors');
-const resetColorsButton = document.getElementById('reset-colors');
-const bgColorPicker = document.getElementById('background-color');
-const bgColorHex = document.getElementById('background-color-hex');
-const textColorPicker = document.getElementById('text-color');
-const textColorHex = document.getElementById('text-color-hex');
-const highlightColorPicker = document.getElementById('highlight-color');
-const highlightColorHex = document.getElementById('highlight-color-hex');
-const highlightOverlay = document.getElementById('highlight-overlay');
-const currentMatchColorPicker = document.getElementById('current-match-color');
-const currentMatchColorHex = document.getElementById('current-match-color-hex');
 const clearOutputButton = document.getElementById('clear-output');
 const saveOutputButton = document.getElementById('save-output');
 
@@ -925,14 +844,48 @@ document.addEventListener('DOMContentLoaded', function () {
 	// Initialize Monaco editor with custom theme
 	setTimeout(addMonacoSettingsListeners, 1500);
 
-	// Initialize search functionality with new features
-	setTimeout(() => {
-		initSearchFunctionality();
-		addSearchNavButtons();
-		addSearchKeyboardShortcuts();
-		addSearchStyles();
-	}, 500);
+	// Wire the terminal toolbar (search, level filters, follow-tail).
+	wireTerminalToolbar();
 });
+
+// Wire the output terminal's toolbar controls to the terminal controller.
+function wireTerminalToolbar() {
+	const t = fermionTerminal;
+	if (!t) return;
+
+	const searchInput = document.getElementById('regex-search');
+	if (searchInput) {
+		const runNext = () => { if (searchInput.value) t.searchNext(searchInput.value); };
+		const searchBtn = document.getElementById('search-button');
+		if (searchBtn) searchBtn.addEventListener('click', runNext);
+		searchInput.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				if (searchInput.value) (e.shiftKey ? t.searchPrev : t.searchNext)(searchInput.value);
+			} else if (e.key === 'Escape') {
+				e.preventDefault();
+				searchInput.value = '';
+				t.clearSearch();
+			}
+		});
+		const clearBtn = document.getElementById('clear-search');
+		if (clearBtn) clearBtn.addEventListener('click', () => { searchInput.value = ''; t.clearSearch(); });
+	}
+
+	// Level filter chips (LOG/WARN/ERR/SEND/STATUS) — all start visible (.on).
+	document.querySelectorAll('.flt-chip').forEach((chip) => {
+		chip.addEventListener('click', () => {
+			const on = chip.classList.toggle('on');
+			t.setFilter(chip.getAttribute('data-kind'), on);
+		});
+	});
+
+	// Follow-tail toggle (on by default).
+	const followBtn = document.getElementById('term-follow');
+	if (followBtn) followBtn.addEventListener('click', () => {
+		t.setFollow(followBtn.classList.toggle('on'));
+	});
+}
 
 // Add event listeners to UI elements
 function addEventListeners() {
@@ -943,98 +896,14 @@ function addEventListeners() {
 	decreaseFontButton.addEventListener('click', decreaseFontSize);
 	increaseFontButton.addEventListener('click', increaseFontSize);
 
-	// Search functionality (search-button click, regex-search Enter/input) is
-	// registered in initSearchFunctionality() — do not bind it here too, or every
-	// click/Enter fires twice (e.g. Enter would advance two matches).
-
 	// Layout toggle
 	toggleLayoutButton.addEventListener('click', toggleLayout);
 
-	// Color settings
-	colorSettingsButton.addEventListener('click', function () {
-		colorModal.style.display = 'block';
-	});
-
-	closeModalBtn.addEventListener('click', function () {
-		colorModal.style.display = 'none';
-	});
-
+	// Output clear / save
 	clearOutputButton.addEventListener('click', clearOutputArea);
-
 	saveOutputButton.addEventListener('click', saveOutputArea);
 
-
-	window.addEventListener('click', function (event) {
-		if (event.target === colorModal) {
-			colorModal.style.display = 'none';
-		}
-	});
-
-	currentMatchColorPicker.addEventListener('input', function () {
-		currentMatchColorHex.value = this.value;
-	});
-
-	currentMatchColorHex.addEventListener('input', function () {
-		if (/^#[0-9A-F]{6}$/i.test(this.value)) {
-			currentMatchColorPicker.value = this.value;
-		}
-	});
-
-	// Link color pickers with hex inputs
-	bgColorPicker.addEventListener('input', function () {
-		bgColorHex.value = this.value;
-	});
-
-	bgColorHex.addEventListener('input', function () {
-		if (/^#[0-9A-F]{6}$/i.test(this.value)) {
-			bgColorPicker.value = this.value;
-		}
-	});
-
-	textColorPicker.addEventListener('input', function () {
-		textColorHex.value = this.value;
-	});
-
-	textColorHex.addEventListener('input', function () {
-		if (/^#[0-9A-F]{6}$/i.test(this.value)) {
-			textColorPicker.value = this.value;
-		}
-	});
-
-	highlightColorPicker.addEventListener('input', function () {
-		highlightColorHex.value = this.value;
-	});
-
-	highlightColorHex.addEventListener('input', function () {
-		if (/^#[0-9A-F]{6}$/i.test(this.value)) {
-			highlightColorPicker.value = this.value;
-		}
-	});
-
-
-	// Apply and reset buttons
-	applyColorsButton.addEventListener('click', applyColors);
-	resetColorsButton.addEventListener('click', resetColors);
-
-	// (Overlay scroll-sync is registered in initSearchFunctionality(); not bound
-	// here to avoid a duplicate scroll handler.)
-
-	// Handle textarea input and content changes for highlighting
-	fridaOut.addEventListener('input', function () {
-		// If search is active, update highlights
-		if (searchRegex) {
-			performSearch();
-		}
-	});
-
-	// Monitor textarea size changes to adjust highlight overlay
-	new ResizeObserver(() => {
-		if (searchRegex) {
-			performSearch();
-		}
-	}).observe(fridaOut);
-
-	// Add event listeners for sidebar state changes and window resize
+	// Sidebar state changes and window resize
 	window.addEventListener('resize', adjustUIForSidebar);
 
 	// Add a listener for possible sidebar toggle events
@@ -1047,136 +916,12 @@ function addEventListeners() {
 	});
 }
 
-// Function to add navigation buttons to the toolbar
-function addSearchNavButtons() {
-	// First check if buttons already exist
-	if (document.getElementById('prev-match') || document.getElementById('next-match')) {
-		return;
-	}
-
-	const searchContainer = document.querySelector('.search-container');
-
-	// Create navigation buttons
-	const navContainer = document.createElement('div');
-	navContainer.className = 'search-nav-buttons';
-	navContainer.style.display = 'none'; // Hidden by default
-
-	const prevButton = document.createElement('button');
-	prevButton.id = 'prev-match';
-	prevButton.className = 'toolbar-button';
-	prevButton.title = 'Previous match (Shift+Enter)';
-	prevButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>`;
-
-	const nextButton = document.createElement('button');
-	nextButton.id = 'next-match';
-	nextButton.className = 'toolbar-button';
-	nextButton.title = 'Next match (Enter)';
-	nextButton.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>`;
-
-	navContainer.appendChild(prevButton);
-	navContainer.appendChild(nextButton);
-
-	// Insert before the search button
-	const searchButton = document.getElementById('search-button');
-	searchContainer.insertBefore(navContainer, searchButton);
-
-	// Add event listeners
-	prevButton.addEventListener('click', navigateToPreviousMatch);
-	nextButton.addEventListener('click', navigateToNextMatch);
-}
-
-// Function to navigate to the previous match
-function navigateToPreviousMatch() {
-	if (matchPositions.length === 0) return;
-
-	currentMatchIndex = (currentMatchIndex <= 0) ? matchPositions.length - 1 : currentMatchIndex - 1;
-	highlightCurrentMatch();
-	scrollToCurrentMatch();
-	updateMatchCounter();
-}
-
-// Function to navigate to the next match
-function navigateToNextMatch() {
-	if (matchPositions.length === 0) return;
-
-	currentMatchIndex = (currentMatchIndex >= matchPositions.length - 1) ? 0 : currentMatchIndex + 1;
-	highlightCurrentMatch();
-	scrollToCurrentMatch();
-	updateMatchCounter();
-}
-
-// Function to scroll the textarea to show the current match
-function scrollToCurrentMatch() {
-	if (currentMatchIndex < 0 || matchPositions.length === 0) return;
-
-	const fridaOut = document.getElementById('FridaOut');
-	const match = matchPositions[currentMatchIndex];
-
-	// Calculate position in the textarea
-	const textBeforeMatch = fridaOut.value.substring(0, match.start);
-	const lines = textBeforeMatch.split('\n');
-
-	// Create a temporary element to measure text dimensions
-	const temp = document.createElement('div');
-	temp.style.position = 'absolute';
-	temp.style.visibility = 'hidden';
-	temp.style.whiteSpace = 'pre';
-	temp.style.font = window.getComputedStyle(fridaOut).font;
-	document.body.appendChild(temp);
-
-	// Calculate the line height
-	temp.textContent = 'M';
-	const lineHeight = temp.offsetHeight;
-
-	// Calculate approximate scroll position
-	const lineNumber = lines.length - 1;
-	const approximateScrollTop = lineNumber * lineHeight;
-
-	// Remove the temporary element
-	document.body.removeChild(temp);
-
-	// Scroll to position, with some offset to center it in the view
-	const viewportHeight = fridaOut.clientHeight;
-	fridaOut.scrollTop = approximateScrollTop - (viewportHeight / 2) + lineHeight;
-}
-
-// Function to update the UI counter showing current match position
-function updateMatchCounter() {
-	// Update or create the match counter
-	let counter = document.querySelector('.match-indicator');
-
-	if (!counter) {
-		counter = document.createElement('div');
-		counter.className = 'match-indicator';
-		document.querySelector('.textarea-container').appendChild(counter);
-	}
-
-	if (matchPositions.length > 0) {
-		counter.textContent = `${currentMatchIndex + 1} of ${matchPositions.length} matches`;
-		counter.style.display = 'block';
-
-		// Show navigation buttons
-		const navButtons = document.querySelector('.search-nav-buttons');
-		if (navButtons) {
-			navButtons.style.display = 'flex';
-		}
-	} else {
-		counter.style.display = 'none';
-
-		// Hide navigation buttons
-		const navButtons = document.querySelector('.search-nav-buttons');
-		if (navButtons) {
-			navButtons.style.display = 'none';
-		}
-	}
-}
-
 // Copy output to clipboard
 function copyOutputToClipboard() {
-	fridaOut.select();
-	document.execCommand('copy');
-	window.getSelection().removeAllRanges();
-
+	const text = fermionTerminal ? fermionTerminal.copySelectionOrAll() : '';
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(text);
+	}
 	showNotification('Copied to clipboard!');
 }
 
@@ -1202,95 +947,16 @@ function showNotification(message) {
 	}, 2000);
 }
 
-// Decrease font size
+// Decrease terminal font size
 function decreaseFontSize() {
-	if (currentFontSize > 0.5) {
-		currentFontSize -= 0.1;
-		currentFontSize = Math.round(currentFontSize * 10) / 10; // Round to 1 decimal place
-		fridaOut.style.fontSize = currentFontSize + 'em';
-		highlightOverlay.style.fontSize = currentFontSize + 'em';
-		saveSettings();
-
-		// Reapply search highlighting if active
-		if (searchRegex) {
-			performSearch();
-		}
-	}
+	if (!fermionTerminal) return;
+	fermionTerminal.setFontSize(Math.max(8, fermionTerminal.getFontSize() - 1));
 }
 
-// Increase font size
+// Increase terminal font size
 function increaseFontSize() {
-	if (currentFontSize < 2.0) {
-		currentFontSize += 0.1;
-		currentFontSize = Math.round(currentFontSize * 10) / 10; // Round to 1 decimal place
-		fridaOut.style.fontSize = currentFontSize + 'em';
-		highlightOverlay.style.fontSize = currentFontSize + 'em';
-		saveSettings();
-
-		// Reapply search highlighting if active
-		if (searchRegex) {
-			performSearch();
-		}
-	}
-}
-
-// Improved synchronization function for textarea and overlay
-function syncOverlayDimensions() {
-	if (!highlightOverlay || !fridaOut) return;
-
-	// Get computed dimensions from the textarea
-	const computedStyle = window.getComputedStyle(fridaOut);
-
-	// Apply exact dimensions and properties to the overlay
-	highlightOverlay.style.width = computedStyle.width;
-	highlightOverlay.style.height = computedStyle.height;
-	highlightOverlay.style.padding = computedStyle.padding;
-	highlightOverlay.style.boxSizing = computedStyle.boxSizing;
-	highlightOverlay.style.fontFamily = computedStyle.fontFamily;
-	highlightOverlay.style.fontSize = computedStyle.fontSize;
-	highlightOverlay.style.lineHeight = computedStyle.lineHeight;
-	highlightOverlay.style.letterSpacing = computedStyle.letterSpacing;
-	highlightOverlay.style.wordSpacing = computedStyle.wordSpacing;
-	highlightOverlay.style.textAlign = computedStyle.textAlign;
-	highlightOverlay.style.whiteSpace = 'pre-wrap'; // This matches textarea behavior
-
-	// Sync scroll position
-	highlightOverlay.scrollTop = fridaOut.scrollTop;
-	highlightOverlay.scrollLeft = fridaOut.scrollLeft;
-}
-
-// Updated CSS to apply to the highlight overlay
-function updateOverlayStyles() {
-	const style = document.createElement('style');
-	style.textContent = `
-	  .highlight-overlay {
-		position: absolute;
-		top: 0;
-		left: 0;
-		width: 100%;
-		height: 100%;
-		pointer-events: none;
-		color: transparent;
-		overflow: auto;
-		font-family: monospace;
-		font-size: 0.8em;
-		line-height: 1.7em;
-		padding: 8px;
-		box-sizing: border-box;
-		border: 1px solid transparent;
-		z-index: 5;
-		white-space: pre-wrap; /* Match textarea behavior */
-	  }
-  
-	  .highlight-match {
-		background-color: var(--highlight-bg, #ffff00);
-		color: var(--highlight-text, #000000) !important;
-		padding: 0;
-		border-radius: 2px;
-		display: inline;
-	  }
-	`;
-	document.head.appendChild(style);
+	if (!fermionTerminal) return;
+	fermionTerminal.setFontSize(Math.min(28, fermionTerminal.getFontSize() + 1));
 }
 
 // Enhanced function to adjust UI based on sidebar state
@@ -1311,301 +977,6 @@ function adjustUIForSidebar() {
 		}
 	}
 
-	// Update overlay dimensions after sidebar changes
-	syncOverlayDimensions();
-
-	// If search is active, reapply highlights
-	if (searchRegex) {
-		performSearch();
-	}
-}
-
-// Initialize the search-related functionality
-function initSearchFunctionality() {
-	// Update overlay styles
-	updateOverlayStyles();
-
-	// Set clear button event
-	document.getElementById('clear-search').addEventListener('click', clearSearch);
-
-	// Handle input changes for search box
-	document.getElementById('regex-search').addEventListener('input', function () {
-		if (this.value.trim() === '') {
-			clearSearch();
-		}
-	});
-
-	// Handle search button clicks
-	document.getElementById('search-button').addEventListener('click', performSearch);
-
-	// Note: Enter/Shift+Enter navigation for the search box is handled by the
-	// keydown listener in addSearchKeyboardShortcuts() (which also preventDefaults
-	// the keypress). A keypress Enter handler here would be redundant.
-
-	// Sync scrolling between textarea and highlight overlay
-	document.getElementById('FridaOut').addEventListener('scroll', function () {
-		document.getElementById('highlight-overlay').scrollTop = this.scrollTop;
-		document.getElementById('highlight-overlay').scrollLeft = this.scrollLeft;
-	});
-}
-
-// Add keyboard shortcuts for search
-function addSearchKeyboardShortcuts() {
-	// Global Ctrl+F to focus search box
-	document.addEventListener('keydown', function (e) {
-		// Check if this is Ctrl+F (or Cmd+F on Mac)
-		if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-			// Don't intercept if user is typing in Monaco editor (it has its own search)
-			const activeElement = document.activeElement;
-			// activeElement.closest('.monaco-editor') already answers "is focus
-			// inside the editor"; the previous extra querySelector(...).contains()
-			// clause was redundant and threw when Monaco's node was not yet in the
-			// DOM (querySelector returned null).
-			const isInMonacoEditor = activeElement &&
-				activeElement.closest('.monaco-editor');
-
-			if (!isInMonacoEditor) {
-				e.preventDefault();
-				// Focus the search box
-				const searchInput = document.getElementById('regex-search');
-				searchInput.focus();
-				searchInput.select();
-			}
-		}
-	});
-
-	// Search box keyboard navigation
-	const searchInput = document.getElementById('regex-search');
-	searchInput.addEventListener('keydown', function (e) {
-		if (e.key === 'Enter') {
-			// Shift+Enter to go to previous match
-			if (e.shiftKey) {
-				e.preventDefault();
-				navigateToPreviousMatch();
-			}
-			// Enter to go to next match
-			else {
-				e.preventDefault();
-				// If we have an active search, navigate to next match
-				if (searchRegex) {
-					navigateToNextMatch();
-				}
-				// Otherwise, perform search
-				else {
-					performSearch();
-				}
-			}
-		}
-		// Escape to clear search
-		else if (e.key === 'Escape') {
-			e.preventDefault();
-			clearSearch();
-		}
-	});
-
-	// Textarea Esc key to clear search
-	document.getElementById('FridaOut').addEventListener('keydown', function (e) {
-		if (e.key === 'Escape' && searchRegex) {
-			e.preventDefault();
-			clearSearch();
-		}
-	});
-}
-
-// Add search styles
-function addSearchStyles() {
-	const styleEl = document.createElement('style');
-	styleEl.textContent = `
-	  .highlight-match.current-match {
-		background-color: var(--current-match-bg, ${currentMatchColor}) !important;
-		color: var(--current-match-text, ${currentMatchTextColor}) !important;
-	  }
-	  
-	  .search-nav-buttons {
-		display: flex;
-		align-items: center;
-		margin-right: 5px;
-	  }
-	`;
-	document.head.appendChild(styleEl);
-
-	// Set initial CSS variables
-	document.documentElement.style.setProperty('--current-match-bg', currentMatchColor);
-	document.documentElement.style.setProperty('--current-match-text', currentMatchTextColor);
-}
-
-// Perform search
-function performSearch() {
-	const searchTerm = document.getElementById('regex-search').value.trim();
-
-	if (searchTerm === '') {
-		searchRegex = null;
-		clearSearch();
-		return;
-	}
-
-	try {
-		// Create a new regex object
-		searchRegex = new RegExp(searchTerm, 'gi');
-		highlightMatches();
-	} catch (error) {
-		showNotification('Invalid regular expression: ' + error.message);
-		searchRegex = null;
-		clearHighlights();
-	}
-}
-
-// Function to clear the search
-function clearSearch() {
-	const searchInput = document.getElementById('regex-search');
-	searchInput.value = '';
-	searchRegex = null;
-	matchPositions = [];
-	currentMatchIndex = -1;
-	totalMatches = 0;
-	clearHighlights();
-
-	// Hide match indicator
-	const matchIndicator = document.querySelector('.match-indicator');
-	if (matchIndicator) {
-		matchIndicator.style.display = 'none';
-	}
-
-	// Hide navigation buttons
-	const navButtons = document.querySelector('.search-nav-buttons');
-	if (navButtons) {
-		navButtons.style.display = 'none';
-	}
-}
-
-// Clear highlights
-function clearHighlights() {
-	highlightOverlay.innerHTML = '';
-
-	// Remove match indicator if present
-	const matchIndicator = document.querySelector('.match-indicator');
-	if (matchIndicator) {
-		matchIndicator.parentNode.removeChild(matchIndicator);
-	}
-}
-
-// Escape text before it is inserted into the highlight overlay's innerHTML.
-// Frida output comes from the instrumented (untrusted) target, and this
-// renderer has Node integration, so unescaped output could both misalign the
-// highlight overlay and execute injected markup. Escapes the HTML-significant
-// characters; newlines are converted to <br> separately by the caller.
-function escapeHtml(text) {
-	return String(text)
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;');
-}
-
-// Enhanced highlight function
-function highlightMatches() {
-	if (!searchRegex) return;
-
-	// Clear previous highlights
-	highlightOverlay.innerHTML = '';
-
-	// Get the current text
-	const content = fridaOut.value;
-	if (!content) return;
-
-	// Reset match tracking
-	matchPositions = [];
-	totalMatches = 0;
-
-	// Ensure overlay dimensions match textarea exactly
-	syncOverlayDimensions();
-
-	// Create a fresh regex for the actual processing
-	const processRegex = new RegExp(searchRegex.source, 'gi');
-
-	// Transform content to HTML with highlights
-	let htmlContent = '';
-	let lastIndex = 0;
-	let match;
-
-	while ((match = processRegex.exec(content)) !== null) {
-		// Add text before the match
-		htmlContent += escapeHtml(content.substring(lastIndex, match.index));
-
-		// Store match position
-		matchPositions.push({
-			start: match.index,
-			end: processRegex.lastIndex,
-			text: match[0]
-		});
-
-		// Add the highlighted match with a data attribute for the match index
-		htmlContent += `<span class="highlight-match" data-match-index="${matchPositions.length - 1}">${escapeHtml(match[0])}</span>`;
-
-		lastIndex = processRegex.lastIndex;
-		totalMatches++;
-
-		// Prevent infinite loops for zero-length matches
-		if (match.index === processRegex.lastIndex) {
-			processRegex.lastIndex++;
-		}
-	}
-
-	// Add remaining text after the last match
-	if (lastIndex < content.length) {
-		htmlContent += escapeHtml(content.substring(lastIndex));
-	}
-
-	// Replace newlines with <br> tags for proper display
-	htmlContent = htmlContent.replace(/\n/g, '<br>');
-
-	// Set the HTML content
-	highlightOverlay.innerHTML = htmlContent;
-
-	// If we have matches, set the current match to the first one
-	if (matchPositions.length > 0) {
-		// Default to first match if we don't have a current match index
-		if (currentMatchIndex < 0 || currentMatchIndex >= matchPositions.length) {
-			currentMatchIndex = 0;
-		}
-
-		// Highlight the current match
-		highlightCurrentMatch();
-
-		// Show match counter
-		updateMatchCounter();
-
-		// Scroll to the current match
-		scrollToCurrentMatch();
-	} else {
-		// No matches found
-		currentMatchIndex = -1;
-		showNotification('No matches found');
-
-		// Hide navigation buttons
-		const navButtons = document.querySelector('.search-nav-buttons');
-		if (navButtons) {
-			navButtons.style.display = 'none';
-		}
-	}
-}
-
-// Function to highlight the current match
-function highlightCurrentMatch() {
-	// Remove any existing current-match classes
-	const allMatches = highlightOverlay.querySelectorAll('.highlight-match');
-	allMatches.forEach(match => {
-		match.style.backgroundColor = highlightColor;
-		match.style.color = highlightTextColor;
-	});
-
-	// Apply current match highlighting
-	if (currentMatchIndex >= 0 && currentMatchIndex < matchPositions.length) {
-		const currentMatch = highlightOverlay.querySelector(`.highlight-match[data-match-index="${currentMatchIndex}"]`);
-		if (currentMatch) {
-			currentMatch.style.backgroundColor = currentMatchColor;
-			currentMatch.style.color = currentMatchTextColor;
-		}
-	}
 }
 
 const verticalIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1684,8 +1055,8 @@ function toggleLayout() {
 			// Update layout button icon
 			updateLayoutButtonIcon();
 
-			// Sync overlay dimensions
-			syncOverlayDimensions();
+			// Refit the terminal to the new split dimensions
+			if (fermionTerminal) fermionTerminal.fit();
 		}, 50);
 
 		// Save settings
@@ -1708,93 +1079,6 @@ function initLayoutButton() {
 	updateLayoutButtonIcon();
 }
 
-// Apply colors
-function applyColors() {
-	bgColor = bgColorPicker.value;
-	textColor = textColorPicker.value;
-	highlightColor = highlightColorPicker.value;
-	highlightTextColor = getContrastColor(highlightColor);
-	currentMatchColor = currentMatchColorPicker.value;
-	currentMatchTextColor = getContrastColor(currentMatchColor);
-
-	// Apply colors to textarea
-	fridaOut.style.backgroundColor = bgColor;
-	fridaOut.style.color = textColor;
-
-	// Set CSS variables for highlight colors
-	document.documentElement.style.setProperty('--highlight-bg', highlightColor);
-	document.documentElement.style.setProperty('--highlight-text', highlightTextColor);
-	document.documentElement.style.setProperty('--current-match-bg', currentMatchColor);
-	document.documentElement.style.setProperty('--current-match-text', currentMatchTextColor);
-
-	// Close modal
-	colorModal.style.display = 'none';
-
-	// Save settings
-	saveSettings();
-
-	// Reapply highlighting if active
-	if (searchRegex) {
-		performSearch();
-	}
-}
-
-// Reset colors to defaults
-function resetColors() {
-	// Default colors
-	bgColor = '#423636';
-	textColor = '#ffffff';
-	highlightColor = '#ffff00';
-	highlightTextColor = '#000000';
-	currentMatchColor = '#FFD300';
-	currentMatchTextColor = '#000000';
-
-	// Update color pickers and hex inputs
-	bgColorPicker.value = bgColor;
-	bgColorHex.value = bgColor;
-	textColorPicker.value = textColor;
-	textColorHex.value = textColor;
-	highlightColorPicker.value = highlightColor;
-	highlightColorHex.value = highlightColor;
-	currentMatchColorPicker.value = currentMatchColor;
-	currentMatchColorHex.value = currentMatchColor;
-
-	// Apply colors
-	fridaOut.style.backgroundColor = bgColor;
-	fridaOut.style.color = textColor;
-
-	// Set CSS variables
-	document.documentElement.style.setProperty('--highlight-bg', highlightColor);
-	document.documentElement.style.setProperty('--highlight-text', highlightTextColor);
-	document.documentElement.style.setProperty('--current-match-bg', currentMatchColor);
-	document.documentElement.style.setProperty('--current-match-text', currentMatchTextColor);
-
-	// Close modal
-	colorModal.style.display = 'none';
-
-	// Save settings
-	saveSettings();
-
-	// Reapply highlighting if active
-	if (searchRegex) {
-		performSearch();
-	}
-}
-
-// Get contrast color (black or white) based on background color
-function getContrastColor(hexColor) {
-	// Convert hex to RGB
-	const r = parseInt(hexColor.substr(1, 2), 16);
-	const g = parseInt(hexColor.substr(3, 2), 16);
-	const b = parseInt(hexColor.substr(5, 2), 16);
-
-	// Calculate luminance - standard formula for perceived brightness
-	const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-
-	// Return black for light colors, white for dark
-	return luminance > 0.5 ? '#000000' : '#ffffff';
-}
-
 // Save settings to localStorage
 function saveSettings() {
 	// Get the current Monaco theme
@@ -1807,13 +1091,8 @@ function saveSettings() {
 		wrapToggle.children[0].checked : false;
 
 	const settings = {
-		fontSize: currentFontSize,
-		bgColor: bgColor,
-		textColor: textColor,
-		highlightColor: highlightColor,
-		currentMatchColor: currentMatchColor,
 		isVertical: isVertical,
-		// Add Monaco Editor settings
+		// Monaco Editor settings
 		monacoTheme: currentTheme,
 		monacoWrap: isWrapEnabled
 	};
@@ -1823,43 +1102,15 @@ function saveSettings() {
 
 // Function to clear the output area
 function clearOutputArea() {
-	// Get the textarea
-	const fridaOut = document.getElementById('FridaOut');
-
-	// Clear the textarea content
-	fridaOut.value = '';
-
-	// Clear highlights if search is active
-	clearHighlights();
-
-	// Reset search-related variables
-	searchRegex = null;
-	matchPositions = [];
-	currentMatchIndex = -1;
-	totalMatches = 0;
-
-	// Hide match indicator
-	const matchIndicator = document.querySelector('.match-indicator');
-	if (matchIndicator) {
-		matchIndicator.style.display = 'none';
-	}
-
-	// Hide navigation buttons
-	const navButtons = document.querySelector('.search-nav-buttons');
-	if (navButtons) {
-		navButtons.style.display = 'none';
-	}
-
-	// Show notification
+	if (fermionTerminal) fermionTerminal.clear();
 	showNotification('Output cleared');
 }
 
 
 // Function to save the output area content to a file
 function saveOutputArea() {
-	// Get the content from the textarea
-	const fridaOut = document.getElementById('FridaOut');
-	const content = fridaOut.value;
+	// Get the content from the terminal buffer
+	const content = fermionTerminal ? fermionTerminal.getText() : '';
 
 	// If content is empty, show notification and return
 	if (!content.trim()) {
@@ -1903,48 +1154,6 @@ function loadSettings() {
 	if (savedSettings) {
 		try {
 			const settings = JSON.parse(savedSettings);
-
-			// Apply font size
-			if (settings.fontSize && !isNaN(settings.fontSize)) {
-				currentFontSize = settings.fontSize;
-				fridaOut.style.fontSize = currentFontSize + 'em';
-				highlightOverlay.style.fontSize = currentFontSize + 'em';
-			}
-
-			// Apply colors
-			if (settings.bgColor) {
-				bgColor = settings.bgColor;
-				bgColorPicker.value = bgColor;
-				bgColorHex.value = bgColor;
-				fridaOut.style.backgroundColor = bgColor;
-			}
-
-			if (settings.textColor) {
-				textColor = settings.textColor;
-				textColorPicker.value = textColor;
-				textColorHex.value = textColor;
-				fridaOut.style.color = textColor;
-			}
-
-			if (settings.highlightColor) {
-				highlightColor = settings.highlightColor;
-				highlightColorPicker.value = highlightColor;
-				highlightColorHex.value = highlightColor;
-				highlightTextColor = getContrastColor(highlightColor);
-			}
-
-			if (settings.currentMatchColor) {
-				currentMatchColor = settings.currentMatchColor;
-				currentMatchColorPicker.value = currentMatchColor;
-				currentMatchColorHex.value = currentMatchColor;
-				currentMatchTextColor = getContrastColor(currentMatchColor);
-			}
-
-			// Set CSS variables
-			document.documentElement.style.setProperty('--highlight-bg', highlightColor);
-			document.documentElement.style.setProperty('--highlight-text', highlightTextColor);
-			document.documentElement.style.setProperty('--current-match-bg', currentMatchColor);
-			document.documentElement.style.setProperty('--current-match-text', currentMatchTextColor);
 
 			// Apply layout direction. The app starts vertical (isVertical = true)
 			// and toggleLayout() both flips isVertical and rebuilds the split, so
@@ -1995,18 +1204,6 @@ function loadSettings() {
 		}
 	}
 }
-
-// Initialize on load
-window.addEventListener('load', function () {
-	// Make sure highlighting overlay has the correct initial font size
-	highlightOverlay.style.fontSize = currentFontSize + 'em';
-
-	// Add the color modal to the document body if it's not already there
-	if (!document.getElementById('color-modal')) {
-		const modalHTML = document.getElementById('color-modal');
-		document.body.appendChild(modalHTML);
-	}
-});
 
 // Prevent default actions for F5 and Ctrl+R
 // This is to prevent the default refresh behavior of the browser
