@@ -5,11 +5,12 @@ export function StatusBar() {
   const count = useAppSelector((st) => st.output.count);
   return (
     <div className="statusbar" data-testid="status-bar">
-      <span><span className="dot">●</span> {s.deviceId}</span>
-      <span>{s.isAttached && s.currentPid ? `PID ${s.currentPid}` : 'not attached'}</span>
-      <span>{s.hasScript ? 'script loaded' : 'no script'}</span>
-      <span>trace: {s.traceMode ? 'on' : 'off'}</span>
-      <span style={{ marginLeft: 'auto' }}>{count} msgs</span>
+      <span className="s"><span className="dot" /> {s.deviceId}</span>
+      <span className={'s' + (s.isAttached ? ' on' : '')}>{s.isAttached && s.currentPid ? `attached · pid ${s.currentPid}` : 'not attached'}</span>
+      <span className="s">{s.hasScript ? 'script loaded' : 'no script'}</span>
+      <span className={'s' + (s.traceMode ? ' on' : '')}>trace: {s.traceMode ? 'on' : 'off'}</span>
+      <span className="grow" />
+      <span className="s">{count} msgs</span>
     </div>
   );
 }

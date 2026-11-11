@@ -147,5 +147,22 @@ export function applyTheme(name: string): void {
   if (monaco?.editor) {
     try { monaco.editor.defineTheme(name, theme); monaco.editor.setTheme(name); } catch { /* monaco not ready for this theme */ }
   }
+
+  // Re-theme the xterm output to match (background/foreground + per-kind colors).
+  const term = (window as any).__fermion?.terminal;
+  if (term?.setTheme) {
+    try {
+      term.setTheme(
+        {
+          background: tokens['--term-bg'],
+          foreground: tokens['--fg'],
+          cursor: tokens['--term-bg'],
+          selectionBackground: mix(tokens['--accent'], tokens['--term-bg'], 0.6),
+        },
+        { WARN: tokens['--warn'], ERR: tokens['--err'], SEND: tokens['--msg'], STATUS: tokens['--status'] },
+      );
+    } catch { /* terminal not ready */ }
+  }
+
   try { localStorage.setItem(STORAGE_KEY, name); } catch { /* ignore */ }
 }

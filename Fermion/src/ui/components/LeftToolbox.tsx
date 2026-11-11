@@ -5,13 +5,14 @@ import { GraphPanel } from './GraphPanel';
 import { ReplPanel } from './panels/ReplPanel';
 import { InspectorPanel } from './panels/InspectorPanel';
 import { ProcessTreePanel } from './panels/ProcessTreePanel';
+import { Icon, IconName } from './Icon';
 
-const TABS: { id: ToolboxTab; label: string }[] = [
-  { id: 'editor', label: 'Editor' },
-  { id: 'repl', label: 'REPL' },
-  { id: 'graph', label: 'Graph' },
-  { id: 'tree', label: 'Process tree' },
-  { id: 'inspector', label: 'Inspector' },
+const TABS: { id: ToolboxTab; label: string; icon: IconName }[] = [
+  { id: 'editor', label: 'Editor', icon: 'session' },
+  { id: 'repl', label: 'REPL', icon: 'play' },
+  { id: 'graph', label: 'Graph', icon: 'graph' },
+  { id: 'tree', label: 'Process tree', icon: 'tree' },
+  { id: 'inspector', label: 'Inspector', icon: 'inspect' },
 ];
 
 // Editor (Task 5) and Graph (Task 6) are live; REPL, Process-tree, and Inspector
@@ -61,7 +62,7 @@ export function LeftToolbox() {
             className={'tab' + (active === t.id ? ' on' : '')}
             onClick={() => dispatch(uiActions.setActiveTab(t.id))}
           >
-            {t.label}
+            <Icon name={t.icon} size={14} />{t.label}
           </button>
         ))}
       </div>

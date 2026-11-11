@@ -59,13 +59,20 @@ test('themeNames lists Kuroir first', () => {
   expect(themeNames()).toContain('Monokai');
 });
 
-test('applyTheme sets CSS vars on :root, defines+sets the Monaco theme, and persists', () => {
+test('applyTheme sets CSS vars, switches Monaco + the terminal, and persists', () => {
   const defineTheme = vi.fn(); const setTheme = vi.fn();
+  const termSetTheme = vi.fn();
   (window as any).monaco = { editor: { defineTheme, setTheme } };
+  (window as any).__fermion = { terminal: { setTheme: termSetTheme } };
   applyTheme('Monokai');
   expect(document.documentElement.style.getPropertyValue('--editor-bg')).toBeTruthy();
   expect(defineTheme).toHaveBeenCalledWith('Monokai', expect.anything());
   expect(setTheme).toHaveBeenCalledWith('Monokai');
+  // terminal re-themed with a background + per-kind colors
+  expect(termSetTheme).toHaveBeenCalled();
+  const [theme, kinds] = termSetTheme.mock.calls[0];
+  expect(theme.background).toBeTruthy();
+  expect(kinds.ERR).toBeTruthy();
   expect(loadSavedTheme()).toBe('Monokai');
 });
 
