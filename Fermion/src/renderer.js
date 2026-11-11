@@ -63,7 +63,7 @@ async function inject(AttachTo) {
 	// it will lock the UI on big volumes of data. Instead we append
 	// to an array using a mutex and every X ms we flush the array
 	// to the text area
-	script.message.connect(message => handleScriptMessage(message));
+	wireScript(script);
 	await script.load();
 }
 
@@ -92,7 +92,7 @@ async function start(Path, Args) {
 	// it will lock the UI on big volumes of data. Instead we append
 	// to an array using a mutex and every X ms we flush the array
 	// to the text area
-	script.message.connect(message => handleScriptMessage(message));
+	wireScript(script);
 
 	appendFridaLog('[+] Injecting => PID: ' + procID + ', Name: ' + Path);
 	await script.load();
@@ -134,7 +134,7 @@ document.getElementById("FridaReload").onclick = async function () {
 		if (script != null) {
 			script.unload();
 			script = await session.createScript(MonacoCodeEditor.getValue());
-			script.message.connect(message => handleScriptMessage(message));
+			wireScript(script);
 			appendFridaLog('[+] Script reloaded..');
 			await script.load();
 		} else {
@@ -276,11 +276,11 @@ async function trace(scriptBody) {
 		if (script != null) {
 			script.unload();
 			script = await session.createScript(scriptBody);
-			script.message.connect(message => handleScriptMessage(message, function (payload) {
+			wireScript(script, function (payload) {
 				appendFridaLog("[>] Received Graphviz trace data");
 				// Forward the DOT payload to the trace window (not printed here).
 				traceSender.postMessage(payload);
-			}));
+			});
 			appendFridaLog('\n[+] Current script unloaded..');
 			appendFridaLog('    |_ Graphviz tracer loaded\n');
 			await script.load();
@@ -538,6 +538,15 @@ function handleScriptMessage(message, onSend) {
 		return;
 	}
 	if (fermionTerminal) fermionTerminal.write(kind, text);
+}
+
+// Wire a freshly created Frida script to the terminal. send() and runtime
+// errors arrive via the `message` signal; but Frida delivers console.log/warn/
+// error to `logHandler` (it does NOT emit `message` for log records), so route
+// both through handleScriptMessage. `onSend` (trace) is forwarded to message.
+function wireScript(script, onSend) {
+	script.message.connect(message => handleScriptMessage(message, onSend));
+	script.logHandler = (level, text) => handleScriptMessage({ type: 'log', level, payload: text });
 }
 
 // Status/meta output goes to the terminal as the STATUS kind. The terminal
