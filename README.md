@@ -1,8 +1,10 @@
-![CI](https://github.com/FuzzySecurity/Fermion/actions/workflows/auto-update.yml/badge.svg) ![stars](https://badgen.net/github/stars/FuzzySecurity/Fermion?color=orange&label=Stars) ![forks](https://badgen.net/github/forks/FuzzySecurity/Fermion?color=orange&label=Forks) ![release](https://badgen.net/badge/Fermion/v1.9.3/grey?icon=atom) ![frida-node](https://badgen.net/badge/Frida-Node/v16.0.17/grey?icon=npm) ![frida-gum](https://badgen.net/badge/Frida-Gum/v18.3.1/grey?icon=npm)
+![CI](https://github.com/watson0x90/Fermion/actions/workflows/release.yml/badge.svg) ![stars](https://badgen.net/github/stars/watson0x90/Fermion?color=orange&label=Stars) ![forks](https://badgen.net/github/forks/watson0x90/Fermion?color=orange&label=Forks) ![release](https://badgen.net/badge/Fermion/v1.9.4/grey?icon=atom) ![frida-node](https://badgen.net/badge/Frida-Node/v17.26.2/grey?icon=npm) ![frida-gum](https://badgen.net/badge/Frida-Gum/v19.13.0/grey?icon=npm)
 
 # Fermion
 
 Fermion is an electron application that wraps [frida-node](https://github.com/frida/frida-node) and [monaco-editor](https://microsoft.github.io/monaco-editor/). It offers a fully integrated environment to prototype, test and refine Frida scripts through a single UI. With the integration of Monaco come all the features you would expect from Visual Studio Code: Linting, IntelliSense, keybindings, etc. In addition, Fermion has a TypeScript language definition for the Frida API so it is easy to write Frida scripts.
+
+> **Maintained fork.** This is [@watson0x90](https://github.com/watson0x90)'s maintained continuation of the original [FuzzySecurity/Fermion](https://github.com/FuzzySecurity/Fermion) by [Ruben Boonen (@FuzzySec)](https://twitter.com/FuzzySec), with full credit to the original author. It modernizes the stack (Electron 45, Frida 17, Monaco 0.57) and ships releases via a tag-triggered GitHub Actions workflow.
 
 `What's in a name`: A fermion can be an elementary particle, such as the electron, or it can be a composite particle, such as the proton. Fermions include all quarks and leptons, as well as all composite particles made of an odd number of these, such as all baryons and many atoms and nuclei.
 
@@ -10,48 +12,45 @@ Fermion is an electron application that wraps [frida-node](https://github.com/fr
 
 ### Run Fermion from source
 
-Download the repository and navigate to the `Fermion` folder in the terminal. Once there, set the following environment variables.
-
-```
-# Windows
-set npm_config_runtime=electron
-set npm_config_target=21.0.0
-
-# Linux / OSX
-export npm_config_runtime=electron
-export npm_config_target=21.0.0
-```
-
-Afterwards install the packages required to run Fermion with:
+Download the repository and navigate to the `Fermion` folder in the terminal. Install the dependencies and start the app:
 
 ```
 npm install
-```
-
-Once complete, you can run Fermion by issuing:
-
-```
 npm start
 ```
 
+> Frida 17's Node bindings ship **N-API prebuilds** (runtime-agnostic), so a plain `npm install` fetches a binding that works inside Electron — the old `npm_config_runtime=electron` / `npm_config_target=...` environment variables are **no longer required**. A recent Node.js (used only to drive `npm`/tooling) is recommended.
+
 ### Compile a release package
 
-Complete the steps above and then issue the following command from the terminal:
+Complete the steps above and then build a standalone package with [`@electron/packager`](https://github.com/electron/packager):
 
 ```
 # Windows
-electron-packager . --icon .\src\images\fermion-ico.ico
+npx @electron/packager . --icon ./src/images/fermion-ico.ico
 
 # Linux
-electron-packager . --icon ./src/images/fermion-ico.png
+npx @electron/packager . --icon ./src/images/fermion-ico.png
 
-# OSX
-electron-packager . --icon ./src/images/fermion-ico.icns
+# macOS (arm64)
+npx @electron/packager . --platform=darwin --arch=arm64 --icon ./src/images/fermion-ico.icns
+```
+
+On Apple Silicon an unsigned app is blocked from launching, so ad-hoc sign the bundle before running it: `codesign --force --deep --sign - Fermion-darwin-arm64/Fermion.app`.
+
+### Cutting a release (maintainers)
+
+Releases are intentional and maintainer-driven — there is no auto-update cron. Pushing a version tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds Windows / Linux / macOS (arm64) packages, **smoke-launches each one** (it must actually start and render, verified with Playwright) and then publishes a GitHub release with the zipped artifacts:
+
+```
+# bump "version" in Fermion/package.json, commit, then:
+git tag v1.9.4
+git push origin v1.9.4
 ```
 
 ### Releases
 
-You can get the latest pre-built Fermion for x64 Windows and Linux from [releases](https://github.com/FuzzySecurity/Fermion/releases).
+You can get the latest pre-built Fermion for x64 Windows, x64 Linux and arm64 macOS from [releases](https://github.com/watson0x90/Fermion/releases).
 
 ## FAQ notes
 
@@ -67,8 +66,8 @@ You can get the latest pre-built Fermion for x64 Windows and Linux from [release
 
 ### General
 
-  * **Q**: I want to build my own version of Fermion against a new version of Frida/Electron. How can I find out which `prebuild`’s exist currently?
-    * **A**: You should have a look [here](https://github.com/frida/frida/blob/main/.github/workflows/ci.yml), you can check the default build version in `ELECTRON_TARGETS_DEFAULT` and `ELECTRON_TARGETS_FREEBSD` respectively.
+  * **Q**: I want to build Fermion against a newer Electron or Frida. Do I need to match a specific Electron prebuild?
+    * **A**: Not anymore. Frida 17's Node bindings ship runtime-agnostic **N-API prebuilds**, so a plain `npm install` produces a binding that loads in any recent Electron — there is no need to pin `npm_config_target` to a Frida-supported Electron ABI the way older versions required. Just bump the versions in `Fermion/package.json` and reinstall.
 
   * **Q**: I want to review/change/update the type definitions used in the Monaco editor, how can I do that?
     * **A**: This is now handled as part of the build process so your language definitions should always be up-to-date. If you want to edit the app language definitions manually, you can find them here `node_modules/@types/frida-gum/index.d.ts`.
