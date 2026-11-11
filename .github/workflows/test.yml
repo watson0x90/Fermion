@@ -73,5 +73,11 @@ jobs:
       - name: Trace window remote enabled
         run: xvfb-run -a node scripts/ui-test-trace-remote.js
 
+      # End-to-end: attach to a real process and confirm the agent's console.log
+      # reaches the terminal. Skips gracefully where the runner can't attach
+      # (ptrace restrictions); the real coverage is on the Windows dev machine.
+      - name: Attach + console.log end-to-end
+        run: xvfb-run -a node scripts/ui-test-attach-console.js
+
       - name: Layout persistence regression
         run: xvfb-run -a node scripts/ui-test-layout.js
