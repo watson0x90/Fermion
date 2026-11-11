@@ -27,3 +27,5 @@ Thumbs.db
 # esbuild renderer bundle (built via npm run build)
 Fermion/src/renderer.bundle.js
 Fermion/src/renderer.bundle.js.map
+Fermion/src/renderer.react.js
+Fermion/src/renderer.react.js.map

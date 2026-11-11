@@ -28,6 +28,10 @@ export default [
     ignores: [
       'node_modules/**',
       'src/renderer.bundle.js',
+      'src/renderer.react.js',
+      // The React app (TS/TSX) is checked by tsc + Vitest; proper
+      // typescript-eslint linting is a Task 8 follow-up.
+      'src/ui/**',
       'src/frameworks/**',
       'src/lang/**',
       'src/images/**',

@@ -9,12 +9,14 @@
     "watch": "node esbuild.config.mjs --watch",
     "prestart": "npm run build",
     "lint": "eslint .",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "test:unit": "vitest run"
   },
   "repository": "github:FuzzySecurity/Fermion",
   "author": "Ruben Boonen (@FuzzySec)",
   "license": "BSD-3-Clause",
   "dependencies": {
+    "@reduxjs/toolkit": "^2.3.0",
     "@types/frida-gum": "19.13.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-search": "0.16.0",
@@ -23,14 +25,23 @@
     "frida": "17.26.2",
     "jquery": "3.7.1",
     "monaco-editor": "0.57.0",
-    "node-graphviz": "0.1.1"
+    "node-graphviz": "0.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-redux": "^9.1.2"
   },
   "devDependencies": {
     "@electron/packager": "20.3.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
     "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
     "esbuild": "^0.24.2",
     "eslint": "9.37.0",
+    "jsdom": "^25.0.1",
     "playwright-core": "1.65.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "vitest": "^2.1.8"
   }
 }
