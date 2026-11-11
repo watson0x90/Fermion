@@ -1,0 +1,55 @@
+name: Tests
+
+# Per-change CI: runs the smoke/regression suite on pushes to master, on pull
+# requests targeting master, and on demand. (Release packaging is separate, in
+# release.yml, and only runs on version tags.)
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+    working-directory: Fermion
+
+jobs:
+  smoke:
+    name: Smoke & regression (ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Electron needs a virtual display and its GUI runtime libraries to launch
+      # headlessly on a CI runner.
+      - name: Install Linux GUI runtime deps
+        working-directory: .
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 \
+            libgtk-3-0 libgbm1 libasound2t64 libxshmfence1 libdrm2 || \
+          sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 \
+            libgtk-3-0 libgbm1 libasound2 libxshmfence1 libdrm2
+
+      - name: Renderer syntax check
+        run: node --check src/renderer.js
+
+      - name: Frida load smoke
+        run: xvfb-run -a node scripts/smoke-frida.js
+
+      - name: UI renders smoke
+        run: xvfb-run -a node scripts/ui-smoke.js
+
+      - name: Layout persistence regression
+        run: xvfb-run -a node scripts/ui-test-layout.js
