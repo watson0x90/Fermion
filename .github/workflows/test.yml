@@ -45,8 +45,11 @@ jobs:
       - name: Renderer syntax check
         run: node --check src/renderer.js
 
+      # smoke-frida.js is an Electron main script, so it must be launched by the
+      # electron binary (running it with plain `node` makes require('electron')
+      # return the path string, not the API).
       - name: Frida load smoke
-        run: xvfb-run -a node scripts/smoke-frida.js
+        run: xvfb-run -a ./node_modules/.bin/electron scripts/smoke-frida.js
 
       - name: UI renders smoke
         run: xvfb-run -a node scripts/ui-smoke.js
