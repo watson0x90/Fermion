@@ -2,7 +2,19 @@
 const {app, BrowserWindow} = require('electron');
 const path = require('path');
 const ipcMain = require('electron').ipcMain;
+const { FridaService } = require('./src/frida-service.js');
+const { createDispatch, wireServiceEvents } = require('./src/frida-ipc.js');
 var bWin;
+
+// All frida-node interaction runs here in the main process. The renderer drives
+// it over the 'fermion:invoke' channel (guarded method dispatch) and receives
+// message/log/detached events over 'fermion:event'.
+const fridaService = new FridaService();
+const fridaDispatch = createDispatch(fridaService);
+ipcMain.handle('fermion:invoke', (_event, method, ...args) => fridaDispatch(method, ...args));
+wireServiceEvents(fridaService, (kind, ...payload) => {
+  if (bWin && !bWin.isDestroyed()) bWin.webContents.send('fermion:event', kind, ...payload);
+});
 app.commandLine.appendSwitch('disable-features', 'CrossOriginOpenerPolicy');
 const remoteMain = require('@electron/remote/main');
 remoteMain.initialize();

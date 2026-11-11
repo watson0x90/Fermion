@@ -58,6 +58,16 @@ class FridaService extends EventEmitter {
 	get hasScript() { return this._script != null; }
 	get currentPid() { return this._sessionPID; }
 
+	// Plain snapshot of the getters, for the renderer over IPC.
+	getState() {
+		return {
+			deviceId: this._deviceId,
+			isAttached: this.isAttached,
+			hasScript: this.hasScript,
+			currentPid: this._sessionPID,
+		};
+	}
+
 	// Select a device, registering/unregistering remote socket devices as the
 	// old `new-device` handler did. Returns the effective device id.
 	async setDevice(spec) {
