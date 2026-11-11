@@ -339,7 +339,7 @@ async function trace(scriptBody) {
 // -= Device Selector =-
 
 document.getElementById("setDevice").onclick = function () {
-	const modalPath = path.join('file://', __dirname, 'device.html');
+	const modalPath = path.join(__dirname, 'device.html');
 	let ProcWin = new BrowserWindow({
 		contextIsolation: false,
 		width: 420,
@@ -358,7 +358,7 @@ document.getElementById("setDevice").onclick = function () {
 		}
 	})
 
-	ProcWin.loadURL(modalPath);
+	ProcWin.loadFile(modalPath);
 	ProcWin.once('ready-to-show', () => {
 		setTimeout(function () {
 			ProcWin.show();
@@ -388,7 +388,7 @@ ipc.on('new-device', async (event, message) => {
 // -= Process Listing =-
 
 document.getElementById("FridaProc").onclick = function () {
-	const modalPath = path.join('file://', __dirname, 'proc.html');
+	const modalPath = path.join(__dirname, 'proc.html');
 	let ProcWin = new BrowserWindow({
 		contextIsolation: false,
 		width: 570,
@@ -407,7 +407,7 @@ document.getElementById("FridaProc").onclick = function () {
 		}
 	})
 
-	ProcWin.loadURL(modalPath);
+	ProcWin.loadFile(modalPath);
 	ProcWin.once('ready-to-show', () => {
 		setTimeout(function () {
 			ProcWin.show();
@@ -420,7 +420,7 @@ document.getElementById("FridaProc").onclick = function () {
 // -= Instrument Manager =-
 
 document.getElementById("FridaAttach").onclick = function () {
-	const modalPath = path.join('file://', __dirname, 'instrument.html');
+	const modalPath = path.join(__dirname, 'instrument.html');
 	let ProcWin = new BrowserWindow({
 		contextIsolation: false,
 		width: 420,
@@ -438,7 +438,7 @@ document.getElementById("FridaAttach").onclick = function () {
 		}
 	})
 
-	ProcWin.loadURL(modalPath);
+	ProcWin.loadFile(modalPath);
 	ProcWin.once('ready-to-show', () => {
 		setTimeout(function () {
 			ProcWin.show();
@@ -451,7 +451,7 @@ document.getElementById("FridaAttach").onclick = function () {
 // -= About =-
 
 document.getElementById("FermionAbout").onclick = function () {
-	const modalPath = path.join('file://', __dirname, 'about.html');
+	const modalPath = path.join(__dirname, 'about.html');
 	let ProcWin = new BrowserWindow({
 		contextIsolation: false,
 		width: 460,
@@ -470,7 +470,7 @@ document.getElementById("FermionAbout").onclick = function () {
 		}
 	})
 
-	ProcWin.loadURL(modalPath);
+	ProcWin.loadFile(modalPath);
 	ProcWin.once('ready-to-show', () => {
 		setTimeout(function () {
 			ProcWin.show();
@@ -483,7 +483,7 @@ document.getElementById("FermionAbout").onclick = function () {
 // -= JS API Docs =-
 
 document.getElementById("FermionDocs").onclick = function () {
-	const modalPath = path.join('file://', __dirname, 'docs.html');
+	const modalPath = path.join(__dirname, 'docs.html');
 	let ProcWin = new BrowserWindow({
 		contextIsolation: false,
 		width: 800,
@@ -501,7 +501,7 @@ document.getElementById("FermionDocs").onclick = function () {
 		}
 	})
 
-	ProcWin.loadURL(modalPath);
+	ProcWin.loadFile(modalPath);
 	ProcWin.once('ready-to-show', () => {
 		setTimeout(function () {
 			ProcWin.show();
@@ -515,7 +515,7 @@ document.getElementById("FermionDocs").onclick = function () {
 
 let TraceWin = null;
 document.getElementById("FermionTools").onclick = function () {
-	const modalPath = path.join('file://', __dirname, 'trace.html');
+	const modalPath = path.join(__dirname, 'trace.html');
 	if (sessionPID == null || sessionPID.length == 0) {
 		sessionPID = "null";
 	}
@@ -540,7 +540,7 @@ document.getElementById("FermionTools").onclick = function () {
 	// Node 14+ patch, jesus node devs, just leave us alone with remote already..
 	require("@electron/remote").require("@electron/remote/main").enable(TraceWin.webContents);
 
-	TraceWin.loadURL(modalPath);
+	TraceWin.loadFile(modalPath);
 	TraceWin.once('ready-to-show', () => {
 		setTimeout(function () {
 			TraceWin.show();
