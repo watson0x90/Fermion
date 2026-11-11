@@ -4682,3 +4682,11 @@ const VibrantInk = {
 	  "editorWhitespace.foreground": "#404040"
 	}
 }
+// Publish the theme objects on window so modules (src/editor.js) can read them.
+// Classic-script top-level `const` bindings are NOT window properties and are
+// invisible to a required CommonJS module's scope chain.
+window.FermionThemes = {
+	idleFingers, Cobalt, MerbivoreSoft, Katzenmilch, Monokai,
+	SolarizedDark, SolarizedLight, BirdsOfParadise, Clouds, Kuroir,
+	NightOwl, Textmate, Amy, OceanicNext, TomorrowNightBlue, VibrantInk,
+};

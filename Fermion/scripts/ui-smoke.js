@@ -29,16 +29,12 @@ const args = packaged
   ? ['--user-data-dir=' + userDataDir]
   : ['.', '--user-data-dir=' + userDataDir];
 
-(async () => {
-  let app;
-  const pageErrors = [];
-  try {
-    app = await electron.launch({
-      executablePath,
-      args,
-      cwd: packaged ? undefined : APP_DIR,
-    });
-
+function launch(pageErrors) {
+  return electron.launch({
+    executablePath,
+    args,
+    cwd: packaged ? undefined : APP_DIR,
+  }).then((app) => {
     // Attach the error listener as soon as any window is created — before
     // awaiting firstWindow() — so an exception thrown early in the renderer
     // (e.g. a bad require or the version IIFE) is still captured.
@@ -46,8 +42,17 @@ const args = packaged
       page.on('pageerror', (err) =>
         pageErrors.push(String(err && err.message ? err.message : err)));
     });
+    return app;
+  });
+}
 
-    const win = await app.firstWindow();
+(async () => {
+  let app;
+  const pageErrors = [];
+  try {
+    // --- Phase 1: launches and renders ---
+    app = await launch(pageErrors);
+    let win = await app.firstWindow();
     await win.waitForLoadState('domcontentloaded');
 
     // Monaco editor and the xterm terminal must actually mount. Allow a
@@ -55,6 +60,10 @@ const args = packaged
     // assesses the freshly ad-hoc signed app on first launch) can be slow.
     await win.waitForSelector('.monaco-editor', { timeout: 60000 });
     await win.waitForSelector('.xterm', { timeout: 60000 });
+
+    // The editor handle must be reachable (tests + layout + frida-service
+    // read window.MonacoCodeEditor).
+    await win.waitForFunction(() => !!window.MonacoCodeEditor, { timeout: 60000 });
 
     // The startup banner must reach the terminal (proves renderer + Frida
     // version lookup ran, and output routes to the terminal).
@@ -71,8 +80,29 @@ const args = packaged
     });
 
     if (pageErrors.length) throw new Error('uncaught renderer error: ' + pageErrors[0]);
-
     console.log('UI_SMOKE_OK ' + (packaged ? 'packaged' : 'dev') + ' :: ' + fridaLine);
+
+    // Seed a saved NON-default Monaco theme, then relaunch to prove it is
+    // restored after the editor moved out of index.html (Review Focus #5).
+    await win.evaluate(() =>
+      localStorage.setItem('fermion_output_settings', '{"monacoTheme":"Cobalt"}'));
+    await app.close();
+
+    // --- Phase 2: saved theme is applied on next startup ---
+    app = await launch(pageErrors);
+    win = await app.firstWindow();
+    await win.waitForLoadState('domcontentloaded');
+    await win.waitForSelector('.monaco-editor', { timeout: 60000 });
+    await win.waitForFunction(() => !!window.MonacoCodeEditor, { timeout: 60000 });
+    // loadSettings applies the saved theme on a ~1000ms timeout; wait for the
+    // dropdown to reflect it.
+    await win.waitForFunction(() => {
+      const sel = document.getElementById('MonacoThemeSelect');
+      return sel && sel.value === 'Cobalt';
+    }, { timeout: 15000 });
+
+    if (pageErrors.length) throw new Error('uncaught renderer error: ' + pageErrors[0]);
+    console.log('SMOKE_EDITOR_OK saved Monaco theme (Cobalt) restored after restart');
     await app.close();
     process.exit(0);
   } catch (e) {

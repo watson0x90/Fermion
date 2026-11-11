@@ -1,14 +1,17 @@
 const electron = require('electron');
-const path = require('path');
 const ipc = require('electron').ipcRenderer;
 const remote = require('@electron/remote');
-const BrowserWindow = remote.BrowserWindow;
 const dialog = remote.dialog;
 var fs = require('fs');
-const frida = require('frida');
-const { wrapExtraArgs } = require('../src/helper.js');
 const { createTerminal } = require('../src/terminal.js');
 const { formatMessage } = require('../src/output-model.js');
+const { readSettings, writeSettings } = require('../src/settings.js');
+const { createLayout } = require('../src/layout.js');
+const { openWindow } = require('../src/windows.js');
+const { initEditor, setMonacoTheme, toggleWrap } = require('../src/editor.js');
+const { FridaService, routeMessage } = require('../src/frida-service.js');
+// Inline index.html handler onchange="setMonacoTheme()" needs this on window.
+window.setMonacoTheme = setMonacoTheme;
 
 // Overwrite default node.js prop to get Jquery working
 window.$ = window.jQuery = require('jquery');
@@ -33,94 +36,58 @@ let fermionTerminal = null;
 
 var MonacoCodeEditor;
 var currentFilePath = null;
-let script = null;
-var session = null;
-var sessionPID = null;
-var deviceId = 'local';
+
+// All frida-node interaction goes through this service (src/frida-service.js).
+// The UI subscribes to its message/log/detached events (wired below, after
+// traceSender exists) and calls its async methods. `traceMode` is a UI-side
+// flag: while on, SEND payloads are forwarded to the trace window instead of
+// the terminal (see onServiceMessage + routeMessage).
+const service = new FridaService();
+let traceMode = false;
 
 // Enhanced Frida Output variables
-let isVertical = true;
 let originalSplit = null;
+// Layout controller (src/layout.js), built in the DOMContentLoaded handler
+// once the DOM + split instance exist. Owns the live isVertical state.
+let layout = null;
 
 // Instrument
 //////////////////////////////////////////////////
 
-// -= Inject =-
-async function inject(AttachTo) {
-	// Exit on process termination
-	process.on('SIGTERM', stop);
-	process.on('SIGINT', stop);
-
-	// Attach and load script
-	device = await frida.getDevice(deviceId);
-	session = await device.attach(AttachTo);
-	sessionPID = session.pid.toString();
-	traceSender.postMessage(sessionPID);
-	session.detached.connect(onDetached);
-	script = await session.createScript(MonacoCodeEditor.getValue());
-
-	// For performance we can't update the text area all the time
-	// it will lock the UI on big volumes of data. Instead we append
-	// to an array using a mutex and every X ms we flush the array
-	// to the text area
-	wireScript(script);
-	await script.load();
+// -= Inject (UI orchestration over the service) =-
+// Matches the old inject(): attach -> publish PID to the trace window ->
+// create+load the editor's script. Status text ("[+] Injecting => …") is
+// logged by the caller, as before.
+function injectVia(pid) {
+	service.attach(pid)
+		.then(() => {
+			traceSender.postMessage(service.currentPid);
+			return service.loadScript(MonacoCodeEditor.getValue());
+		})
+		.then(() => { traceMode = false; })  // user script loaded -> terminal routing
+		.catch(e => { appendFridaLog(e); });
 }
 
-// -= Start =-
-async function start(Path, Args) {
-	// Exit on process termination
-	process.on('SIGTERM', stop);
-	process.on('SIGINT', stop);
-
-	// Attach and load script
-	device = await frida.getDevice(deviceId);
-	if (!Args || 0 === Args.length) {
-		procID = await device.spawn(Path);
-	} else {
-		var aBuildArgs = Args.split(" ");
-		aBuildArgs.unshift(Path)
-		procID = await device.spawn(aBuildArgs);
-	}
-	session = await device.attach(procID);
-	sessionPID = session.pid.toString();
-	traceSender.postMessage(sessionPID);
-	session.detached.connect(onDetached);
-	script = await session.createScript(MonacoCodeEditor.getValue());
-
-	// For performance we can't update the text area all the time
-	// it will lock the UI on big volumes of data. Instead we append
-	// to an array using a mutex and every X ms we flush the array
-	// to the text area
-	wireScript(script);
-
-	appendFridaLog('[+] Injecting => PID: ' + procID + ', Name: ' + Path);
-	await script.load();
-
-	device.resume(procID);
-	appendFridaLog('[+] Process start success');
-}
-
-// -= On Terminate =-
-function stop() {
-	script.unload();
-}
-
-function onDetached(reason) {
-	if (session != null) {
-		session = null;
-		traceSender.postMessage(null);
-	}
-	appendFridaLog(`[+] Exit Reason: ${reason}`);
+// -= Start (UI orchestration over the service) =-
+// Matches the old start(): spawn+attach -> publish PID -> "[+] Injecting" ->
+// load script -> resume -> "[+] Process start success".
+function startVia(ProcPath, ProcArgs) {
+	service.spawn(ProcPath, ProcArgs)
+		.then(({ pid }) => {
+			traceSender.postMessage(service.currentPid);
+			appendFridaLog('[+] Injecting => PID: ' + pid + ', Name: ' + ProcPath);
+			return service.loadScript(MonacoCodeEditor.getValue()).then(() => service.resume(pid));
+		})
+		.then(() => { traceMode = false; appendFridaLog('[+] Process start success'); })
+		.catch(e => { appendFridaLog(e); });
 }
 
 // -= Detach =-
 
 document.getElementById("FridaDetach").onclick = function () {
-	if (session != null) {
+	if (service.isAttached) {
 		appendFridaLog('[+] Detaching..');
-		session.detach();
-		session = null;
+		service.detach();
 		traceSender.postMessage(null);
 	} else {
 		appendFridaLog('[!] Not currently attached..');
@@ -129,14 +96,12 @@ document.getElementById("FridaDetach").onclick = function () {
 
 // -= Reload Script =-
 
-document.getElementById("FridaReload").onclick = async function () {
-	if (session != null) {
-		if (script != null) {
-			script.unload();
-			script = await session.createScript(MonacoCodeEditor.getValue());
-			wireScript(script);
-			appendFridaLog('[+] Script reloaded..');
-			await script.load();
+document.getElementById("FridaReload").onclick = function () {
+	if (service.isAttached) {
+		if (service.hasScript) {
+			service.reloadScript(MonacoCodeEditor.getValue())
+				.then(() => { traceMode = false; appendFridaLog('[+] Script reloaded..'); })
+				.catch(e => { appendFridaLog(e); });
 		} else {
 			appendFridaLog('[!] Not currently attached..');
 		}
@@ -145,23 +110,15 @@ document.getElementById("FridaReload").onclick = async function () {
 	}
 }
 
-// -= Proc Listing =-
-async function getProcList() {
-	let currentDevice = await frida.getDevice(deviceId);
-	let Applications = await currentDevice.enumerateProcesses();
-	return Applications;
-}
-
 // -= Shim for process list attach =-
 
 ipc.on('attach-process', async (event, message) => {
-	if (session == null) {
+	if (!service.isAttached) {
 		appendFridaLog('[?] Attempting process attach..');
-		getProcList().then(data => {
+		service.enumerateProcesses().then(data => {
 			// Search active processes
 			var resultArray = [];
 			data.find(function (element) {
-				var Result = [];
 				if (element.pid == message) {
 					resultArray.push(element);
 				}
@@ -179,9 +136,7 @@ ipc.on('attach-process', async (event, message) => {
 				return;
 			} else {
 				appendFridaLog('[+] Injecting => PID: ' + resultArray[0].pid + ', Name: ' + resultArray[0].name);
-				inject(resultArray[0].pid).catch(e => {
-					appendFridaLog(e);
-				});
+				injectVia(resultArray[0].pid);
 			}
 		}).catch((err) => {
 			appendFridaLog(`[!] Error: ${err.message}`);
@@ -195,12 +150,13 @@ ipc.on('attach-process', async (event, message) => {
 // -= Shim for attach invocation =-
 
 ipc.on('attach-process-shim', async (event, message) => {
-	if (session == null) {
+	if (!service.isAttached) {
 		appendFridaLog('[?] Attempting process attach..');
-		getProcList().then(data => {
+		service.enumerateProcesses().then(data => {
 			// What are we searching for?
 			var ProcName = message[0];
 			var ProcId = message[1];
+			var queryProc;
 			if ((!ProcId || 0 === ProcId.length) && (!ProcName || 0 === ProcName.length)) {
 				appendFridaLog('[!] Process parameters not provided..');
 				return;
@@ -217,7 +173,6 @@ ipc.on('attach-process-shim', async (event, message) => {
 			// Search active processes
 			var resultArray = [];
 			data.find(function (element) {
-				var Result = [];
 				if (element.name.includes(queryProc) || element.pid == queryProc) {
 					resultArray.push(element);
 				}
@@ -235,9 +190,7 @@ ipc.on('attach-process-shim', async (event, message) => {
 				return;
 			} else {
 				appendFridaLog('[+] Injecting => PID: ' + resultArray[0].pid + ', Name: ' + resultArray[0].name);
-				inject(resultArray[0].pid).catch(e => {
-					appendFridaLog(e);
-				});
+				injectVia(resultArray[0].pid);
 			}
 		}).catch((err) => {
 			appendFridaLog(`[!] Error: ${err.message}`);
@@ -251,7 +204,7 @@ ipc.on('attach-process-shim', async (event, message) => {
 // -= Shim for start invocation =-
 
 ipc.on('start-process-shim', async (event, message) => {
-	if (session == null) {
+	if (!service.isAttached) {
 		appendFridaLog('[?] Attempting process start..');
 		var ProcPath = message[0];
 		var ProcAgrs = message[1];
@@ -259,38 +212,12 @@ ipc.on('start-process-shim', async (event, message) => {
 			appendFridaLog('[!] Process parameters not provided..');
 			return;
 		} else {
-			start(ProcPath, ProcAgrs).catch(e => {
-				appendFridaLog(e);
-				return;
-			});
+			startVia(ProcPath, ProcAgrs);
 		}
 	} else {
 		appendFridaLog('[!] Already attached to a process..');
 	}
 });
-
-// -= Shim for trace invocation =-
-
-async function trace(scriptBody) {
-	if (session != null) {
-		if (script != null) {
-			script.unload();
-			script = await session.createScript(scriptBody);
-			wireScript(script, function (payload) {
-				appendFridaLog("[>] Received Graphviz trace data");
-				// Forward the DOT payload to the trace window (not printed here).
-				traceSender.postMessage(payload);
-			});
-			appendFridaLog('\n[+] Current script unloaded..');
-			appendFridaLog('    |_ Graphviz tracer loaded\n');
-			await script.load();
-		} else {
-			appendFridaLog('[!] Not currently attached..');
-		}
-	} else {
-		appendFridaLog('[!] Not currently attached..');
-	}
-}
 
 // Pages
 //////////////////////////////////////////////////
@@ -298,255 +225,118 @@ async function trace(scriptBody) {
 // -= Device Selector =-
 
 document.getElementById("setDevice").onclick = function () {
-	const modalPath = path.join(__dirname, 'device.html');
-	let ProcWin = new BrowserWindow({
-		contextIsolation: false,
-		width: 420,
-		height: 615,
-		frame: false,
-		resizable: false,
-		show: false,
-		backgroundColor: '#E0E1E2',
-		webPreferences: {
-			nodeIntegration: true,
-			nodeIntegrationInWorker: true,
-			enableRemoteModule: true,
-			contextIsolation: false,
-			webviewTag: true,
-			additionalArguments: wrapExtraArgs([deviceId])
-		}
-	})
-
-	ProcWin.loadFile(modalPath);
-	ProcWin.once('ready-to-show', () => {
-		setTimeout(function () {
-			ProcWin.show();
-			ProcWin.focus();
-		}, 50);
-	});
-	ProcWin.on('close', function () { ProcWin = null })
+	openWindow('device.html', { width: 420, height: 615, extraArgs: [service.deviceId] });
 }
 
 ipc.on('new-device', async (event, message) => {
-	// Do we need to unregister a current remote socket?
-	if (deviceId.startsWith("socket@")) {
-		var dm = await frida.getDeviceManager();
-		dm.removeRemoteDevice(deviceId.split('@')[1]);
-	}
-
-	// Do we need to register a new remote socket?
-	if (message.startsWith("socket@")) {
-		var dm = await frida.getDeviceManager();
-		var devID = await dm.addRemoteDevice(message.split('@')[1]);
-		deviceId = devID.id;
-	} else {
-		deviceId = message;
-	}
+	await service.setDevice(message);
 });
 
 // -= Process Listing =-
 
 document.getElementById("FridaProc").onclick = function () {
-	const modalPath = path.join(__dirname, 'proc.html');
-	let ProcWin = new BrowserWindow({
-		contextIsolation: false,
-		width: 570,
-		height: 600,
-		frame: false,
-		resizable: false,
-		show: false,
-		backgroundColor: '#E0E1E2',
-		webPreferences: {
-			nodeIntegration: true,
-			nodeIntegrationInWorker: true,
-			enableRemoteModule: true,
-			contextIsolation: false,
-			webviewTag: true,
-			additionalArguments: wrapExtraArgs([deviceId])
-		}
-	})
-
-	ProcWin.loadFile(modalPath);
-	ProcWin.once('ready-to-show', () => {
-		setTimeout(function () {
-			ProcWin.show();
-			ProcWin.focus();
-		}, 50);
-	});
-	ProcWin.on('close', function () { ProcWin = null })
+	openWindow('proc.html', { width: 570, height: 600, extraArgs: [service.deviceId] });
 }
 
 // -= Instrument Manager =-
 
 document.getElementById("FridaAttach").onclick = function () {
-	const modalPath = path.join(__dirname, 'instrument.html');
-	let ProcWin = new BrowserWindow({
-		contextIsolation: false,
-		width: 420,
-		height: 595,
-		frame: false,
-		resizable: false,
-		show: false,
-		backgroundColor: '#E0E1E2',
-		webPreferences: {
-			nodeIntegration: true,
-			nodeIntegrationInWorker: true,
-			enableRemoteModule: true,
-			contextIsolation: false,
-			webviewTag: true
-		}
-	})
-
-	ProcWin.loadFile(modalPath);
-	ProcWin.once('ready-to-show', () => {
-		setTimeout(function () {
-			ProcWin.show();
-			ProcWin.focus();
-		}, 50);
-	});
-	ProcWin.on('close', function () { ProcWin = null })
+	openWindow('instrument.html', { width: 420, height: 595 });
 }
 
 // -= About =-
 
 document.getElementById("FermionAbout").onclick = function () {
-	const modalPath = path.join(__dirname, 'about.html');
-	let ProcWin = new BrowserWindow({
-		contextIsolation: false,
-		width: 460,
-		height: 270,
-		frame: false,
-		resizable: false,
-		show: false,
-		backgroundColor: '#E0E1E2',
-		webPreferences: {
-			nodeIntegration: true,
-			nodeIntegrationInWorker: true,
-			enableRemoteModule: true,
-			contextIsolation: false,
-			webviewTag: true,
-			additionalArguments: wrapExtraArgs([deviceId])
-		}
-	})
-
-	ProcWin.loadFile(modalPath);
-	ProcWin.once('ready-to-show', () => {
-		setTimeout(function () {
-			ProcWin.show();
-			ProcWin.focus();
-		}, 50);
-	});
-	ProcWin.on('close', function () { ProcWin = null })
+	openWindow('about.html', { width: 460, height: 270, extraArgs: [service.deviceId] });
 }
 
 // -= JS API Docs =-
 
 document.getElementById("FermionDocs").onclick = function () {
-	const modalPath = path.join(__dirname, 'docs.html');
-	let ProcWin = new BrowserWindow({
-		contextIsolation: false,
-		width: 800,
-		height: 800,
-		frame: false,
-		resizable: false,
-		show: false,
-		backgroundColor: '#E0E1E2',
-		webPreferences: {
-			nodeIntegration: true,
-			nodeIntegrationInWorker: true,
-			enableRemoteModule: true,
-			contextIsolation: false,
-			webviewTag: true
-		}
-	})
-
-	ProcWin.loadFile(modalPath);
-	ProcWin.once('ready-to-show', () => {
-		setTimeout(function () {
-			ProcWin.show();
-			ProcWin.focus();
-		}, 50);
-	});
-	ProcWin.on('close', function () { ProcWin = null })
+	openWindow('docs.html', { width: 800, height: 800 });
 }
 
 // -= Trace =-
 
 let TraceWin = null;
 document.getElementById("FermionTools").onclick = function () {
-	const modalPath = path.join(__dirname, 'trace.html');
-	if (sessionPID == null || sessionPID.length == 0) {
-		sessionPID = "null";
-	}
-	TraceWin = new BrowserWindow({
-		contextIsolation: false,
-		width: 425,
-		height: 615,
-		frame: false,
-		resizable: false,
-		show: false,
-		backgroundColor: '#E0E1E2',
-		webPreferences: {
-			nodeIntegration: true,
-			nodeIntegrationInWorker: true,
-			enableRemoteModule: true,
-			contextIsolation: false,
-			webviewTag: true,
-			additionalArguments: wrapExtraArgs([sessionPID])
-		}
-	})
-
+	// The trace window expects a PID string; use "null" when not attached.
+	const pidArg = (service.currentPid == null || service.currentPid.length == 0)
+		? "null" : service.currentPid;
 	// @electron/remote is enabled for this window by the main process
 	// (browser-window-created handler in core.js).
-
-	TraceWin.loadFile(modalPath);
-	TraceWin.once('ready-to-show', () => {
-		setTimeout(function () {
-			TraceWin.show();
-			TraceWin.focus();
-		}, 50);
-	});
-	TraceWin.on('close', function () { TraceWin = null })
+	TraceWin = openWindow('trace.html', { width: 425, height: 615, extraArgs: [pidArg] });
 }
 
 // Create IPC sender
 const traceSender = new BroadcastChannel('trace-data-send');
 
-// Invoke trace shim
+// Trace is a UI-side mode layered on the service (the service stays
+// trace-ignorant). Entering trace reloads the active script with the Graphviz
+// tracer and flips traceMode so SEND payloads route to the trace window; STOP
+// reloads the editor's script and clears the flag.
 traceSender.onmessage = function (message) {
 	if (message.data == "STOP") {
+		// Reloading the editor script clears traceMode (reload's .then), so the
+		// tracer's trailing output during the reload gap still routes to the
+		// trace window until the user script is live.
 		appendFridaLog('\n[+] Graphviz tracer will be unloaded..');
 		appendFridaLog('    |_ Reloading script in Monaco editor\n');
 		document.getElementById("FridaReload").click();
 	} else {
-		trace(message.data);
+		if (service.isAttached) {
+			if (service.hasScript) {
+				service.reloadScript(message.data)
+					.then(() => {
+						// Flip to trace routing only once the tracer is live, so a
+						// send() during the reload gap still goes to the terminal.
+						traceMode = true;
+						appendFridaLog('\n[+] Current script unloaded..');
+						appendFridaLog('    |_ Graphviz tracer loaded\n');
+					})
+					.catch(e => { appendFridaLog(e); });
+			} else {
+				appendFridaLog('[!] Not currently attached..');
+			}
+		} else {
+			appendFridaLog('[!] Not currently attached..');
+		}
 	}
 }
+
+// -= Service event wiring =-
+// message -> terminal, unless trace mode forwards a SEND payload to the trace
+// window (routeMessage). log -> terminal via handleScriptMessage. detached ->
+// clear the trace window PID and print the exit reason.
+function onServiceMessage(message) {
+	const { kind, text } = formatMessage(message);
+	if (routeMessage(kind, traceMode) === 'trace') {
+		appendFridaLog("[>] Received Graphviz trace data");
+		traceSender.postMessage(message.payload);
+	} else if (fermionTerminal) {
+		fermionTerminal.write(kind, text);
+	}
+}
+service.on('message', onServiceMessage);
+service.on('log', (level, text) => handleScriptMessage({ type: 'log', level, payload: text }));
+service.on('detached', (reason) => {
+	traceMode = false;  // no active script -> routing resets (fixes trace->detach->re-attach misroute)
+	traceSender.postMessage(null);
+	appendFridaLog(`[+] Exit Reason: ${reason}`);
+});
+if (window.__fermion) window.__fermion.service = service;
 
 // Logging
 //////////////////////////////////////////////////
 
-// Shared handler for every Frida script.message. Maps the message to a typed
-// line (console.log->LOG, warn->WARN, error-level log / throw->ERR, send->SEND,
-// unknown->STATUS) and writes it to the terminal. The `send` branch is
-// parameterized: when `onSend` is given (the trace site) the raw payload is
-// forwarded instead of printed.
-function handleScriptMessage(message, onSend) {
+// Maps a Frida message/log record to a typed terminal line (console.log->LOG,
+// warn->WARN, error-level log / throw->ERR, send->SEND, unknown->STATUS) and
+// writes it to the terminal. Used for the service's `log` events and by the
+// test harness (window.__fermion.handleScriptMessage). The service's `message`
+// events go through onServiceMessage, which adds trace-mode routing.
+function handleScriptMessage(message) {
 	const { kind, text } = formatMessage(message);
-	if (kind === 'SEND' && typeof onSend === 'function') {
-		onSend(message.payload);
-		return;
-	}
 	if (fermionTerminal) fermionTerminal.write(kind, text);
-}
-
-// Wire a freshly created Frida script to the terminal. send() and runtime
-// errors arrive via the `message` signal; but Frida delivers console.log/warn/
-// error to `logHandler` (it does NOT emit `message` for log records), so route
-// both through handleScriptMessage. `onSend` (trace) is forwarded to message.
-function wireScript(script, onSend) {
-	script.message.connect(message => handleScriptMessage(message, onSend));
-	script.logHandler = (level, text) => handleScriptMessage({ type: 'log', level, payload: text });
 }
 
 // Status/meta output goes to the terminal as the STATUS kind. The terminal
@@ -556,87 +346,8 @@ function appendFridaLog(data) {
 	if (fermionTerminal) fermionTerminal.write('STATUS', data);
 }
 
-// Monaco Editor
-//////////////////////////////////////////////////
-
-function LocalLoadLang(url, method) {
-	var request = new XMLHttpRequest();
-	return new Promise(function (resolve, reject) {
-		request.onreadystatechange = function () {
-			if (request.readyState !== 4) return;
-			if (request.status >= 200 && request.status < 300) {
-				resolve(request);
-			} else {
-				reject({
-					status: request.status,
-					statusText: request.statusText
-				});
-			}
-		};
-		request.open(method || 'GET', url, true);
-		request.send();
-	});
-};
-
-function setMonacoTheme() {
-	var theme = document.getElementById("MonacoThemeSelect").value;
-	var refCodeContainer = document.getElementById("Container");
-	if (theme == "idleFingers") {
-		monaco.editor.defineTheme("idleFingers", idleFingers);
-		monaco.editor.setTheme("idleFingers");
-	} else if (theme == "Cobalt") {
-		monaco.editor.defineTheme("Cobalt", Cobalt);
-		monaco.editor.setTheme("Cobalt");
-	} else if (theme == "MerbivoreSoft") {
-		monaco.editor.defineTheme("MerbivoreSoft", MerbivoreSoft);
-		monaco.editor.setTheme("MerbivoreSoft");
-	} else if (theme == "Katzenmilch") {
-		monaco.editor.defineTheme("Katzenmilch", Katzenmilch);
-		monaco.editor.setTheme("Katzenmilch");
-	} else if (theme == "Monokai") {
-		monaco.editor.defineTheme("Monokai", Monokai);
-		monaco.editor.setTheme("Monokai");
-	} else if (theme == "Solarized-Dark") {
-		monaco.editor.defineTheme("SolarizedDark", SolarizedDark);
-		monaco.editor.setTheme("SolarizedDark");
-	} else if (theme == "Solarized-Light") {
-		monaco.editor.defineTheme("SolarizedLight", SolarizedLight);
-		monaco.editor.setTheme("SolarizedLight");
-	} else if (theme == "Birds-Of-Paradise") {
-		monaco.editor.defineTheme("BirdsOfParadise", BirdsOfParadise);
-		monaco.editor.setTheme("BirdsOfParadise");
-	} else if (theme == "Clouds") {
-		monaco.editor.defineTheme("Clouds", Clouds);
-		monaco.editor.setTheme("Clouds");
-	} else if (theme == "Kuroir") {
-		monaco.editor.defineTheme("Kuroir", Kuroir);
-		monaco.editor.setTheme("Kuroir");
-	} else if (theme == "NightOwl") {
-		monaco.editor.defineTheme("NightOwl", NightOwl);
-		monaco.editor.setTheme("NightOwl");
-	} else if (theme == "Textmate") {
-		monaco.editor.defineTheme("Textmate", Textmate);
-		monaco.editor.setTheme("Textmate");
-	} else if (theme == "VSCode") {
-		monaco.editor.setTheme("vs");
-	} else if (theme == "VSCode-Dark") {
-		monaco.editor.setTheme("vs-dark");
-	} else if (theme == "VSCode-HighContrast") {
-		monaco.editor.setTheme("hc-black");
-	} else if (theme == "Amy") {
-		monaco.editor.defineTheme("Amy", Amy);
-		monaco.editor.setTheme("Amy");
-	} else if (theme == "Oceanic Next") {
-		monaco.editor.defineTheme("Oceanic-Next", OceanicNext);
-		monaco.editor.setTheme("Oceanic-Next");
-	} else if (theme == "Tomorrow Night Blue") {
-		monaco.editor.defineTheme("Tomorrow-Night-Blue", TomorrowNightBlue);
-		monaco.editor.setTheme("Tomorrow-Night-Blue");
-	} else if (theme == "Vibrant Ink") {
-		monaco.editor.defineTheme("Vibrant-Ink", VibrantInk);
-		monaco.editor.setTheme("Vibrant-Ink");
-	}
-}
+// Monaco editor setup, theme switching, and the version banner now live in
+// src/editor.js (setMonacoTheme is imported above and re-exposed on window).
 
 // UI Handler
 //////////////////////////////////////////////////
@@ -705,45 +416,38 @@ document.getElementById("FermionSave").onclick = function () {
 }
 
 document.getElementById("getDeviceDetail").onclick = function () {
-	appendFridaLog("\n[>] Device --> " + deviceId);
-	frida.getDevice(deviceId).then(dev => {
-		appendFridaLog("    |_ Device Name : " + dev.name);
-		dev.querySystemParameters().then(result => {
-			if (result.hasOwnProperty("os")) {
-				if (result.os.hasOwnProperty("name")) {
-					appendFridaLog("    |_ Platform    : " + result.os.name);
-				}
-				if (result.os.hasOwnProperty("version")) {
-					appendFridaLog("    |_ Version     : " + result.os.version);
-				}
+	appendFridaLog("\n[>] Device --> " + service.deviceId);
+	service.getDeviceInfo().then(({ name, params, paramsError }) => {
+		appendFridaLog("    |_ Device Name : " + name);
+		if (paramsError) {
+			appendFridaLog("[!] Failed to enumerate device properties: " + paramsError + "\n");
+			return;
+		}
+		const result = params;
+		if (result.hasOwnProperty("os")) {
+			if (result.os.hasOwnProperty("name")) {
+				appendFridaLog("    |_ Platform    : " + result.os.name);
 			}
-			if (result.hasOwnProperty("arch")) {
-				appendFridaLog("    |_ Arch        : " + result.arch);
+			if (result.os.hasOwnProperty("version")) {
+				appendFridaLog("    |_ Version     : " + result.os.version);
 			}
-			if (result.hasOwnProperty("access")) {
-				appendFridaLog("    |_ Access      : " + result.access);
-			}
-			if (result.hasOwnProperty("name")) {
-				appendFridaLog("    |_ Host Name   : " + result.name + "\n");
-			}
-		}).catch(err => {
-			appendFridaLog("[!] Failed to enumerate device properties: " + err + "\n");
-		});
+		}
+		if (result.hasOwnProperty("arch")) {
+			appendFridaLog("    |_ Arch        : " + result.arch);
+		}
+		if (result.hasOwnProperty("access")) {
+			appendFridaLog("    |_ Access      : " + result.access);
+		}
+		if (result.hasOwnProperty("name")) {
+			appendFridaLog("    |_ Host Name   : " + result.name + "\n");
+		}
 	}).catch(err => {
 		appendFridaLog("[!] Failed to acquire device context: " + err + "\n");
 	});
 }
 
 document.getElementById("FermionMonacoWrap").onclick = function () {
-	// Toggle the current state
-	var wrapState = document.getElementById("FermionMonacoWrap");
-	if (wrapState.children[0].checked == false) {
-		MonacoCodeEditor.updateOptions({ wordWrap: "on" });
-		wrapState.children[0].checked = true;
-	} else {
-		MonacoCodeEditor.updateOptions({ wordWrap: "off" });
-		wrapState.children[0].checked = false;
-	}
+	toggleWrap();
 }
 
 // Trap keybinds
@@ -818,7 +522,6 @@ document.addEventListener("keydown", function (e) {
 //////////////////////////////////////////////////
 
 // Store DOM references
-const fridaOut = document.getElementById('FridaOut');
 const copyButton = document.getElementById('copy-output');
 const decreaseFontButton = document.getElementById('decrease-font');
 const increaseFontButton = document.getElementById('increase-font');
@@ -831,6 +534,21 @@ const saveOutputButton = document.getElementById('save-output');
 
 // Initialize features when DOM is loaded
 document.addEventListener('DOMContentLoaded', function () {
+	// Monaco editor setup + startup version banner (src/editor.js). Must run
+	// AFTER split-1.6.4.js and monaco-theme.js have loaded (editor.js sets
+	// self.module = undefined for the Monaco AMD loader, which would corrupt
+	// split's UMD load if run during parse). DOMContentLoaded is after both.
+	// The Monaco AMD load is async, so the editor still mounts a moment later.
+	initEditor({ log: appendFridaLog });
+
+	// Build the layout controller first — loadSettings() may call
+	// layout.toggleLayout() to restore a saved horizontal layout.
+	layout = createLayout({
+		getTerminal: () => fermionTerminal,
+		getEditor: () => MonacoCodeEditor,
+		onChange: saveSettings,
+	});
+
 	// Make sure window.split is available before storing it
 	setTimeout(() => {
 		if (window.split) {
@@ -845,10 +563,10 @@ document.addEventListener('DOMContentLoaded', function () {
 	addEventListeners();
 
 	// Initialize the layout button icon
-	initLayoutButton();
+	layout.initLayoutButton();
 
 	// Initial UI adjustment
-	setTimeout(adjustUIForSidebar, 100);
+	setTimeout(() => layout.adjustUIForSidebar(), 100);
 
 	// Initialize Monaco editor with custom theme
 	setTimeout(addMonacoSettingsListeners, 1500);
@@ -906,21 +624,21 @@ function addEventListeners() {
 	increaseFontButton.addEventListener('click', increaseFontSize);
 
 	// Layout toggle
-	toggleLayoutButton.addEventListener('click', toggleLayout);
+	toggleLayoutButton.addEventListener('click', () => layout.toggleLayout());
 
 	// Output clear / save
 	clearOutputButton.addEventListener('click', clearOutputArea);
 	saveOutputButton.addEventListener('click', saveOutputArea);
 
 	// Sidebar state changes and window resize
-	window.addEventListener('resize', adjustUIForSidebar);
+	window.addEventListener('resize', () => layout.adjustUIForSidebar());
 
 	// Add a listener for possible sidebar toggle events
 	document.addEventListener('click', function (event) {
 		// Check if click might be related to sidebar toggle
 		if (event.target.closest('nav') || event.target.closest('.navbar-menu')) {
 			// Wait a moment for DOM to update
-			setTimeout(adjustUIForSidebar, 100);
+			setTimeout(() => layout.adjustUIForSidebar(), 100);
 		}
 	});
 }
@@ -968,125 +686,6 @@ function increaseFontSize() {
 	fermionTerminal.setFontSize(Math.min(28, fermionTerminal.getFontSize() + 1));
 }
 
-// Enhanced function to adjust UI based on sidebar state
-function adjustUIForSidebar() {
-	// Get the actual width of the container
-	const containerWidth = document.getElementById('split-1').offsetWidth;
-
-	// Adjust search container width based on available space
-	const searchContainer = document.querySelector('.search-container');
-	if (searchContainer) {
-		// Make search container narrower if space is limited
-		if (containerWidth < 300) {
-			searchContainer.style.maxWidth = '100px';
-			searchContainer.style.minWidth = '60px';
-		} else {
-			searchContainer.style.maxWidth = '220px'; // Updated to accommodate navigation buttons
-			searchContainer.style.minWidth = '80px';
-		}
-	}
-
-}
-
-const verticalIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-  <line x1="12" y1="3" x2="12" y2="21"></line>
-</svg>`;
-
-const horizontalIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-  <line x1="3" y1="12" x2="21" y2="12"></line>
-</svg>`;
-
-// Toggle layout direction
-function toggleLayout() {
-	// Toggle the layout state
-	isVertical = !isVertical;
-
-	// Ensure split instance exists
-	if (typeof window.split !== 'undefined') {
-		// Get elements we'll need to manipulate
-		const split0 = document.getElementById('split-0');
-		const split1 = document.getElementById('split-1');
-		const container = document.getElementById('container');
-		const fridaOutContainer = document.querySelector('.textarea-container');
-		const splitContainer = document.querySelector('.split');
-
-		// Force visibility of the output area during transition
-		fridaOut.style.display = 'block';
-
-		// Destroy existing split
-		window.split.destroy();
-
-		// Remove all inline styles that might interfere
-		split0.removeAttribute('style');
-		split1.removeAttribute('style');
-
-		// Apply basic required styles
-		split0.style.overflow = 'hidden';
-		split1.style.overflow = 'hidden';
-		container.style.width = '100%';
-		container.style.height = '100%';
-
-		// Update container classes
-		if (isVertical) {
-			splitContainer.classList.remove('horizontal');
-		} else {
-			splitContainer.classList.add('horizontal');
-		}
-
-		// Create new split with a delay to ensure DOM updates
-		setTimeout(() => {
-			window.split = Split(['#split-0', '#split-1'], {
-				direction: isVertical ? 'vertical' : 'horizontal',
-				sizes: isVertical ? [63, 37] : [50, 50],
-				minSize: 100,
-				gutterSize: 8,
-				onDragEnd: function () {
-					window.dispatchEvent(new Event('resize'));
-					if (MonacoCodeEditor) {
-						MonacoCodeEditor.layout();
-					}
-				}
-			});
-
-			// Force output container to take full width/height
-			fridaOutContainer.style.width = '100%';
-			fridaOutContainer.style.height = '100%';
-			fridaOut.style.width = '100%';
-			fridaOut.style.height = '100%';
-
-			// Force Monaco editor layout update
-			if (MonacoCodeEditor) {
-				MonacoCodeEditor.layout();
-			}
-
-			// Update layout button icon
-			updateLayoutButtonIcon();
-
-			// Refit the terminal to the new split dimensions
-			if (fermionTerminal) fermionTerminal.fit();
-		}, 50);
-
-		// Save settings
-		saveSettings();
-	}
-}
-
-// Function to update the layout button icon based on current state
-function updateLayoutButtonIcon() {
-	const toggleButton = document.getElementById('toggle-layout');
-
-	// Note: We've swapped the logic here - show what layout we're CURRENTLY in
-	// (not what we'll switch to next)
-	toggleButton.innerHTML = isVertical ? verticalIcon : horizontalIcon;
-	toggleButton.title = isVertical ? "Switch to horizontal layout" : "Switch to vertical layout";
-}
-
-function initLayoutButton() {
-	// Set the initial icon based on the current layout
-	updateLayoutButtonIcon();
-}
 
 // Save settings to localStorage
 function saveSettings() {
@@ -1100,13 +699,13 @@ function saveSettings() {
 		wrapToggle.children[0].checked : false;
 
 	const settings = {
-		isVertical: isVertical,
+		isVertical: layout ? layout.isVertical() : true,
 		// Monaco Editor settings
 		monacoTheme: currentTheme,
 		monacoWrap: isWrapEnabled
 	};
 
-	localStorage.setItem('fermion_output_settings', JSON.stringify(settings));
+	writeSettings(settings);
 }
 
 // Function to clear the output area
@@ -1159,11 +758,9 @@ function saveOutputArea() {
 
 // Load settings from localStorage
 function loadSettings() {
-	const savedSettings = localStorage.getItem('fermion_output_settings');
-	if (savedSettings) {
-		try {
-			const settings = JSON.parse(savedSettings);
-
+	const settings = readSettings();
+	if (settings) {
+		{
 			// Apply layout direction. The app starts vertical (isVertical = true)
 			// and toggleLayout() both flips isVertical and rebuilds the split, so
 			// restore a saved HORIZONTAL layout by calling toggleLayout() once.
@@ -1173,7 +770,7 @@ function loadSettings() {
 			if (settings.hasOwnProperty('isVertical') && settings.isVertical === false
 				&& typeof window.split !== 'undefined') {
 				setTimeout(function () {
-					toggleLayout();
+					layout.toggleLayout();
 				}, 500);
 			}
 
@@ -1208,8 +805,6 @@ function loadSettings() {
 					}
 				}, 1000); // Allow time for Monaco to initialize
 			}
-		} catch (error) {
-			console.error('Error loading settings:', error);
 		}
 	}
 }

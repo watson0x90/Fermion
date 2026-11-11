@@ -35,6 +35,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
       # Electron needs a virtual display and its GUI runtime libraries to launch
       # headlessly on a CI runner.
       - name: Install Linux GUI runtime deps
@@ -78,6 +84,11 @@ jobs:
       # (ptrace restrictions); the real coverage is on the Windows dev machine.
       - name: Attach + console.log end-to-end
         run: xvfb-run -a node scripts/ui-test-attach-console.js
+
+      # Trace mode must not stick across a detach (SEND routing follows the
+      # loaded script). Skips gracefully where the runner can't attach.
+      - name: Trace routing across detach
+        run: xvfb-run -a node scripts/ui-test-trace-detach.js
 
       - name: Layout persistence regression
         run: xvfb-run -a node scripts/ui-test-layout.js

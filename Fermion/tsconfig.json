@@ -1,0 +1,18 @@
+{
+  "//": "Type-checking only (no build). Modules opt in with `// @ts-check`; this config provides the DOM + Node libs and ambient page globals (src/globals.d.ts). Run: npx tsc -p tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "strict": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*.js", "src/globals.d.ts"],
+  "exclude": ["node_modules", "src/frameworks", "src/lang", "src/tools", "out"]
+}
