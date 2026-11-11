@@ -8,9 +8,25 @@ const dialog = remote.dialog;
 var fs = require('fs');
 const frida = require('frida');
 const { wrapExtraArgs } = require('../src/helper.js');
+const { createTerminal } = require('../src/terminal.js');
 
 // Overwrite default node.js prop to get Jquery working
 window.$ = window.jQuery = require('jquery');
+
+// -= Output terminal =-
+// Replaces the old <textarea>. The #FridaOut host is parsed above this script,
+// so it exists now; creating the terminal here means the startup banner
+// (printed from index.html after this script) lands in it.
+let fermionTerminal = null;
+(function () {
+	const host = document.getElementById('FridaOut');
+	if (host) {
+		fermionTerminal = createTerminal(host);
+		window.__fermion = { terminal: fermionTerminal };
+		window.addEventListener('resize', function () { if (fermionTerminal) fermionTerminal.fit(); });
+		setTimeout(function () { if (fermionTerminal) fermionTerminal.fit(); }, 300);
+	}
+})();
 
 // Globals
 //////////////////////////////////////////////////
@@ -567,30 +583,11 @@ traceSender.onmessage = function (message) {
 // Logging
 //////////////////////////////////////////////////
 
+// Status/meta output goes to the terminal as the STATUS kind. The terminal
+// owns its own scrollback cap and follow-tail behavior (replacing the old
+// textarea trim + overlay-search).
 function appendFridaLog(data) {
-	var FridaOut = document.getElementById('FridaOut');
-	FridaOut.value += (data + "\n");
-
-	// DIY garbage collection
-	// |-> If the textarea grows too large it locks up the app
-	var aFridaOut = FridaOut.value.split("\n");
-	var iMaxLen = 5000; // max line count in textarea
-	if (aFridaOut.length > iMaxLen) {
-		var iRemCount = aFridaOut.length - iMaxLen;
-		aFridaOut.splice(0, iRemCount);
-		FridaOut.value = aFridaOut.join("\n");
-	}
-
-	FridaOut.scrollTop = FridaOut.scrollHeight;
-
-	// If search is active, refresh highlights for the new output. performSearch
-	// navigates to (and scrolls to) the first match, which would yank the
-	// viewport away from the live tail on every appended line, so re-assert the
-	// tail-follow scroll afterwards to match the non-search streaming behavior.
-	if (searchRegex) {
-		performSearch();
-		FridaOut.scrollTop = FridaOut.scrollHeight;
-	}
+	if (fermionTerminal) fermionTerminal.write('STATUS', data);
 }
 
 function ChangeLogExclusive(mutex, locktype, data) {

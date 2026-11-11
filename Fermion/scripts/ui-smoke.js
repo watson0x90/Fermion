@@ -50,21 +50,23 @@ const args = packaged
     const win = await app.firstWindow();
     await win.waitForLoadState('domcontentloaded');
 
-    // Monaco editor must actually mount. Allow a generous timeout: a cold CI
-    // runner (especially macOS, where Gatekeeper assesses the freshly ad-hoc
-    // signed app on first launch) can be slow to render.
+    // Monaco editor and the xterm terminal must actually mount. Allow a
+    // generous timeout: a cold CI runner (especially macOS, where Gatekeeper
+    // assesses the freshly ad-hoc signed app on first launch) can be slow.
     await win.waitForSelector('.monaco-editor', { timeout: 60000 });
+    await win.waitForSelector('.xterm', { timeout: 60000 });
 
-    // The startup banner must reach the output pane (proves renderer + Frida
-    // version lookup ran).
+    // The startup banner must reach the terminal (proves renderer + Frida
+    // version lookup ran, and output routes to the terminal).
     await win.waitForFunction(() => {
-      const el = document.getElementById('FridaOut');
-      return el && /Frida v\d/.test(el.value);
+      const rows = document.querySelector('.xterm-rows');
+      return rows && /Frida v\d/.test(rows.textContent);
     }, { timeout: 60000 });
 
     const fridaLine = await win.evaluate(() => {
-      const el = document.getElementById('FridaOut');
-      const m = el && el.value.match(/\[\+\] Fermion v\S+ -> Frida v\S+/);
+      const t = window.__fermion && window.__fermion.terminal;
+      const text = t ? t.getText() : (document.querySelector('.xterm-rows') || {}).textContent || '';
+      const m = text.match(/\[\+\] Fermion v\S+ -> Frida v\S+/);
       return m ? m[0] : '(version line not found)';
     });
 
