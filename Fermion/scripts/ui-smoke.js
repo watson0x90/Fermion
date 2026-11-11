@@ -39,8 +39,15 @@ const args = packaged
       cwd: packaged ? undefined : APP_DIR,
     });
 
+    // Attach the error listener as soon as any window is created — before
+    // awaiting firstWindow() — so an exception thrown early in the renderer
+    // (e.g. a bad require or the version IIFE) is still captured.
+    app.on('window', (page) => {
+      page.on('pageerror', (err) =>
+        pageErrors.push(String(err && err.message ? err.message : err)));
+    });
+
     const win = await app.firstWindow();
-    win.on('pageerror', (err) => pageErrors.push(String(err && err.message ? err.message : err)));
     await win.waitForLoadState('domcontentloaded');
 
     // Monaco editor must actually mount.

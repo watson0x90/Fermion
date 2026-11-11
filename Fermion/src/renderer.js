@@ -1338,16 +1338,9 @@ function initSearchFunctionality() {
 	// Handle search button clicks
 	document.getElementById('search-button').addEventListener('click', performSearch);
 
-	// Handle Enter key in search box
-	document.getElementById('regex-search').addEventListener('keypress', function (e) {
-		if (e.key === 'Enter') {
-			if (searchRegex) {
-				navigateToNextMatch();
-			} else {
-				performSearch();
-			}
-		}
-	});
+	// Note: Enter/Shift+Enter navigation for the search box is handled by the
+	// keydown listener in addSearchKeyboardShortcuts() (which also preventDefaults
+	// the keypress). A keypress Enter handler here would be redundant.
 
 	// Sync scrolling between textarea and highlight overlay
 	document.getElementById('FridaOut').addEventListener('scroll', function () {
