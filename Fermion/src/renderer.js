@@ -1,7 +1,6 @@
 const electron = require('electron');
 const path = require('path');
 const ipc = require('electron').ipcRenderer;
-var MutexPromise = require('mutex-promise');
 const remote = require('@electron/remote');
 const BrowserWindow = remote.BrowserWindow;
 const dialog = remote.dialog;
@@ -9,6 +8,7 @@ var fs = require('fs');
 const frida = require('frida');
 const { wrapExtraArgs } = require('../src/helper.js');
 const { createTerminal } = require('../src/terminal.js');
+const { formatMessage } = require('../src/output-model.js');
 
 // Overwrite default node.js prop to get Jquery working
 window.$ = window.jQuery = require('jquery');
@@ -22,7 +22,7 @@ let fermionTerminal = null;
 	const host = document.getElementById('FridaOut');
 	if (host) {
 		fermionTerminal = createTerminal(host);
-		window.__fermion = { terminal: fermionTerminal };
+		window.__fermion = { terminal: fermionTerminal, handleScriptMessage };
 		window.addEventListener('resize', function () { if (fermionTerminal) fermionTerminal.fit(); });
 		setTimeout(function () { if (fermionTerminal) fermionTerminal.fit(); }, 300);
 	}
@@ -36,8 +36,6 @@ var currentFilePath = null;
 let script = null;
 var session = null;
 var sessionPID = null;
-let logMutex = new MutexPromise('48011b2b9a930ee19e26320e5adbffa2e309663c');
-let RunningLog = [];
 var deviceId = 'local';
 
 // Enhanced Frida Output variables
@@ -78,18 +76,7 @@ async function inject(AttachTo) {
 	// it will lock the UI on big volumes of data. Instead we append
 	// to an array using a mutex and every X ms we flush the array
 	// to the text area
-	script.message.connect(message => {
-		if (message.type == "send") {
-			ChangeLogExclusive(logMutex, 'Append', message.payload);
-		} else {
-			ChangeLogExclusive(logMutex, 'Append', "[!] Runtime error: " + message.stack);
-		}
-		setTimeout(function () {
-			if (RunningLog.length > 0) {
-				ChangeLogExclusive(logMutex, 'Write', null);
-			}
-		}, 500);
-	});
+	script.message.connect(message => handleScriptMessage(message));
 	await script.load();
 }
 
@@ -118,18 +105,7 @@ async function start(Path, Args) {
 	// it will lock the UI on big volumes of data. Instead we append
 	// to an array using a mutex and every X ms we flush the array
 	// to the text area
-	script.message.connect(message => {
-		if (message.type == "send") {
-			ChangeLogExclusive(logMutex, 'Append', message.payload);
-		} else {
-			ChangeLogExclusive(logMutex, 'Append', "[!] Runtime error: " + message.stack);
-		}
-		setTimeout(function () {
-			if (RunningLog.length > 0) {
-				ChangeLogExclusive(logMutex, 'Write', null);
-			}
-		}, 500);
-	});
+	script.message.connect(message => handleScriptMessage(message));
 
 	appendFridaLog('[+] Injecting => PID: ' + procID + ', Name: ' + Path);
 	await script.load();
@@ -171,18 +147,7 @@ document.getElementById("FridaReload").onclick = async function () {
 		if (script != null) {
 			script.unload();
 			script = await session.createScript(MonacoCodeEditor.getValue());
-			script.message.connect(message => {
-				if (message.type == "send") {
-					ChangeLogExclusive(logMutex, 'Append', message.payload);
-				} else {
-					ChangeLogExclusive(logMutex, 'Append', "[!] Runtime error: " + message.stack);
-				}
-				setTimeout(function () {
-					if (RunningLog.length > 0) {
-						ChangeLogExclusive(logMutex, 'Write', null);
-					}
-				}, 500);
-			});
+			script.message.connect(message => handleScriptMessage(message));
 			appendFridaLog('[+] Script reloaded..');
 			await script.load();
 		} else {
@@ -324,20 +289,11 @@ async function trace(scriptBody) {
 		if (script != null) {
 			script.unload();
 			script = await session.createScript(scriptBody);
-			script.message.connect(message => {
-				if (message.type == "send") {
-					ChangeLogExclusive(logMutex, 'Append', "[>] Received Graphviz trace data");
-					// Send it back to trace window
-					traceSender.postMessage(message.payload);
-				} else {
-					ChangeLogExclusive(logMutex, 'Append', "[!] Runtime error: " + message.stack);
-				}
-				setTimeout(function () {
-					if (RunningLog.length > 0) {
-						ChangeLogExclusive(logMutex, 'Write', null);
-					}
-				}, 500);
-			});
+			script.message.connect(message => handleScriptMessage(message, function (payload) {
+				appendFridaLog("[>] Received Graphviz trace data");
+				// Forward the DOT payload to the trace window (not printed here).
+				traceSender.postMessage(payload);
+			}));
 			appendFridaLog('\n[+] Current script unloaded..');
 			appendFridaLog('    |_ Graphviz tracer loaded\n');
 			await script.load();
@@ -583,32 +539,25 @@ traceSender.onmessage = function (message) {
 // Logging
 //////////////////////////////////////////////////
 
+// Shared handler for every Frida script.message. Maps the message to a typed
+// line (console.log->LOG, warn->WARN, error-level log / throw->ERR, send->SEND,
+// unknown->STATUS) and writes it to the terminal. The `send` branch is
+// parameterized: when `onSend` is given (the trace site) the raw payload is
+// forwarded instead of printed.
+function handleScriptMessage(message, onSend) {
+	const { kind, text } = formatMessage(message);
+	if (kind === 'SEND' && typeof onSend === 'function') {
+		onSend(message.payload);
+		return;
+	}
+	if (fermionTerminal) fermionTerminal.write(kind, text);
+}
+
 // Status/meta output goes to the terminal as the STATUS kind. The terminal
 // owns its own scrollback cap and follow-tail behavior (replacing the old
 // textarea trim + overlay-search).
 function appendFridaLog(data) {
 	if (fermionTerminal) fermionTerminal.write('STATUS', data);
-}
-
-function ChangeLogExclusive(mutex, locktype, data) {
-	return mutex.promise()
-		.then(function (mutex) {
-			mutex.lock();
-			if (locktype == "Append") {
-				RunningLog.push(data);
-			} else if (locktype == "Write") {
-				appendFridaLog(RunningLog.join("\n"));
-				RunningLog = [];
-			}
-		})
-		.then(function (res) {
-			mutex.unlock();
-			return res;
-		})
-		.catch(function (e) {
-			mutex.unlock();
-			throw e;
-		});
 }
 
 // Monaco Editor
