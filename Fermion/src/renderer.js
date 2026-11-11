@@ -871,14 +871,48 @@ document.addEventListener('DOMContentLoaded', function () {
 	// Initialize Monaco editor with custom theme
 	setTimeout(addMonacoSettingsListeners, 1500);
 
-	// Initialize search functionality with new features
-	setTimeout(() => {
-		initSearchFunctionality();
-		addSearchNavButtons();
-		addSearchKeyboardShortcuts();
-		addSearchStyles();
-	}, 500);
+	// Wire the terminal toolbar (search, level filters, follow-tail).
+	wireTerminalToolbar();
 });
+
+// Wire the output terminal's toolbar controls to the terminal controller.
+function wireTerminalToolbar() {
+	const t = fermionTerminal;
+	if (!t) return;
+
+	const searchInput = document.getElementById('regex-search');
+	if (searchInput) {
+		const runNext = () => { if (searchInput.value) t.searchNext(searchInput.value); };
+		const searchBtn = document.getElementById('search-button');
+		if (searchBtn) searchBtn.addEventListener('click', runNext);
+		searchInput.addEventListener('keydown', (e) => {
+			if (e.key === 'Enter') {
+				e.preventDefault();
+				if (searchInput.value) (e.shiftKey ? t.searchPrev : t.searchNext)(searchInput.value);
+			} else if (e.key === 'Escape') {
+				e.preventDefault();
+				searchInput.value = '';
+				t.clearSearch();
+			}
+		});
+		const clearBtn = document.getElementById('clear-search');
+		if (clearBtn) clearBtn.addEventListener('click', () => { searchInput.value = ''; t.clearSearch(); });
+	}
+
+	// Level filter chips (LOG/WARN/ERR/SEND/STATUS) — all start visible (.on).
+	document.querySelectorAll('.flt-chip').forEach((chip) => {
+		chip.addEventListener('click', () => {
+			const on = chip.classList.toggle('on');
+			t.setFilter(chip.getAttribute('data-kind'), on);
+		});
+	});
+
+	// Follow-tail toggle (on by default).
+	const followBtn = document.getElementById('term-follow');
+	if (followBtn) followBtn.addEventListener('click', () => {
+		t.setFollow(followBtn.classList.toggle('on'));
+	});
+}
 
 // Add event listeners to UI elements
 function addEventListeners() {
@@ -1119,10 +1153,10 @@ function updateMatchCounter() {
 
 // Copy output to clipboard
 function copyOutputToClipboard() {
-	fridaOut.select();
-	document.execCommand('copy');
-	window.getSelection().removeAllRanges();
-
+	const text = fermionTerminal ? fermionTerminal.copySelectionOrAll() : '';
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(text);
+	}
 	showNotification('Copied to clipboard!');
 }
 
@@ -1148,36 +1182,16 @@ function showNotification(message) {
 	}, 2000);
 }
 
-// Decrease font size
+// Decrease terminal font size
 function decreaseFontSize() {
-	if (currentFontSize > 0.5) {
-		currentFontSize -= 0.1;
-		currentFontSize = Math.round(currentFontSize * 10) / 10; // Round to 1 decimal place
-		fridaOut.style.fontSize = currentFontSize + 'em';
-		highlightOverlay.style.fontSize = currentFontSize + 'em';
-		saveSettings();
-
-		// Reapply search highlighting if active
-		if (searchRegex) {
-			performSearch();
-		}
-	}
+	if (!fermionTerminal) return;
+	fermionTerminal.setFontSize(Math.max(8, fermionTerminal.getFontSize() - 1));
 }
 
-// Increase font size
+// Increase terminal font size
 function increaseFontSize() {
-	if (currentFontSize < 2.0) {
-		currentFontSize += 0.1;
-		currentFontSize = Math.round(currentFontSize * 10) / 10; // Round to 1 decimal place
-		fridaOut.style.fontSize = currentFontSize + 'em';
-		highlightOverlay.style.fontSize = currentFontSize + 'em';
-		saveSettings();
-
-		// Reapply search highlighting if active
-		if (searchRegex) {
-			performSearch();
-		}
-	}
+	if (!fermionTerminal) return;
+	fermionTerminal.setFontSize(Math.min(28, fermionTerminal.getFontSize() + 1));
 }
 
 // Improved synchronization function for textarea and overlay
@@ -1769,43 +1783,15 @@ function saveSettings() {
 
 // Function to clear the output area
 function clearOutputArea() {
-	// Get the textarea
-	const fridaOut = document.getElementById('FridaOut');
-
-	// Clear the textarea content
-	fridaOut.value = '';
-
-	// Clear highlights if search is active
-	clearHighlights();
-
-	// Reset search-related variables
-	searchRegex = null;
-	matchPositions = [];
-	currentMatchIndex = -1;
-	totalMatches = 0;
-
-	// Hide match indicator
-	const matchIndicator = document.querySelector('.match-indicator');
-	if (matchIndicator) {
-		matchIndicator.style.display = 'none';
-	}
-
-	// Hide navigation buttons
-	const navButtons = document.querySelector('.search-nav-buttons');
-	if (navButtons) {
-		navButtons.style.display = 'none';
-	}
-
-	// Show notification
+	if (fermionTerminal) fermionTerminal.clear();
 	showNotification('Output cleared');
 }
 
 
 // Function to save the output area content to a file
 function saveOutputArea() {
-	// Get the content from the textarea
-	const fridaOut = document.getElementById('FridaOut');
-	const content = fridaOut.value;
+	// Get the content from the terminal buffer
+	const content = fermionTerminal ? fermionTerminal.getText() : '';
 
 	// If content is empty, show notification and return
 	if (!content.trim()) {

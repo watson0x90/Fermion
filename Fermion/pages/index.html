@@ -250,6 +250,15 @@
                         </svg>
                       </button>
                     </div>
+                    <div class="filter-chips">
+                      <span class="flt-label">filter:</span>
+                      <button id="flt-log" class="flt-chip on" data-kind="LOG" title="Toggle console.log">LOG</button>
+                      <button id="flt-warn" class="flt-chip on" data-kind="WARN" title="Toggle console.warn">WARN</button>
+                      <button id="flt-err" class="flt-chip on" data-kind="ERR" title="Toggle errors">ERR</button>
+                      <button id="flt-send" class="flt-chip on" data-kind="SEND" title="Toggle send()">SEND</button>
+                      <button id="flt-status" class="flt-chip on" data-kind="STATUS" title="Toggle status">STATUS</button>
+                      <button id="term-follow" class="toolbar-button on" title="Follow output tail">&#8615;</button>
+                    </div>
                     <div class="search-container">
                       <input type="text" id="regex-search" placeholder="Search...">
                       <button id="search-button" class="toolbar-button" title="Search">

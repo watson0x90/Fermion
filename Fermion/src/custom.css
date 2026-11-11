@@ -462,3 +462,35 @@ textarea#FridaOut::selection {
   --current-match-bg: #FFD300;
   --current-match-text: #000000;
 }
+
+/* -= Terminal output pane & level-filter chips =- */
+.terminal-host {
+  width: 100%;
+  height: 100%;
+  background: #0d1117;
+}
+.filter-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.flt-label {
+  color: #6e7681;
+  font-size: 11px;
+}
+.flt-chip {
+  font: 600 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: .04em;
+  padding: 4px 7px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #484f58;
+  cursor: pointer;
+}
+.flt-chip.on { color: #c9d1d9; border-color: #3a4150; }
+.flt-chip[data-kind="WARN"].on { color: #e3b341; border-color: #6e5a1f; }
+.flt-chip[data-kind="ERR"].on { color: #f85149; border-color: #6e2a27; }
+.flt-chip[data-kind="SEND"].on { color: #39c5cf; border-color: #2a6e74; }
+.flt-chip[data-kind="STATUS"].on { color: #8b949e; border-color: #3a4150; }
+#term-follow.on { color: #539bf5; }
