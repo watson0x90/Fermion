@@ -3,13 +3,13 @@ const ipc = require('electron').ipcRenderer;
 const remote = require('@electron/remote');
 const dialog = remote.dialog;
 var fs = require('fs');
-const frida = require('frida');
 const { createTerminal } = require('../src/terminal.js');
 const { formatMessage } = require('../src/output-model.js');
 const { readSettings, writeSettings } = require('../src/settings.js');
 const { createLayout } = require('../src/layout.js');
 const { openWindow } = require('../src/windows.js');
 const { initEditor, setMonacoTheme, toggleWrap } = require('../src/editor.js');
+const { FridaService, routeMessage } = require('../src/frida-service.js');
 // Inline index.html handler onchange="setMonacoTheme()" needs this on window.
 window.setMonacoTheme = setMonacoTheme;
 
@@ -36,10 +36,14 @@ let fermionTerminal = null;
 
 var MonacoCodeEditor;
 var currentFilePath = null;
-let script = null;
-var session = null;
-var sessionPID = null;
-var deviceId = 'local';
+
+// All frida-node interaction goes through this service (src/frida-service.js).
+// The UI subscribes to its message/log/detached events (wired below, after
+// traceSender exists) and calls its async methods. `traceMode` is a UI-side
+// flag: while on, SEND payloads are forwarded to the trace window instead of
+// the terminal (see onServiceMessage + routeMessage).
+const service = new FridaService();
+let traceMode = false;
 
 // Enhanced Frida Output variables
 let originalSplit = null;
@@ -50,82 +54,39 @@ let layout = null;
 // Instrument
 //////////////////////////////////////////////////
 
-// -= Inject =-
-async function inject(AttachTo) {
-	// Exit on process termination
-	process.on('SIGTERM', stop);
-	process.on('SIGINT', stop);
-
-	// Attach and load script
-	device = await frida.getDevice(deviceId);
-	session = await device.attach(AttachTo);
-	sessionPID = session.pid.toString();
-	traceSender.postMessage(sessionPID);
-	session.detached.connect(onDetached);
-	script = await session.createScript(MonacoCodeEditor.getValue());
-
-	// For performance we can't update the text area all the time
-	// it will lock the UI on big volumes of data. Instead we append
-	// to an array using a mutex and every X ms we flush the array
-	// to the text area
-	wireScript(script);
-	await script.load();
+// -= Inject (UI orchestration over the service) =-
+// Matches the old inject(): attach -> publish PID to the trace window ->
+// create+load the editor's script. Status text ("[+] Injecting => …") is
+// logged by the caller, as before.
+function injectVia(pid) {
+	service.attach(pid)
+		.then(() => {
+			traceSender.postMessage(service.currentPid);
+			return service.loadScript(MonacoCodeEditor.getValue());
+		})
+		.catch(e => { appendFridaLog(e); });
 }
 
-// -= Start =-
-async function start(Path, Args) {
-	// Exit on process termination
-	process.on('SIGTERM', stop);
-	process.on('SIGINT', stop);
-
-	// Attach and load script
-	device = await frida.getDevice(deviceId);
-	if (!Args || 0 === Args.length) {
-		procID = await device.spawn(Path);
-	} else {
-		var aBuildArgs = Args.split(" ");
-		aBuildArgs.unshift(Path)
-		procID = await device.spawn(aBuildArgs);
-	}
-	session = await device.attach(procID);
-	sessionPID = session.pid.toString();
-	traceSender.postMessage(sessionPID);
-	session.detached.connect(onDetached);
-	script = await session.createScript(MonacoCodeEditor.getValue());
-
-	// For performance we can't update the text area all the time
-	// it will lock the UI on big volumes of data. Instead we append
-	// to an array using a mutex and every X ms we flush the array
-	// to the text area
-	wireScript(script);
-
-	appendFridaLog('[+] Injecting => PID: ' + procID + ', Name: ' + Path);
-	await script.load();
-
-	device.resume(procID);
-	appendFridaLog('[+] Process start success');
-}
-
-// -= On Terminate =-
-function stop() {
-	script.unload();
-}
-
-function onDetached(reason) {
-	if (session != null) {
-		session = null;
-		traceSender.postMessage(null);
-	}
-	appendFridaLog(`[+] Exit Reason: ${reason}`);
+// -= Start (UI orchestration over the service) =-
+// Matches the old start(): spawn+attach -> publish PID -> "[+] Injecting" ->
+// load script -> resume -> "[+] Process start success".
+function startVia(ProcPath, ProcArgs) {
+	service.spawn(ProcPath, ProcArgs)
+		.then(({ pid }) => {
+			traceSender.postMessage(service.currentPid);
+			appendFridaLog('[+] Injecting => PID: ' + pid + ', Name: ' + ProcPath);
+			return service.loadScript(MonacoCodeEditor.getValue()).then(() => service.resume(pid));
+		})
+		.then(() => { appendFridaLog('[+] Process start success'); })
+		.catch(e => { appendFridaLog(e); });
 }
 
 // -= Detach =-
 
 document.getElementById("FridaDetach").onclick = function () {
-	if (session != null) {
+	if (service.isAttached) {
 		appendFridaLog('[+] Detaching..');
-		session.detach();
-		session = null;
+		service.detach();
 		traceSender.postMessage(null);
 	} else {
 		appendFridaLog('[!] Not currently attached..');
@@ -134,14 +95,12 @@ document.getElementById("FridaDetach").onclick = function () {
 
 // -= Reload Script =-
 
-document.getElementById("FridaReload").onclick = async function () {
-	if (session != null) {
-		if (script != null) {
-			script.unload();
-			script = await session.createScript(MonacoCodeEditor.getValue());
-			wireScript(script);
-			appendFridaLog('[+] Script reloaded..');
-			await script.load();
+document.getElementById("FridaReload").onclick = function () {
+	if (service.isAttached) {
+		if (service.hasScript) {
+			service.reloadScript(MonacoCodeEditor.getValue())
+				.then(() => { appendFridaLog('[+] Script reloaded..'); })
+				.catch(e => { appendFridaLog(e); });
 		} else {
 			appendFridaLog('[!] Not currently attached..');
 		}
@@ -150,23 +109,15 @@ document.getElementById("FridaReload").onclick = async function () {
 	}
 }
 
-// -= Proc Listing =-
-async function getProcList() {
-	let currentDevice = await frida.getDevice(deviceId);
-	let Applications = await currentDevice.enumerateProcesses();
-	return Applications;
-}
-
 // -= Shim for process list attach =-
 
 ipc.on('attach-process', async (event, message) => {
-	if (session == null) {
+	if (!service.isAttached) {
 		appendFridaLog('[?] Attempting process attach..');
-		getProcList().then(data => {
+		service.enumerateProcesses().then(data => {
 			// Search active processes
 			var resultArray = [];
 			data.find(function (element) {
-				var Result = [];
 				if (element.pid == message) {
 					resultArray.push(element);
 				}
@@ -184,9 +135,7 @@ ipc.on('attach-process', async (event, message) => {
 				return;
 			} else {
 				appendFridaLog('[+] Injecting => PID: ' + resultArray[0].pid + ', Name: ' + resultArray[0].name);
-				inject(resultArray[0].pid).catch(e => {
-					appendFridaLog(e);
-				});
+				injectVia(resultArray[0].pid);
 			}
 		}).catch((err) => {
 			appendFridaLog(`[!] Error: ${err.message}`);
@@ -200,12 +149,13 @@ ipc.on('attach-process', async (event, message) => {
 // -= Shim for attach invocation =-
 
 ipc.on('attach-process-shim', async (event, message) => {
-	if (session == null) {
+	if (!service.isAttached) {
 		appendFridaLog('[?] Attempting process attach..');
-		getProcList().then(data => {
+		service.enumerateProcesses().then(data => {
 			// What are we searching for?
 			var ProcName = message[0];
 			var ProcId = message[1];
+			var queryProc;
 			if ((!ProcId || 0 === ProcId.length) && (!ProcName || 0 === ProcName.length)) {
 				appendFridaLog('[!] Process parameters not provided..');
 				return;
@@ -222,7 +172,6 @@ ipc.on('attach-process-shim', async (event, message) => {
 			// Search active processes
 			var resultArray = [];
 			data.find(function (element) {
-				var Result = [];
 				if (element.name.includes(queryProc) || element.pid == queryProc) {
 					resultArray.push(element);
 				}
@@ -240,9 +189,7 @@ ipc.on('attach-process-shim', async (event, message) => {
 				return;
 			} else {
 				appendFridaLog('[+] Injecting => PID: ' + resultArray[0].pid + ', Name: ' + resultArray[0].name);
-				inject(resultArray[0].pid).catch(e => {
-					appendFridaLog(e);
-				});
+				injectVia(resultArray[0].pid);
 			}
 		}).catch((err) => {
 			appendFridaLog(`[!] Error: ${err.message}`);
@@ -256,7 +203,7 @@ ipc.on('attach-process-shim', async (event, message) => {
 // -= Shim for start invocation =-
 
 ipc.on('start-process-shim', async (event, message) => {
-	if (session == null) {
+	if (!service.isAttached) {
 		appendFridaLog('[?] Attempting process start..');
 		var ProcPath = message[0];
 		var ProcAgrs = message[1];
@@ -264,38 +211,12 @@ ipc.on('start-process-shim', async (event, message) => {
 			appendFridaLog('[!] Process parameters not provided..');
 			return;
 		} else {
-			start(ProcPath, ProcAgrs).catch(e => {
-				appendFridaLog(e);
-				return;
-			});
+			startVia(ProcPath, ProcAgrs);
 		}
 	} else {
 		appendFridaLog('[!] Already attached to a process..');
 	}
 });
-
-// -= Shim for trace invocation =-
-
-async function trace(scriptBody) {
-	if (session != null) {
-		if (script != null) {
-			script.unload();
-			script = await session.createScript(scriptBody);
-			wireScript(script, function (payload) {
-				appendFridaLog("[>] Received Graphviz trace data");
-				// Forward the DOT payload to the trace window (not printed here).
-				traceSender.postMessage(payload);
-			});
-			appendFridaLog('\n[+] Current script unloaded..');
-			appendFridaLog('    |_ Graphviz tracer loaded\n');
-			await script.load();
-		} else {
-			appendFridaLog('[!] Not currently attached..');
-		}
-	} else {
-		appendFridaLog('[!] Not currently attached..');
-	}
-}
 
 // Pages
 //////////////////////////////////////////////////
@@ -303,30 +224,17 @@ async function trace(scriptBody) {
 // -= Device Selector =-
 
 document.getElementById("setDevice").onclick = function () {
-	openWindow('device.html', { width: 420, height: 615, extraArgs: [deviceId] });
+	openWindow('device.html', { width: 420, height: 615, extraArgs: [service.deviceId] });
 }
 
 ipc.on('new-device', async (event, message) => {
-	// Do we need to unregister a current remote socket?
-	if (deviceId.startsWith("socket@")) {
-		var dm = await frida.getDeviceManager();
-		dm.removeRemoteDevice(deviceId.split('@')[1]);
-	}
-
-	// Do we need to register a new remote socket?
-	if (message.startsWith("socket@")) {
-		var dm = await frida.getDeviceManager();
-		var devID = await dm.addRemoteDevice(message.split('@')[1]);
-		deviceId = devID.id;
-	} else {
-		deviceId = message;
-	}
+	await service.setDevice(message);
 });
 
 // -= Process Listing =-
 
 document.getElementById("FridaProc").onclick = function () {
-	openWindow('proc.html', { width: 570, height: 600, extraArgs: [deviceId] });
+	openWindow('proc.html', { width: 570, height: 600, extraArgs: [service.deviceId] });
 }
 
 // -= Instrument Manager =-
@@ -338,7 +246,7 @@ document.getElementById("FridaAttach").onclick = function () {
 // -= About =-
 
 document.getElementById("FermionAbout").onclick = function () {
-	openWindow('about.html', { width: 460, height: 270, extraArgs: [deviceId] });
+	openWindow('about.html', { width: 460, height: 270, extraArgs: [service.deviceId] });
 }
 
 // -= JS API Docs =-
@@ -351,52 +259,78 @@ document.getElementById("FermionDocs").onclick = function () {
 
 let TraceWin = null;
 document.getElementById("FermionTools").onclick = function () {
-	if (sessionPID == null || sessionPID.length == 0) {
-		sessionPID = "null";
-	}
+	// The trace window expects a PID string; use "null" when not attached.
+	const pidArg = (service.currentPid == null || service.currentPid.length == 0)
+		? "null" : service.currentPid;
 	// @electron/remote is enabled for this window by the main process
 	// (browser-window-created handler in core.js).
-	TraceWin = openWindow('trace.html', { width: 425, height: 615, extraArgs: [sessionPID] });
+	TraceWin = openWindow('trace.html', { width: 425, height: 615, extraArgs: [pidArg] });
 }
 
 // Create IPC sender
 const traceSender = new BroadcastChannel('trace-data-send');
 
-// Invoke trace shim
+// Trace is a UI-side mode layered on the service (the service stays
+// trace-ignorant). Entering trace reloads the active script with the Graphviz
+// tracer and flips traceMode so SEND payloads route to the trace window; STOP
+// reloads the editor's script and clears the flag.
 traceSender.onmessage = function (message) {
 	if (message.data == "STOP") {
+		traceMode = false;
 		appendFridaLog('\n[+] Graphviz tracer will be unloaded..');
 		appendFridaLog('    |_ Reloading script in Monaco editor\n');
 		document.getElementById("FridaReload").click();
 	} else {
-		trace(message.data);
+		if (service.isAttached) {
+			if (service.hasScript) {
+				traceMode = true;
+				service.reloadScript(message.data)
+					.then(() => {
+						appendFridaLog('\n[+] Current script unloaded..');
+						appendFridaLog('    |_ Graphviz tracer loaded\n');
+					})
+					.catch(e => { appendFridaLog(e); });
+			} else {
+				appendFridaLog('[!] Not currently attached..');
+			}
+		} else {
+			appendFridaLog('[!] Not currently attached..');
+		}
 	}
 }
+
+// -= Service event wiring =-
+// message -> terminal, unless trace mode forwards a SEND payload to the trace
+// window (routeMessage). log -> terminal via handleScriptMessage. detached ->
+// clear the trace window PID and print the exit reason.
+function onServiceMessage(message) {
+	const { kind, text } = formatMessage(message);
+	if (routeMessage(kind, traceMode) === 'trace') {
+		appendFridaLog("[>] Received Graphviz trace data");
+		traceSender.postMessage(message.payload);
+	} else if (fermionTerminal) {
+		fermionTerminal.write(kind, text);
+	}
+}
+service.on('message', onServiceMessage);
+service.on('log', (level, text) => handleScriptMessage({ type: 'log', level, payload: text }));
+service.on('detached', (reason) => {
+	traceSender.postMessage(null);
+	appendFridaLog(`[+] Exit Reason: ${reason}`);
+});
+if (window.__fermion) window.__fermion.service = service;
 
 // Logging
 //////////////////////////////////////////////////
 
-// Shared handler for every Frida script.message. Maps the message to a typed
-// line (console.log->LOG, warn->WARN, error-level log / throw->ERR, send->SEND,
-// unknown->STATUS) and writes it to the terminal. The `send` branch is
-// parameterized: when `onSend` is given (the trace site) the raw payload is
-// forwarded instead of printed.
-function handleScriptMessage(message, onSend) {
+// Maps a Frida message/log record to a typed terminal line (console.log->LOG,
+// warn->WARN, error-level log / throw->ERR, send->SEND, unknown->STATUS) and
+// writes it to the terminal. Used for the service's `log` events and by the
+// test harness (window.__fermion.handleScriptMessage). The service's `message`
+// events go through onServiceMessage, which adds trace-mode routing.
+function handleScriptMessage(message) {
 	const { kind, text } = formatMessage(message);
-	if (kind === 'SEND' && typeof onSend === 'function') {
-		onSend(message.payload);
-		return;
-	}
 	if (fermionTerminal) fermionTerminal.write(kind, text);
-}
-
-// Wire a freshly created Frida script to the terminal. send() and runtime
-// errors arrive via the `message` signal; but Frida delivers console.log/warn/
-// error to `logHandler` (it does NOT emit `message` for log records), so route
-// both through handleScriptMessage. `onSend` (trace) is forwarded to message.
-function wireScript(script, onSend) {
-	script.message.connect(message => handleScriptMessage(message, onSend));
-	script.logHandler = (level, text) => handleScriptMessage({ type: 'log', level, payload: text });
 }
 
 // Status/meta output goes to the terminal as the STATUS kind. The terminal
@@ -476,30 +410,31 @@ document.getElementById("FermionSave").onclick = function () {
 }
 
 document.getElementById("getDeviceDetail").onclick = function () {
-	appendFridaLog("\n[>] Device --> " + deviceId);
-	frida.getDevice(deviceId).then(dev => {
-		appendFridaLog("    |_ Device Name : " + dev.name);
-		dev.querySystemParameters().then(result => {
-			if (result.hasOwnProperty("os")) {
-				if (result.os.hasOwnProperty("name")) {
-					appendFridaLog("    |_ Platform    : " + result.os.name);
-				}
-				if (result.os.hasOwnProperty("version")) {
-					appendFridaLog("    |_ Version     : " + result.os.version);
-				}
+	appendFridaLog("\n[>] Device --> " + service.deviceId);
+	service.getDeviceInfo().then(({ name, params, paramsError }) => {
+		appendFridaLog("    |_ Device Name : " + name);
+		if (paramsError) {
+			appendFridaLog("[!] Failed to enumerate device properties: " + paramsError + "\n");
+			return;
+		}
+		const result = params;
+		if (result.hasOwnProperty("os")) {
+			if (result.os.hasOwnProperty("name")) {
+				appendFridaLog("    |_ Platform    : " + result.os.name);
 			}
-			if (result.hasOwnProperty("arch")) {
-				appendFridaLog("    |_ Arch        : " + result.arch);
+			if (result.os.hasOwnProperty("version")) {
+				appendFridaLog("    |_ Version     : " + result.os.version);
 			}
-			if (result.hasOwnProperty("access")) {
-				appendFridaLog("    |_ Access      : " + result.access);
-			}
-			if (result.hasOwnProperty("name")) {
-				appendFridaLog("    |_ Host Name   : " + result.name + "\n");
-			}
-		}).catch(err => {
-			appendFridaLog("[!] Failed to enumerate device properties: " + err + "\n");
-		});
+		}
+		if (result.hasOwnProperty("arch")) {
+			appendFridaLog("    |_ Arch        : " + result.arch);
+		}
+		if (result.hasOwnProperty("access")) {
+			appendFridaLog("    |_ Access      : " + result.access);
+		}
+		if (result.hasOwnProperty("name")) {
+			appendFridaLog("    |_ Host Name   : " + result.name + "\n");
+		}
 	}).catch(err => {
 		appendFridaLog("[!] Failed to acquire device context: " + err + "\n");
 	});
