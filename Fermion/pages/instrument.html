@@ -62,23 +62,16 @@
 
         </div>
     </body>
-    <script type="text/javascript">
-        window.$ = window.jQuery = require('jquery');
-	</script>
+    <script src="../node_modules/jquery/dist/jquery.min.js"></script>
     <link rel="stylesheet" type="text/css" href="../src/frameworks/semantic/semantic.css">
     <script src="../src/frameworks/semantic/semantic.js"></script>
     <script type="text/javascript">
-        // Create IPC renderer
-        const ipc = require('electron').ipcRenderer;
-
         // Attach
         document.getElementById("FridaAttachProcess").onclick = function () {
         	var inputProc = document.getElementById("inputProcess").value;
             var inputPID = document.getElementById("inputPID").value;
             var dataArray = [inputProc, inputPID];
-
-            // Pass by IPC
-			ipc.send('attach-process-shim', dataArray);
+            window.fermion.sendAttachProcessShim(dataArray);
         }
 
         // Spawn
@@ -86,10 +79,7 @@
         	var inputPath = document.getElementById("inputPath").value;
             var inputArgs = document.getElementById("inputArgs").value;
             var dataArray = [inputPath, inputArgs];
-
-            console.log("11111");
-            // Pass by IPC
-			ipc.send('start-process-shim', dataArray);
+            window.fermion.sendStartProcessShim(dataArray);
         }
 
         // Close dialog, make no changes to the device

@@ -35,10 +35,8 @@
 			width: 100%;
         }
 	</style>
+	<script src="../node_modules/jquery/dist/jquery.min.js"></script>
 	<script type="text/javascript">
-		const frida = require('frida');
-		window.$ = window.jQuery = require('jquery');
-
 		// Based on https://github.com/kylefox/jquery-tablesort
 		(function($) {
 			$.tablesort = function ($table, settings) {
@@ -222,13 +220,9 @@
 		<div id="IsError"></div>
 	</div>
 
-	<script src="../src/helper.js"></script>
 	<script type="text/javascript">
-        // Create IPC renderer
-        const ipc = require('electron').ipcRenderer;
-
-        // Device ID
-        var deviceId = getExtraArgs()[0];
+        // Device ID (from the preload bridge)
+        var deviceId = window.fermion.launchArgs[0];
 
         // Retrieve device list
 		async function getDeviceList(devInst) {
@@ -253,19 +247,8 @@
 
         // Populate poc list
 		async function getProcList() {
-			// Make sure the device list has updated
-			if (deviceId != "local") {
-				for (i = 0; i < 3; i++) {
-					var dev = await getDeviceList(deviceId);
-					if (dev.length > 2) {
-						break;
-					}
-					await sleep(1000);
-				}
-			}
-			let currentDevice = await frida.getDevice(deviceId);
-			let Applications = await currentDevice.enumerateProcesses({scope:"full"});
-			return Applications;
+			// Enumerated in the main process over the bridge (current device).
+			return window.fermion.enumerateProcesses();
 		}
 		getProcList().then(data => {
 			// Get table reff
@@ -375,8 +358,7 @@
 
         // Pass by IPC to main which process to attach
         function attachProcess(pid) {
-            // Pass PID by IPC to attach
-			ipc.send('attach-process', pid);
+			window.fermion.sendAttachProcess(pid);
         }
 
 		// Close dialog, make no changes to the device

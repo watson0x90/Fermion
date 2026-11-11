@@ -79,8 +79,8 @@ jobs:
       - name: Terminal toolbar (filter/search/clear)
         run: xvfb-run -a node scripts/ui-test-toolbar.js
 
-      - name: Trace window remote enabled
-        run: xvfb-run -a node scripts/ui-test-trace-remote.js
+      - name: Child windows open isolated
+        run: xvfb-run -a node scripts/ui-test-child-windows.js
 
       # End-to-end: attach to a real process and confirm the agent's console.log
       # reaches the terminal. Skips gracefully where the runner can't attach

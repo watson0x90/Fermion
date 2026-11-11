@@ -99,13 +99,23 @@ class FridaService extends EventEmitter {
 		return this._deviceId;
 	}
 
+	async enumerateDevices() {
+		const frida = this._getFrida();
+		const devices = await frida.enumerateDevices();
+		return devices.map((d) => ({ id: d.id, name: d.name, type: d.type }));
+	}
+
 	async enumerateProcesses() {
 		const frida = this._getFrida();
 		const device = await frida.getDevice(this._deviceId);
-		const procs = await device.enumerateProcesses();
-		// Return IPC-serializable plain objects (pid/name + sanitized parameters,
-		// which carry ppid/path/etc. for the process tree; binary icon dropped).
-		return procs.map((p) => ({ pid: p.pid, name: p.name, parameters: toPlain(p.parameters) }));
+		const procs = await device.enumerateProcesses(/** @type {any} */ ({ scope: 'full' }));
+		// Return IPC-serializable plain objects. Drop the binary `icons` (huge,
+		// not cloneable) but keep user/ppid/path etc. for the process view/tree.
+		return procs.map((p) => {
+			const params = Object.assign({}, p.parameters);
+			delete params.icons;
+			return { pid: p.pid, name: p.name, parameters: toPlain(params) };
+		});
 	}
 
 	// Device name + system parameters for the "Device Info" readout. Returns a

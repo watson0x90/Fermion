@@ -63,7 +63,9 @@ ipcMain.handle('fermion:messageBox', async (_e, options) => dialog.showMessageBo
 
 // Child-window creation (was remote.BrowserWindow + loadFile in the renderer).
 ipcMain.handle('fermion:openWindow', (_e, page, dims) => {
-  const win = new BrowserWindow(buildWindowOptions(dims));
+  const opts = buildWindowOptions(dims || {});
+  opts.webPreferences.preload = path.join(__dirname, 'src', 'preload.js');
+  const win = new BrowserWindow(opts);
   win.loadFile(path.join(__dirname, 'pages', page));
   win.once('ready-to-show', () => setTimeout(() => { win.show(); win.focus(); }, 50));
   return win.id;
@@ -75,16 +77,11 @@ for (const ch of ['new-device', 'attach-process', 'attach-process-shim', 'start-
   ipcMain.on(ch, (_e, message) => { if (bWin && !bWin.isDestroyed()) bWin.webContents.send(ch, message); });
 }
 app.commandLine.appendSwitch('disable-features', 'CrossOriginOpenerPolicy');
-const remoteMain = require('@electron/remote/main');
-remoteMain.initialize();
-// Enable @electron/remote for every window created in the main process,
-// including child windows the renderer opens (e.g. the Trace window). Doing it
-// in the main process avoids the renderer calling
-// remote.require('@electron/remote/main'), which no longer resolves under
-// modern Electron (the remote server's module lookup fails).
-app.on('browser-window-created', (_event, win) => {
-  remoteMain.enable(win.webContents);
-});
+
+// Trace graph rendering runs in the main process (node-graphviz is a Node
+// module the isolated renderer/trace window can't require); DOT -> SVG string.
+const { graphviz } = require('node-graphviz');
+ipcMain.handle('fermion:renderGraph', (_event, dot) => graphviz.dot(dot, 'svg'));
 
 function createWindow() {
   // Create the browser window.

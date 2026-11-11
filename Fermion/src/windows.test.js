@@ -19,8 +19,10 @@ test('pagePath resolves child-window HTML under pages/, not the src/ module dir'
 test('buildWindowOptions includes additionalArguments only when extraArgs given', () => {
   const withArgs = buildWindowOptions({ width: 420, height: 615, extraArgs: ['local'] });
   assert.equal(withArgs.width, 420);
-  assert.equal(withArgs.webPreferences.nodeIntegration, true);
-  assert.equal(withArgs.webPreferences.enableRemoteModule, true);
+  // Secured child windows: no Node, isolated world.
+  assert.equal(withArgs.webPreferences.nodeIntegration, false);
+  assert.equal(withArgs.webPreferences.contextIsolation, true);
+  assert.equal('enableRemoteModule' in withArgs.webPreferences, false);
   assert.ok(Array.isArray(withArgs.webPreferences.additionalArguments));
   const noArgs = buildWindowOptions({ width: 420, height: 595 });
   assert.equal('additionalArguments' in noArgs.webPreferences, false);

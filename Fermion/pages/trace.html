@@ -36,9 +36,7 @@
 			width: 100%;
     }
 	</style>
-	<script type="text/javascript">
-		window.$ = window.jQuery = require('jquery');
-	</script>
+	<script src="../node_modules/jquery/dist/jquery.min.js"></script>
 	<link rel="stylesheet" type="text/css" href="../src/frameworks/semantic/semantic.css">
 	<script src="../src/frameworks/semantic/semantic.js"></script>
     <link rel="stylesheet" type="text/css" href="../src/screen.css">
@@ -132,15 +130,7 @@
 		</div>
 	</div>
 
-	<script src="../src/helper.js"></script>
 	<script type="text/javascript">
-    const path = require('path');
-    const remote = require('@electron/remote');
-    const BrowserWindow = remote.BrowserWindow;
-
-    // Load GraphViz library
-    const { graphviz } = require('node-graphviz');
-
     // Create ephemeral table vars
     var traceCounter = 0;
     var traceIsInitRun = true;
@@ -150,8 +140,8 @@
     const bc = new BroadcastChannel('trace-data-send');
     const bcSVG = new BroadcastChannel('trace-SVG');
     
-    // Display current PID
-    var currentProcPID = getExtraArgs()[0];
+    // Display current PID (from the preload bridge)
+    var currentProcPID = window.fermion.launchArgs[0];
     if (currentProcPID == "null") {
       currentProcPID = "NONE";
     }
@@ -254,35 +244,11 @@
     	});
     };
 
-    // SVG Window display
+    // SVG Window display: open svg.html (created in the main process) and send
+    // the SVG over the BroadcastChannel once it has had a moment to listen.
     async function createSVGWindow(sSVGb64) {
-    	const modalPath = path.join('file://', __dirname, 'svg.html');
-    	let ProcWin = new BrowserWindow({
-    		contextIsolation: false,
-    		width: 800,
-    		height: 600,
-    		frame: false,
-    		resizable: true,
-    		show: false,
-    		backgroundColor: '#E0E1E2',
-    		webPreferences: {
-    			nodeIntegration: true,
-    			nodeIntegrationInWorker: true,
-    			enableRemoteModule: true,
-    			contextIsolation: false,
-    			webviewTag: true
-    		}
-    	})
-
-    	ProcWin.loadURL(modalPath);
-    	ProcWin.once('ready-to-show', () => {
-    		setTimeout(function () {
-          bcSVG.postMessage(sSVGb64);
-    			ProcWin.show();
-    			ProcWin.focus();
-    		}, 300);
-    	});
-    	ProcWin.on('close', function () { ProcWin = null })
+    	await window.fermion.openWindow('svg.html', { width: 800, height: 600 });
+    	setTimeout(function () { bcSVG.postMessage(sSVGb64); }, 500);
     }
 
     // Handle return messages
@@ -315,7 +281,7 @@
         }
         traceTablePtr.setAttribute('data-label','Trace Pointer');
 
-        graphviz.dot(message.data, 'svg').then((svg) => {
+        window.fermion.renderGraph(message.data).then((svg) => {
           // We regex replace some things
           svg = svg.replace(/transform=\"scale\(1 1\)/, 'transform="scale(0.5 0.5)');
           svg = svg.replace(/fill=\"white\"/, 'fill="#E0E1E2"');

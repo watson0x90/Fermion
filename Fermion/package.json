@@ -15,7 +15,6 @@
   "author": "Ruben Boonen (@FuzzySec)",
   "license": "BSD-3-Clause",
   "dependencies": {
-    "@electron/remote": "2.1.4",
     "@types/frida-gum": "19.13.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-search": "0.16.0",

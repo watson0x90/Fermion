@@ -7,6 +7,7 @@
 // snapshot of the service getters.
 const INVOKE_METHODS = new Set([
 	'setDevice',
+	'enumerateDevices',
 	'enumerateProcesses',
 	'getDeviceInfo',
 	'attach',
