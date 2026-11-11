@@ -6,12 +6,15 @@ test('sessionSlice: attached sets isAttached + pid; detached clears + resets tra
   let s = sessionReducer(undefined, { type: '@@init' });
   expect(s.isAttached).toBe(false);
   s = sessionReducer(s, sessionActions.setTraceMode(true));
+  s = sessionReducer(s, sessionActions.scriptLoaded());
   s = sessionReducer(s, sessionActions.attached('4821'));
   expect(s.isAttached).toBe(true);
   expect(s.currentPid).toBe('4821');
+  expect(s.hasScript).toBe(true);
   s = sessionReducer(s, sessionActions.detached());
   expect(s.isAttached).toBe(false);
   expect(s.traceMode).toBe(false); // routing resets on detach
+  expect(s.hasScript).toBe(false); // the old script is gone — Reload must disable
 });
 
 test('sessionSlice: scriptLoaded sets hasScript + resets traceMode; setDevice updates id', () => {

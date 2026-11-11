@@ -18,7 +18,9 @@ body { background: #0d1117; color: #adbac7; font: 12px/1.5 ui-monospace, SFMono-
 .tabrow { display: flex; background: #0b0f14; border-bottom: 1px solid #21262d; overflow-x: auto; }
 .tab { padding: 7px 11px; font-size: 11px; color: #8b949e; border: none; border-right: 1px solid #21262d; background: transparent; cursor: pointer; white-space: nowrap; }
 .tab.on { background: #0d1117; color: #e6edf3; box-shadow: inset 0 -2px 0 #1f6feb; }
-.panel-body { flex: 1; overflow: auto; padding: 10px 12px; }
+.panel-body { flex: 1; min-height: 0; display: flex; }
+.panel-slot { flex: 1; min-height: 0; overflow: auto; padding: 10px 12px; }
+.panel-slot[hidden] { display: none; }
 .stub { color: #545d68; }
 .panel-stub { color: #8b949e; }
 .panel-stub h3 { margin: 0 0 6px; color: #c9d1d9; font-size: 13px; }

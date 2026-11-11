@@ -30,6 +30,8 @@ const sessionSlice = createSlice({
     },
     detached(state) {
       state.isAttached = false;
+      state.hasScript = false; // the session's script is gone — Reload must disable
+      state.currentPid = null;
       state.traceMode = false; // routing resets on detach
     },
     scriptLoaded(state) {

@@ -16,15 +16,33 @@ const TABS: { id: ToolboxTab; label: string }[] = [
 
 // Editor (Task 5) and Graph (Task 6) are live; REPL, Process-tree, and Inspector
 // are Phase-3 stub panels (Task 8) occupying their final slots.
-function PanelBody({ tab }: { tab: ToolboxTab }) {
+//
+// Every panel stays MOUNTED; only the active one is visible (inactive ones are
+// `hidden`). The Editor's Monaco instance is referenced globally via
+// window.MonacoCodeEditor by the always-visible Session sidebar + Graph panel,
+// and unmounting it on a tab switch would dangle that handle to a disposed
+// editor (and lose the user's script) — so panels are hidden, never unmounted.
+const PANELS: { id: ToolboxTab; el: JSX.Element }[] = [
+  { id: 'editor', el: <EditorPane /> },
+  { id: 'repl', el: <ReplPanel /> },
+  { id: 'graph', el: <GraphPanel /> },
+  { id: 'tree', el: <ProcessTreePanel /> },
+  { id: 'inspector', el: <InspectorPanel /> },
+];
+
+function PanelBody({ active }: { active: ToolboxTab }) {
   return (
-    <div className="panel-body" data-testid={`panel-${tab}`}>
-      {tab === 'editor' ? <EditorPane />
-        : tab === 'graph' ? <GraphPanel />
-          : tab === 'repl' ? <ReplPanel />
-            : tab === 'tree' ? <ProcessTreePanel />
-              : tab === 'inspector' ? <InspectorPanel />
-                : <div className="stub">{TABS.find((t) => t.id === tab)?.label}</div>}
+    <div className="panel-body">
+      {PANELS.map((p) => (
+        <div
+          key={p.id}
+          className="panel-slot"
+          data-testid={`panel-${p.id}`}
+          hidden={active !== p.id}
+        >
+          {p.el}
+        </div>
+      ))}
     </div>
   );
 }
@@ -47,7 +65,7 @@ export function LeftToolbox() {
           </button>
         ))}
       </div>
-      <PanelBody tab={active} />
+      <PanelBody active={active} />
     </div>
   );
 }
