@@ -9,6 +9,9 @@ const { formatMessage } = require('../src/output-model.js');
 const { readSettings, writeSettings } = require('../src/settings.js');
 const { createLayout } = require('../src/layout.js');
 const { openWindow } = require('../src/windows.js');
+const { initEditor, setMonacoTheme, toggleWrap } = require('../src/editor.js');
+// Inline index.html handler onchange="setMonacoTheme()" needs this on window.
+window.setMonacoTheme = setMonacoTheme;
 
 // Overwrite default node.js prop to get Jquery working
 window.$ = window.jQuery = require('jquery');
@@ -403,87 +406,8 @@ function appendFridaLog(data) {
 	if (fermionTerminal) fermionTerminal.write('STATUS', data);
 }
 
-// Monaco Editor
-//////////////////////////////////////////////////
-
-function LocalLoadLang(url, method) {
-	var request = new XMLHttpRequest();
-	return new Promise(function (resolve, reject) {
-		request.onreadystatechange = function () {
-			if (request.readyState !== 4) return;
-			if (request.status >= 200 && request.status < 300) {
-				resolve(request);
-			} else {
-				reject({
-					status: request.status,
-					statusText: request.statusText
-				});
-			}
-		};
-		request.open(method || 'GET', url, true);
-		request.send();
-	});
-};
-
-function setMonacoTheme() {
-	var theme = document.getElementById("MonacoThemeSelect").value;
-	var refCodeContainer = document.getElementById("Container");
-	if (theme == "idleFingers") {
-		monaco.editor.defineTheme("idleFingers", idleFingers);
-		monaco.editor.setTheme("idleFingers");
-	} else if (theme == "Cobalt") {
-		monaco.editor.defineTheme("Cobalt", Cobalt);
-		monaco.editor.setTheme("Cobalt");
-	} else if (theme == "MerbivoreSoft") {
-		monaco.editor.defineTheme("MerbivoreSoft", MerbivoreSoft);
-		monaco.editor.setTheme("MerbivoreSoft");
-	} else if (theme == "Katzenmilch") {
-		monaco.editor.defineTheme("Katzenmilch", Katzenmilch);
-		monaco.editor.setTheme("Katzenmilch");
-	} else if (theme == "Monokai") {
-		monaco.editor.defineTheme("Monokai", Monokai);
-		monaco.editor.setTheme("Monokai");
-	} else if (theme == "Solarized-Dark") {
-		monaco.editor.defineTheme("SolarizedDark", SolarizedDark);
-		monaco.editor.setTheme("SolarizedDark");
-	} else if (theme == "Solarized-Light") {
-		monaco.editor.defineTheme("SolarizedLight", SolarizedLight);
-		monaco.editor.setTheme("SolarizedLight");
-	} else if (theme == "Birds-Of-Paradise") {
-		monaco.editor.defineTheme("BirdsOfParadise", BirdsOfParadise);
-		monaco.editor.setTheme("BirdsOfParadise");
-	} else if (theme == "Clouds") {
-		monaco.editor.defineTheme("Clouds", Clouds);
-		monaco.editor.setTheme("Clouds");
-	} else if (theme == "Kuroir") {
-		monaco.editor.defineTheme("Kuroir", Kuroir);
-		monaco.editor.setTheme("Kuroir");
-	} else if (theme == "NightOwl") {
-		monaco.editor.defineTheme("NightOwl", NightOwl);
-		monaco.editor.setTheme("NightOwl");
-	} else if (theme == "Textmate") {
-		monaco.editor.defineTheme("Textmate", Textmate);
-		monaco.editor.setTheme("Textmate");
-	} else if (theme == "VSCode") {
-		monaco.editor.setTheme("vs");
-	} else if (theme == "VSCode-Dark") {
-		monaco.editor.setTheme("vs-dark");
-	} else if (theme == "VSCode-HighContrast") {
-		monaco.editor.setTheme("hc-black");
-	} else if (theme == "Amy") {
-		monaco.editor.defineTheme("Amy", Amy);
-		monaco.editor.setTheme("Amy");
-	} else if (theme == "Oceanic Next") {
-		monaco.editor.defineTheme("Oceanic-Next", OceanicNext);
-		monaco.editor.setTheme("Oceanic-Next");
-	} else if (theme == "Tomorrow Night Blue") {
-		monaco.editor.defineTheme("Tomorrow-Night-Blue", TomorrowNightBlue);
-		monaco.editor.setTheme("Tomorrow-Night-Blue");
-	} else if (theme == "Vibrant Ink") {
-		monaco.editor.defineTheme("Vibrant-Ink", VibrantInk);
-		monaco.editor.setTheme("Vibrant-Ink");
-	}
-}
+// Monaco editor setup, theme switching, and the version banner now live in
+// src/editor.js (setMonacoTheme is imported above and re-exposed on window).
 
 // UI Handler
 //////////////////////////////////////////////////
@@ -582,15 +506,7 @@ document.getElementById("getDeviceDetail").onclick = function () {
 }
 
 document.getElementById("FermionMonacoWrap").onclick = function () {
-	// Toggle the current state
-	var wrapState = document.getElementById("FermionMonacoWrap");
-	if (wrapState.children[0].checked == false) {
-		MonacoCodeEditor.updateOptions({ wordWrap: "on" });
-		wrapState.children[0].checked = true;
-	} else {
-		MonacoCodeEditor.updateOptions({ wordWrap: "off" });
-		wrapState.children[0].checked = false;
-	}
+	toggleWrap();
 }
 
 // Trap keybinds
@@ -677,6 +593,13 @@ const saveOutputButton = document.getElementById('save-output');
 
 // Initialize features when DOM is loaded
 document.addEventListener('DOMContentLoaded', function () {
+	// Monaco editor setup + startup version banner (src/editor.js). Must run
+	// AFTER split-1.6.4.js and monaco-theme.js have loaded (editor.js sets
+	// self.module = undefined for the Monaco AMD loader, which would corrupt
+	// split's UMD load if run during parse). DOMContentLoaded is after both.
+	// The Monaco AMD load is async, so the editor still mounts a moment later.
+	initEditor({ log: appendFridaLog });
+
 	// Build the layout controller first — loadSettings() may call
 	// layout.toggleLayout() to restore a saved horizontal layout.
 	layout = createLayout({
