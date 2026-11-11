@@ -6,7 +6,7 @@
 const { Terminal } = require('@xterm/xterm');
 const { FitAddon } = require('@xterm/addon-fit');
 const { SearchAddon } = require('@xterm/addon-search');
-const { OutputBuffer, KINDS } = require('./output-model');
+const { OutputBuffer, KINDS, stripAnsi } = require('./output-model');
 
 // Visual contract (design spec). Truecolor SGR per kind; LOG uses the default
 // foreground. A line that carries its own ANSI is written untouched.
@@ -83,16 +83,19 @@ function createTerminal(container) {
     },
     isFilterOn(kind) { return active.has(kind); },
     clear() { buffer.clear(); term.reset(); },
-    getText() { return buffer.entries().map((e) => e.text).join('\n'); },
+    getText() { return buffer.entries().map((e) => stripAnsi(e.text)).join('\n'); },
     setFollow(on) { follow = !!on; if (follow) term.scrollToBottom(); },
     setFontSize(px) { term.options.fontSize = px; try { fitAddon.fit(); } catch (_) {} },
     getFontSize() { return term.options.fontSize; },
     fit() { try { fitAddon.fit(); } catch (_) {} },
     searchNext(regexStr) {
-      return searchAddon.findNext(regexStr, { regex: true, caseSensitive: false });
+      // An invalid regex from the toolbar must fail gracefully, not throw.
+      try { return searchAddon.findNext(regexStr, { regex: true, caseSensitive: false }); }
+      catch (_) { return false; }
     },
     searchPrev(regexStr) {
-      return searchAddon.findPrevious(regexStr, { regex: true, caseSensitive: false });
+      try { return searchAddon.findPrevious(regexStr, { regex: true, caseSensitive: false }); }
+      catch (_) { return false; }
     },
     clearSearch() { try { searchAddon.clearDecorations(); } catch (_) {} },
     copySelectionOrAll() {

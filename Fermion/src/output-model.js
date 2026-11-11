@@ -4,6 +4,13 @@
 
 const KINDS = ['LOG', 'WARN', 'ERR', 'SEND', 'STATUS'];
 
+// Strip ANSI CSI escape sequences (color codes, cursor moves) so saved/copied
+// output is plain text rather than literal "\x1b[..m" codes.
+function stripAnsi(text) {
+  // eslint-disable-next-line no-control-regex
+  return String(text).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+}
+
 // Map a Frida `script.message` to { kind, text }.
 //
 // Frida delivers:
@@ -70,4 +77,4 @@ class OutputBuffer {
   }
 }
 
-module.exports = { formatMessage, OutputBuffer, KINDS };
+module.exports = { formatMessage, OutputBuffer, KINDS, stripAnsi };

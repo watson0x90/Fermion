@@ -54,6 +54,12 @@ const rowsText = () => {
     const found = await win.evaluate(() => window.__fermion.terminal.searchNext('alpha'));
     if (!found) throw new Error('searchNext did not find a present term');
 
+    // An invalid regex must fail gracefully, not throw out of the handler.
+    const threw = await win.evaluate(() => {
+      try { window.__fermion.terminal.searchNext('['); return false; } catch (e) { return true; }
+    });
+    if (threw) throw new Error('invalid regex threw out of searchNext');
+
     // Clear empties the terminal.
     await win.click('#clear-output');
     await win.waitForFunction(() => {

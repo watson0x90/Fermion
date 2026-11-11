@@ -2,7 +2,7 @@
 //   node --test Fermion/src/output-model.test.js
 const test = require('node:test');
 const assert = require('node:assert');
-const { formatMessage, OutputBuffer, KINDS } = require('./output-model');
+const { formatMessage, OutputBuffer, KINDS, stripAnsi } = require('./output-model');
 
 test('send with a string payload -> SEND, text as-is', () => {
   assert.deepStrictEqual(formatMessage({ type: 'send', payload: 'hi' }), { kind: 'SEND', text: 'hi' });
@@ -59,4 +59,10 @@ test('OutputBuffer.filtered returns only the active kinds', () => {
 
 test('KINDS lists the five filterable kinds', () => {
   assert.deepStrictEqual(KINDS, ['LOG', 'WARN', 'ERR', 'SEND', 'STATUS']);
+});
+
+test('stripAnsi removes SGR/CSI escape sequences, keeps plain text', () => {
+  assert.strictEqual(stripAnsi('\x1b[38;2;227;179;65mwarn\x1b[0m'), 'warn');
+  assert.strictEqual(stripAnsi('a\x1b[31mb\x1b[0mc'), 'abc');
+  assert.strictEqual(stripAnsi('no escapes here'), 'no escapes here');
 });
