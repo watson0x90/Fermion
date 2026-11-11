@@ -38,13 +38,20 @@ function buildWindowOptions({ width, height, extraArgs }) {
 	};
 }
 
+// Resolve a child-window HTML file. This module is in src/, but the HTML lives
+// in pages/, so climb out of src/ into pages/ — do NOT copy renderer.js's
+// path.join(__dirname, page) (its __dirname is the HTML dir; a module's is src/).
+function pagePath(page) {
+	return path.join(__dirname, '..', 'pages', page);
+}
+
 // Create, load, and show a child window. @electron/remote is enabled for new
 // windows by the main process (browser-window-created handler in core.js), so
 // no per-window enabling is needed here.
 function openWindow(page, opts) {
 	const { BrowserWindow } = require('@electron/remote');
 	let win = new BrowserWindow(buildWindowOptions(opts));
-	win.loadFile(path.join(__dirname, '..', 'pages', page));
+	win.loadFile(pagePath(page));
 	win.once('ready-to-show', () => {
 		setTimeout(function () {
 			win.show();
@@ -55,4 +62,4 @@ function openWindow(page, opts) {
 	return win;
 }
 
-module.exports = { buildWindowOptions, openWindow };
+module.exports = { buildWindowOptions, openWindow, pagePath };

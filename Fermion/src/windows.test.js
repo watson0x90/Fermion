@@ -3,7 +3,18 @@
 // lazily so this file loads under plain `node --test`.
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { buildWindowOptions } = require('./windows.js');
+const path = require('node:path');
+const { buildWindowOptions, pagePath } = require('./windows.js');
+
+test('pagePath resolves child-window HTML under pages/, not the src/ module dir', () => {
+  const p = pagePath('device.html');
+  // The module lives in src/, but the HTML lives in pages/ — the path must
+  // climb out of src/ into pages/ (Review Focus #1 / the __dirname gotcha).
+  assert.equal(path.basename(p), 'device.html');
+  assert.equal(path.basename(path.dirname(p)), 'pages');
+  assert.ok(path.isAbsolute(p), 'pagePath must be absolute');
+  assert.ok(!/[\\/]src[\\/]device\.html$/.test(p), 'must not resolve to src/device.html');
+});
 
 test('buildWindowOptions includes additionalArguments only when extraArgs given', () => {
   const withArgs = buildWindowOptions({ width: 420, height: 615, extraArgs: ['local'] });

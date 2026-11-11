@@ -85,5 +85,10 @@ jobs:
       - name: Attach + console.log end-to-end
         run: xvfb-run -a node scripts/ui-test-attach-console.js
 
+      # Trace mode must not stick across a detach (SEND routing follows the
+      # loaded script). Skips gracefully where the runner can't attach.
+      - name: Trace routing across detach
+        run: xvfb-run -a node scripts/ui-test-trace-detach.js
+
       - name: Layout persistence regression
         run: xvfb-run -a node scripts/ui-test-layout.js

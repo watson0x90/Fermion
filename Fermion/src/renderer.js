@@ -64,6 +64,7 @@ function injectVia(pid) {
 			traceSender.postMessage(service.currentPid);
 			return service.loadScript(MonacoCodeEditor.getValue());
 		})
+		.then(() => { traceMode = false; })  // user script loaded -> terminal routing
 		.catch(e => { appendFridaLog(e); });
 }
 
@@ -77,7 +78,7 @@ function startVia(ProcPath, ProcArgs) {
 			appendFridaLog('[+] Injecting => PID: ' + pid + ', Name: ' + ProcPath);
 			return service.loadScript(MonacoCodeEditor.getValue()).then(() => service.resume(pid));
 		})
-		.then(() => { appendFridaLog('[+] Process start success'); })
+		.then(() => { traceMode = false; appendFridaLog('[+] Process start success'); })
 		.catch(e => { appendFridaLog(e); });
 }
 
@@ -99,7 +100,7 @@ document.getElementById("FridaReload").onclick = function () {
 	if (service.isAttached) {
 		if (service.hasScript) {
 			service.reloadScript(MonacoCodeEditor.getValue())
-				.then(() => { appendFridaLog('[+] Script reloaded..'); })
+				.then(() => { traceMode = false; appendFridaLog('[+] Script reloaded..'); })
 				.catch(e => { appendFridaLog(e); });
 		} else {
 			appendFridaLog('[!] Not currently attached..');
@@ -276,16 +277,20 @@ const traceSender = new BroadcastChannel('trace-data-send');
 // reloads the editor's script and clears the flag.
 traceSender.onmessage = function (message) {
 	if (message.data == "STOP") {
-		traceMode = false;
+		// Reloading the editor script clears traceMode (reload's .then), so the
+		// tracer's trailing output during the reload gap still routes to the
+		// trace window until the user script is live.
 		appendFridaLog('\n[+] Graphviz tracer will be unloaded..');
 		appendFridaLog('    |_ Reloading script in Monaco editor\n');
 		document.getElementById("FridaReload").click();
 	} else {
 		if (service.isAttached) {
 			if (service.hasScript) {
-				traceMode = true;
 				service.reloadScript(message.data)
 					.then(() => {
+						// Flip to trace routing only once the tracer is live, so a
+						// send() during the reload gap still goes to the terminal.
+						traceMode = true;
 						appendFridaLog('\n[+] Current script unloaded..');
 						appendFridaLog('    |_ Graphviz tracer loaded\n');
 					})
@@ -315,6 +320,7 @@ function onServiceMessage(message) {
 service.on('message', onServiceMessage);
 service.on('log', (level, text) => handleScriptMessage({ type: 'log', level, payload: text }));
 service.on('detached', (reason) => {
+	traceMode = false;  // no active script -> routing resets (fixes trace->detach->re-attach misroute)
 	traceSender.postMessage(null);
 	appendFridaLog(`[+] Exit Reason: ${reason}`);
 });
