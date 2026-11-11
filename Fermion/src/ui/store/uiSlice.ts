@@ -1,15 +1,20 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
+import { loadSavedTheme } from '../theme/themeEngine';
 
 export type ToolboxTab = 'editor' | 'repl' | 'graph' | 'tree' | 'inspector';
 
 export interface UiState {
   activeTab: ToolboxTab;
-  vertical: boolean; // output/editor split orientation (persisted)
+  theme: string;       // active Monaco/app theme (drives the whole shell)
+  railOpen: boolean;   // activity rail expanded (icons + labels)
+  settingsOpen: boolean;
 }
 
 const initialState: UiState = {
   activeTab: 'editor',
-  vertical: true,
+  theme: loadSavedTheme(),
+  railOpen: false,
+  settingsOpen: false,
 };
 
 const uiSlice = createSlice({
@@ -19,8 +24,14 @@ const uiSlice = createSlice({
     setActiveTab(state, action: PayloadAction<ToolboxTab>) {
       state.activeTab = action.payload;
     },
-    setVertical(state, action: PayloadAction<boolean>) {
-      state.vertical = action.payload;
+    setTheme(state, action: PayloadAction<string>) {
+      state.theme = action.payload;
+    },
+    toggleRail(state, action: PayloadAction<boolean | undefined>) {
+      state.railOpen = action.payload ?? !state.railOpen;
+    },
+    toggleSettings(state, action: PayloadAction<boolean | undefined>) {
+      state.settingsOpen = action.payload ?? !state.settingsOpen;
     },
   },
 });
