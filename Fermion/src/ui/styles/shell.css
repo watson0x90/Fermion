@@ -1,0 +1,30 @@
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { background: #0d1117; color: #adbac7; font: 12px/1.5 ui-monospace, SFMono-Regular, monospace; overflow: hidden; }
+
+.app { display: flex; height: 100vh; }
+.act { width: 44px; background: #0b0f14; border-right: 1px solid #21262d; display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 12px 0; color: #6e7681; font-size: 16px; }
+.act .on { color: #539bf5; }
+
+.side { width: 176px; background: #0e141b; border-right: 1px solid #21262d; padding: 10px; }
+.side h4 { margin: 0 0 6px; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: #6e7681; }
+.side .mut { color: #6e7681; }
+
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.work { flex: 1; display: flex; min-height: 0; }
+
+.toolbox { width: 44%; min-width: 260px; border-right: 1px solid #21262d; display: flex; flex-direction: column; }
+.tabrow { display: flex; background: #0b0f14; border-bottom: 1px solid #21262d; overflow-x: auto; }
+.tab { padding: 7px 11px; font-size: 11px; color: #8b949e; border: none; border-right: 1px solid #21262d; background: transparent; cursor: pointer; white-space: nowrap; }
+.tab.on { background: #0d1117; color: #e6edf3; box-shadow: inset 0 -2px 0 #1f6feb; }
+.panel-body { flex: 1; overflow: auto; padding: 10px 12px; }
+.stub { color: #545d68; }
+
+.output { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.otool { display: flex; align-items: center; gap: 6px; padding: 6px 9px; background: #0d1117; border-bottom: 1px solid #161b22; }
+.otool .ttl { color: #e6edf3; font-weight: 600; font-size: 12px; }
+.obody { flex: 1; overflow: hidden; background: #010409; }
+
+.statusbar { display: flex; align-items: center; gap: 14px; background: #0b0f14; border-top: 1px solid #21262d; padding: 4px 12px; font-size: 11px; color: #768390; }
+.statusbar .dot { color: #3fb950; }

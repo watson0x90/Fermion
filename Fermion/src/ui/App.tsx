@@ -1,3 +1,5 @@
+import { Layout } from './components/Layout';
+
 export function App() {
-  return <div data-testid="app-root">Fermion</div>;
+  return <Layout />;
 }
