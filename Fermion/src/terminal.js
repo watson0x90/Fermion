@@ -102,6 +102,8 @@ function createTerminal(container) {
       const sel = term.getSelection();
       return sel && sel.length ? sel : controller.getText();
     },
+    // Tear down the xterm instance (React unmount).
+    dispose() { try { term.dispose(); } catch (_) {} },
     _term: term
   };
 
