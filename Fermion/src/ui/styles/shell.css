@@ -27,7 +27,7 @@ button, input, select { font-family: inherit; }
 .titlebar { display: flex; align-items: center; gap: 10px; background: var(--title-bg); border-bottom: 1px solid var(--border); padding: 0 4px 0 12px; -webkit-app-region: drag; }
 .titlebar .brand { display: flex; align-items: center; gap: 9px; }
 .titlebar .mark { width: 17px; height: 17px; color: var(--accent); flex: 0 0 auto; }
-.titlebar .wordmark { height: 15px; width: auto; filter: var(--logo-filter); opacity: .92; }
+.titlebar .wordmark { height: 15px; width: auto; filter: var(--logo-filter); opacity: .92; -webkit-user-drag: none; user-select: none; }
 .titlebar .sub { font-size: 11px; color: var(--faint); letter-spacing: .3px; }
 .titlebar .sp { flex: 1; }
 .winctl { display: flex; -webkit-app-region: no-drag; }

@@ -21,7 +21,7 @@ export function TitleBar() {
     <div className="titlebar" data-testid="titlebar">
       <div className="brand">
         <Icon name="mark" className="mark" size={17} />
-        <img className="wordmark" src="../src/images/fermion-alt.png" alt="Fermion" />
+        <img className="wordmark" src="../src/images/fermion-alt.png" alt="Fermion" draggable={false} />
         <span className="sub">Frida IDE</span>
       </div>
       <div className="sp" />

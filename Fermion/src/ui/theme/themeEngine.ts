@@ -1,6 +1,6 @@
 // Theme engine: derive whole-app CSS-variable tokens from a Monaco theme's own
 // colors so the chrome and the editor always agree, then apply them on :root and
-// switch Monaco. Drives all 19 original Fermion themes; default is Kuroir.
+// switch Monaco. Drives all shipped Fermion themes (16); default is Kuroir.
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -40,6 +40,18 @@ export function contrastRatio(a: string, b: string): number {
   const hi = Math.max(la, lb), lo = Math.min(la, lb);
   return (hi + 0.05) / (lo + 0.05);
 }
+// Blend `fg` toward `surface` by at most `startMix`, pulling back toward `fg`
+// until the result clears `minRatio` contrast against `surface`.
+export function mixForContrast(fg: string, surface: string, startMix: number, minRatio: number): string {
+  let t = startMix;
+  for (let i = 0; i < 24 && t > 0; i++) {
+    const c = mix(fg, surface, t);
+    if (contrastRatio(c, surface) >= minRatio) return c;
+    t = Math.max(0, t - 0.05);
+  }
+  return fg;
+}
+
 function saturation(hex: string): number {
   const { r, g, b } = parseHex(hex);
   const mx = Math.max(r, g, b) / 255, mn = Math.min(r, g, b) / 255;
@@ -77,11 +89,14 @@ export function deriveTokens(theme: MonacoTheme): Record<string, string> {
   const panel = lighten(editorBg, isDark ? 0.05 : 0.045);
   const elev = lighten(editorBg, isDark ? 0.09 : 0.09);
   const title = darken(chrome, isDark ? 0.08 : 0.03);
-  const muted = mix(editorFg, editorBg, 0.42);
-  const faint = mix(editorFg, editorBg, 0.6);
+  // Secondary/tertiary text sits on --panel (the lightest chrome). Clamp both to
+  // a contrast floor so low-contrast themes (e.g. Solarized) stay readable.
+  const muted = mixForContrast(editorFg, panel, 0.42, 3.1);
+  const faint = mixForContrast(editorFg, panel, 0.6, 2.5);
   const border = mix(editorFg, editorBg, isDark ? 0.8 : 0.82);
   const accent = pickAccent(colors, bg, isDark);
-  const accentInk = relLuminance(accent) > 0.45 ? '#12140e' : '#ffffff';
+  // Button-label ink is the higher-contrast of near-black / white on the accent.
+  const accentInk = contrastRatio('#12140e', accent) >= contrastRatio('#ffffff', accent) ? '#12140e' : '#ffffff';
   const kind = isDark ? KIND_DARK : KIND_LIGHT;
 
   return {

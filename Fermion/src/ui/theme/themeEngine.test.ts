@@ -3,7 +3,7 @@ import {
   parseHex, toHex, mix, relLuminance, contrastRatio,
   deriveTokens, isDarkTheme, applyTheme, loadSavedTheme, themeNames,
 } from './themeEngine';
-// Load the real 19 themes (classic script sets window.FermionThemes).
+// Load the real theme set (classic script sets window.FermionThemes).
 import '../../lang/monaco-theme.js';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -41,7 +41,7 @@ test('isDarkTheme reads base then falls back to luminance', () => {
 });
 
 // Review Focus: EVERY shipped theme must stay legible (fg vs bg) after derivation.
-test('all 19 themes derive legible foreground/background contrast', () => {
+test('all shipped themes derive legible foreground/background contrast', () => {
   const all = (window as any).FermionThemes as Record<string, any>;
   const names = Object.keys(all);
   expect(names.length).toBeGreaterThanOrEqual(16);
@@ -51,6 +51,14 @@ test('all 19 themes derive legible foreground/background contrast', () => {
     expect(ratio, `${name} fg/bg contrast`).toBeGreaterThanOrEqual(3.5);
     // accent must be legible against the chrome it sits on
     expect(contrastRatio(t['--accent'], t['--bg']), `${name} accent/bg`).toBeGreaterThanOrEqual(1.9);
+    // secondary (muted) and tertiary (faint) text sit on --panel and must stay
+    // legible even on low-contrast themes (review finding #1).
+    expect(contrastRatio(t['--muted'], t['--panel']), `${name} muted/panel`).toBeGreaterThanOrEqual(2.8);
+    expect(contrastRatio(t['--faint'], t['--panel']), `${name} faint/panel`).toBeGreaterThanOrEqual(2.2);
+    // the primary-button ink must be the higher-contrast choice on the accent.
+    const ink = t['--accent-ink'];
+    const other = ink === '#ffffff' ? '#12140e' : '#ffffff';
+    expect(contrastRatio(ink, t['--accent']), `${name} accent-ink best`).toBeGreaterThanOrEqual(contrastRatio(other, t['--accent']));
   }
 });
 

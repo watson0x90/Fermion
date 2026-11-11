@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { vi } from 'vitest';
 import { TitleBar } from './TitleBar';
 
@@ -32,14 +32,16 @@ test('maximize glyph follows the maximize-change event', async () => {
   // Let the initial isMaximized() promise settle before firing an event, so it
   // can't resolve late and revert the change.
   await waitFor(() => expect(screen.getByTestId('win-max')).toHaveAttribute('title', 'Maximize'));
-  await Promise.resolve();
-  fire(true);
+  await act(async () => { await Promise.resolve(); });
+  act(() => { fire(true); });
   await waitFor(() => expect(screen.getByTestId('win-max')).toHaveAttribute('title', 'Restore'));
 });
 
-test('the bar is the drag region and the controls are excluded', () => {
+test('the bar is the drag region, controls are excluded, and the wordmark is not image-draggable', () => {
   setup();
   // controls live in a no-drag container distinct from the draggable bar
   expect(screen.getByTestId('titlebar')).toBeInTheDocument();
   expect(screen.getByTestId('win-close').closest('.winctl')).toBeTruthy();
+  // grabbing the logo must move the window, not start an HTML image-drag
+  expect(screen.getByAltText('Fermion')).toHaveAttribute('draggable', 'false');
 });
