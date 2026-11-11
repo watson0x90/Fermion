@@ -23,3 +23,7 @@ Thumbs.db
 # Local tooling / agent working files
 .claude/
 .superpowers/
+
+# esbuild renderer bundle (built via npm run build)
+Fermion/src/renderer.bundle.js
+Fermion/src/renderer.bundle.js.map

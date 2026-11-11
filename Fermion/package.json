@@ -5,6 +5,9 @@
   "main": "core.js",
   "scripts": {
     "start": "electron .",
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "prestart": "npm run build",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json"
   },
@@ -26,6 +29,7 @@
   "devDependencies": {
     "@electron/packager": "20.3.0",
     "@types/node": "^22.10.2",
+    "esbuild": "^0.24.2",
     "eslint": "9.37.0",
     "playwright-core": "1.65.0",
     "typescript": "^5.9.2"

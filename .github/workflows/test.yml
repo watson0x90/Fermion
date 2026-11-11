@@ -41,6 +41,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Build renderer bundle
+        run: npm run build
+
       # Electron needs a virtual display and its GUI runtime libraries to launch
       # headlessly on a CI runner.
       - name: Install Linux GUI runtime deps

@@ -10,8 +10,11 @@ const { createLayout } = require('../src/layout.js');
 const { openWindow } = require('../src/windows.js');
 const { initEditor, setMonacoTheme, toggleWrap } = require('../src/editor.js');
 const { FridaService, routeMessage } = require('../src/frida-service.js');
-// Inline index.html handler onchange="setMonacoTheme()" needs this on window.
+// Inline index.html handlers (onchange="setMonacoTheme()", onclick="exitFermion()")
+// resolve against window; the renderer is bundled (IIFE) so top-level functions
+// are no longer implicit globals — expose the ones HTML references.
 window.setMonacoTheme = setMonacoTheme;
+window.exitFermion = () => exitFermion();
 
 // Overwrite default node.js prop to get Jquery working
 window.$ = window.jQuery = require('jquery');
@@ -34,7 +37,6 @@ let fermionTerminal = null;
 // Globals
 //////////////////////////////////////////////////
 
-var MonacoCodeEditor;
 var currentFilePath = null;
 
 // All frida-node interaction goes through this service (src/frida-service.js).
@@ -62,7 +64,7 @@ function injectVia(pid) {
 	service.attach(pid)
 		.then(() => {
 			traceSender.postMessage(service.currentPid);
-			return service.loadScript(MonacoCodeEditor.getValue());
+			return service.loadScript(window.MonacoCodeEditor.getValue());
 		})
 		.then(() => { traceMode = false; })  // user script loaded -> terminal routing
 		.catch(e => { appendFridaLog(e); });
@@ -76,7 +78,7 @@ function startVia(ProcPath, ProcArgs) {
 		.then(({ pid }) => {
 			traceSender.postMessage(service.currentPid);
 			appendFridaLog('[+] Injecting => PID: ' + pid + ', Name: ' + ProcPath);
-			return service.loadScript(MonacoCodeEditor.getValue()).then(() => service.resume(pid));
+			return service.loadScript(window.MonacoCodeEditor.getValue()).then(() => service.resume(pid));
 		})
 		.then(() => { traceMode = false; appendFridaLog('[+] Process start success'); })
 		.catch(e => { appendFridaLog(e); });
@@ -99,7 +101,7 @@ document.getElementById("FridaDetach").onclick = function () {
 document.getElementById("FridaReload").onclick = function () {
 	if (service.isAttached) {
 		if (service.hasScript) {
-			service.reloadScript(MonacoCodeEditor.getValue())
+			service.reloadScript(window.MonacoCodeEditor.getValue())
 				.then(() => { traceMode = false; appendFridaLog('[+] Script reloaded..'); })
 				.catch(e => { appendFridaLog(e); });
 		} else {
@@ -380,7 +382,7 @@ document.getElementById("FermionOpen").onclick = function () {
 					appendFridaLog("[+] File opened..");
 					appendFridaLog("    |-> Path: " + result.filePaths[0]);
 				}
-				MonacoCodeEditor.setValue(data);
+				window.MonacoCodeEditor.setValue(data);
 				// Set global filepath on success
 				currentFilePath = result.filePaths[0];
 			});
@@ -397,7 +399,7 @@ document.getElementById("FermionSave").onclick = function () {
 		}
 	).then(result => {
 		if (result.filePath) {
-			content = MonacoCodeEditor.getValue();
+			content = window.MonacoCodeEditor.getValue();
 			fs.writeFile(result.filePath, content, (err) => {
 				if (err) {
 					appendFridaLog("[!] Error saving file: " + err.message)
@@ -475,7 +477,7 @@ document.addEventListener("keydown", function (e) {
 				}
 			).then(result => {
 				if (result.response == 0) {
-					content = MonacoCodeEditor.getValue();
+					content = window.MonacoCodeEditor.getValue();
 					fs.writeFile(currentFilePath, content, (err) => {
 						if (err) {
 							appendFridaLog("[!] Error saving file: " + err.message);
@@ -545,7 +547,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	// layout.toggleLayout() to restore a saved horizontal layout.
 	layout = createLayout({
 		getTerminal: () => fermionTerminal,
-		getEditor: () => MonacoCodeEditor,
+		getEditor: () => window.MonacoCodeEditor,
 		onChange: saveSettings,
 	});
 
@@ -797,8 +799,8 @@ function loadSettings() {
 						wrapToggle.children[0].checked = settings.monacoWrap;
 
 						// Apply the wrap setting to Monaco
-						if (MonacoCodeEditor) {
-							MonacoCodeEditor.updateOptions({
+						if (window.MonacoCodeEditor) {
+							window.MonacoCodeEditor.updateOptions({
 								wordWrap: settings.monacoWrap ? "on" : "off"
 							});
 						}
