@@ -21,6 +21,9 @@ export function OutputPane() {
     const ctrl = createTerminal(hostRef.current);
     ctrlRef.current = ctrl;
     setTerminalSink(ctrl); // the bridge writes here
+    // Expose the controller for the Playwright test surface.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (window as any).__fermion = { ...(window as any).__fermion, terminal: ctrl };
     ctrl.fit();
     const onResize = () => ctrl.fit();
     window.addEventListener('resize', onResize);

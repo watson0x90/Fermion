@@ -58,3 +58,7 @@ body { background: #0d1117; color: #adbac7; font: 12px/1.5 ui-monospace, SFMono-
 .otool .ic { background: transparent; border: none; color: #6e7681; cursor: pointer; }
 .otool .ic.on { color: #539bf5; }
 .otool .search { background: #161b22; border: 1px solid #30363d; border-radius: 5px; padding: 3px 8px; color: #adbac7; font-size: 11px; }
+
+/* Frameless window drag (activity bar), interactive children excluded. */
+.act { -webkit-app-region: drag; }
+.act > div { -webkit-app-region: no-drag; }

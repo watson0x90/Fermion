@@ -25,6 +25,7 @@ export function OutputToolbar({ ctrlRef }: { ctrlRef: MutableRefObject<any> }) {
       {KINDS.map((k) => (
         <button
           key={k}
+          data-testid={'flt-' + k}
           className={'chip ' + k.toLowerCase() + (filters[k] ? ' on' : '')}
           onClick={() => { dispatch(outputActions.toggleFilter(k)); ctrlRef.current?.setFilter(k, !filters[k]); }}
         >
@@ -33,7 +34,7 @@ export function OutputToolbar({ ctrlRef }: { ctrlRef: MutableRefObject<any> }) {
       ))}
       <span className="sp" />
       <button className={'ic' + (follow ? ' on' : '')} title="Follow" onClick={() => { dispatch(outputActions.setFollow(!follow)); ctrlRef.current?.setFollow(!follow); }}>⤓</button>
-      <button className="ic" title="Clear" onClick={() => { ctrlRef.current?.clear(); dispatch(outputActions.clear()); }}>🗑</button>
+      <button className="ic" data-testid="clear-output" title="Clear" onClick={() => { ctrlRef.current?.clear(); dispatch(outputActions.clear()); }}>🗑</button>
       <button className="ic" title="Save" onClick={save}>⤵</button>
       <input
         className="search"

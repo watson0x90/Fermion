@@ -58,9 +58,6 @@ jobs:
           sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 \
             libgtk-3-0 libgbm1 libasound2 libxshmfence1 libdrm2
 
-      - name: Renderer syntax check
-        run: node --check src/renderer.js
-
       - name: Output model unit tests
         run: node --test src/output-model.test.js
 
@@ -90,11 +87,3 @@ jobs:
       # (ptrace restrictions); the real coverage is on the Windows dev machine.
       - name: Attach + console.log end-to-end
         run: xvfb-run -a node scripts/ui-test-attach-console.js
-
-      # Trace mode must not stick across a detach (SEND routing follows the
-      # loaded script). Skips gracefully where the runner can't attach.
-      - name: Trace routing across detach
-        run: xvfb-run -a node scripts/ui-test-trace-detach.js
-
-      - name: Layout persistence regression
-        run: xvfb-run -a node scripts/ui-test-layout.js

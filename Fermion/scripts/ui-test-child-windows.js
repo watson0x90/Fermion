@@ -1,10 +1,13 @@
-// Playwright-Electron regression: every child window opens under the secured
-// model (contextIsolation on, no Node) with the preload bridge present and no
-// uncaught error. Replaces ui-test-trace-remote (which asserted @electron/remote
-// was enabled — removed in Tier 3). Guards Review Focus #5.
+// Playwright-Electron regression: the remaining child windows open under the
+// secured model (contextIsolation on, no Node) with the preload bridge present
+// and no uncaught error. Guards Review Focus #5.
+//
+// In the React A/L1 shell the device/proc/instrument/trace/svg pop-ups are
+// folded into the main window (Session sidebar + Graph panel), so only About
+// and Docs remain as child windows. They open from the activity bar.
 //
 //   node scripts/ui-test-child-windows.js
-// Exit 0 + CHILD_WINDOWS_OK   -> all child windows open isolated with window.fermion
+// Exit 0 + CHILD_WINDOWS_OK   -> About + Docs open isolated with window.fermion
 // Exit 1 + CHILD_WINDOWS_FAIL -> a window failed to open / is not isolated / errored
 const { _electron: electron } = require('playwright-core');
 const electronPath = require('electron');
@@ -12,12 +15,8 @@ const path = require('path');
 
 const APP_DIR = path.join(__dirname, '..');
 const CASES = [
-  ['setDevice', 'device.html'],
-  ['FridaProc', 'proc.html'],
-  ['FridaAttach', 'instrument.html'],
-  ['FermionTools', 'trace.html'],
-  ['FermionAbout', 'about.html'],
-  ['FermionDocs', 'docs.html'],
+  ['open-about', 'about.html'],
+  ['open-docs', 'docs.html'],
 ];
 
 (async () => {
@@ -31,8 +30,8 @@ const CASES = [
     await main.waitForSelector('.monaco-editor', { timeout: 60000 });
 
     let ok = 0;
-    for (const [id, file] of CASES) {
-      await main.evaluate((sel) => document.getElementById(sel).click(), id);
+    for (const [testid, file] of CASES) {
+      await main.click(`[data-testid="${testid}"]`);
       try {
         await app.waitForEvent('window', { timeout: 8000 });
         await new Promise((r) => setTimeout(r, 500));

@@ -67,9 +67,9 @@ export function SessionControls() {
         <button title="refresh" onClick={loadProcs}>⟳</button>
       </div>
       <div className="btns">
-        <button className="btn" onClick={onAttach} disabled={isAttached}>Attach</button>
-        <button className="btn ghost" onClick={onReload} disabled={!hasScript}>Reload</button>
-        <button className="btn ghost" onClick={onDetach} disabled={!isAttached}>Detach</button>
+        <button className="btn" data-testid="attach" onClick={onAttach} disabled={isAttached}>Attach</button>
+        <button className="btn ghost" data-testid="reload" onClick={onReload} disabled={!hasScript}>Reload</button>
+        <button className="btn ghost" data-testid="detach" onClick={onDetach} disabled={!isAttached}>Detach</button>
       </div>
       <h4 style={{ marginTop: 12 }}>Spawn new…</h4>
       <input className="sel" aria-label="spawn path" placeholder="path" value={spawnPath} onChange={(e) => setSpawnPath(e.target.value)} />
