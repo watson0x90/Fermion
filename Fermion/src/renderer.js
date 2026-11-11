@@ -339,7 +339,7 @@ async function trace(scriptBody) {
 // -= Device Selector =-
 
 document.getElementById("setDevice").onclick = function () {
-	const modalPath = path.join('file://', __dirname, 'device.html');
+	const modalPath = path.join(__dirname, 'device.html');
 	let ProcWin = new BrowserWindow({
 		contextIsolation: false,
 		width: 420,
@@ -358,7 +358,7 @@ document.getElementById("setDevice").onclick = function () {
 		}
 	})
 
-	ProcWin.loadURL(modalPath);
+	ProcWin.loadFile(modalPath);
 	ProcWin.once('ready-to-show', () => {
 		setTimeout(function () {
 			ProcWin.show();
@@ -388,7 +388,7 @@ ipc.on('new-device', async (event, message) => {
 // -= Process Listing =-
 
 document.getElementById("FridaProc").onclick = function () {
-	const modalPath = path.join('file://', __dirname, 'proc.html');
+	const modalPath = path.join(__dirname, 'proc.html');
 	let ProcWin = new BrowserWindow({
 		contextIsolation: false,
 		width: 570,
@@ -407,7 +407,7 @@ document.getElementById("FridaProc").onclick = function () {
 		}
 	})
 
-	ProcWin.loadURL(modalPath);
+	ProcWin.loadFile(modalPath);
 	ProcWin.once('ready-to-show', () => {
 		setTimeout(function () {
 			ProcWin.show();
@@ -420,7 +420,7 @@ document.getElementById("FridaProc").onclick = function () {
 // -= Instrument Manager =-
 
 document.getElementById("FridaAttach").onclick = function () {
-	const modalPath = path.join('file://', __dirname, 'instrument.html');
+	const modalPath = path.join(__dirname, 'instrument.html');
 	let ProcWin = new BrowserWindow({
 		contextIsolation: false,
 		width: 420,
@@ -438,7 +438,7 @@ document.getElementById("FridaAttach").onclick = function () {
 		}
 	})
 
-	ProcWin.loadURL(modalPath);
+	ProcWin.loadFile(modalPath);
 	ProcWin.once('ready-to-show', () => {
 		setTimeout(function () {
 			ProcWin.show();
@@ -451,7 +451,7 @@ document.getElementById("FridaAttach").onclick = function () {
 // -= About =-
 
 document.getElementById("FermionAbout").onclick = function () {
-	const modalPath = path.join('file://', __dirname, 'about.html');
+	const modalPath = path.join(__dirname, 'about.html');
 	let ProcWin = new BrowserWindow({
 		contextIsolation: false,
 		width: 460,
@@ -470,7 +470,7 @@ document.getElementById("FermionAbout").onclick = function () {
 		}
 	})
 
-	ProcWin.loadURL(modalPath);
+	ProcWin.loadFile(modalPath);
 	ProcWin.once('ready-to-show', () => {
 		setTimeout(function () {
 			ProcWin.show();
@@ -483,7 +483,7 @@ document.getElementById("FermionAbout").onclick = function () {
 // -= JS API Docs =-
 
 document.getElementById("FermionDocs").onclick = function () {
-	const modalPath = path.join('file://', __dirname, 'docs.html');
+	const modalPath = path.join(__dirname, 'docs.html');
 	let ProcWin = new BrowserWindow({
 		contextIsolation: false,
 		width: 800,
@@ -501,7 +501,7 @@ document.getElementById("FermionDocs").onclick = function () {
 		}
 	})
 
-	ProcWin.loadURL(modalPath);
+	ProcWin.loadFile(modalPath);
 	ProcWin.once('ready-to-show', () => {
 		setTimeout(function () {
 			ProcWin.show();
@@ -515,7 +515,7 @@ document.getElementById("FermionDocs").onclick = function () {
 
 let TraceWin = null;
 document.getElementById("FermionTools").onclick = function () {
-	const modalPath = path.join('file://', __dirname, 'trace.html');
+	const modalPath = path.join(__dirname, 'trace.html');
 	if (sessionPID == null || sessionPID.length == 0) {
 		sessionPID = "null";
 	}
@@ -540,7 +540,7 @@ document.getElementById("FermionTools").onclick = function () {
 	// Node 14+ patch, jesus node devs, just leave us alone with remote already..
 	require("@electron/remote").require("@electron/remote/main").enable(TraceWin.webContents);
 
-	TraceWin.loadURL(modalPath);
+	TraceWin.loadFile(modalPath);
 	TraceWin.once('ready-to-show', () => {
 		setTimeout(function () {
 			TraceWin.show();
@@ -583,9 +583,13 @@ function appendFridaLog(data) {
 
 	FridaOut.scrollTop = FridaOut.scrollHeight;
 
-	// If search is active, update highlights
+	// If search is active, refresh highlights for the new output. performSearch
+	// navigates to (and scrolls to) the first match, which would yank the
+	// viewport away from the live tail on every appended line, so re-assert the
+	// tail-follow scroll afterwards to match the non-search streaming behavior.
 	if (searchRegex) {
 		performSearch();
+		FridaOut.scrollTop = FridaOut.scrollHeight;
 	}
 }
 
@@ -939,23 +943,9 @@ function addEventListeners() {
 	decreaseFontButton.addEventListener('click', decreaseFontSize);
 	increaseFontButton.addEventListener('click', increaseFontSize);
 
-	// Search functionality
-	searchButton.addEventListener('click', performSearch);
-	regexSearch.addEventListener('keypress', function (e) {
-		if (e.key === 'Enter') {
-			if (searchRegex) {
-				navigateToNextMatch();
-			} else {
-				performSearch();
-			}
-		}
-	});
-
-	regexSearch.addEventListener('input', function () {
-		if (this.value.trim() === '') {
-			clearSearch();
-		}
-	});
+	// Search functionality (search-button click, regex-search Enter/input) is
+	// registered in initSearchFunctionality() — do not bind it here too, or every
+	// click/Enter fires twice (e.g. Enter would advance two matches).
 
 	// Layout toggle
 	toggleLayoutButton.addEventListener('click', toggleLayout);
@@ -1026,11 +1016,8 @@ function addEventListeners() {
 	applyColorsButton.addEventListener('click', applyColors);
 	resetColorsButton.addEventListener('click', resetColors);
 
-	// Sync scrolling between textarea and highlight overlay
-	fridaOut.addEventListener('scroll', function () {
-		highlightOverlay.scrollTop = fridaOut.scrollTop;
-		highlightOverlay.scrollLeft = fridaOut.scrollLeft;
-	});
+	// (Overlay scroll-sync is registered in initSearchFunctionality(); not bound
+	// here to avoid a duplicate scroll handler.)
 
 	// Handle textarea input and content changes for highlighting
 	fridaOut.addEventListener('input', function () {
@@ -1377,9 +1364,12 @@ function addSearchKeyboardShortcuts() {
 		if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
 			// Don't intercept if user is typing in Monaco editor (it has its own search)
 			const activeElement = document.activeElement;
+			// activeElement.closest('.monaco-editor') already answers "is focus
+			// inside the editor"; the previous extra querySelector(...).contains()
+			// clause was redundant and threw when Monaco's node was not yet in the
+			// DOM (querySelector returned null).
 			const isInMonacoEditor = activeElement &&
-				(activeElement.closest('.monaco-editor') ||
-					document.querySelector('.monaco-editor').contains(activeElement));
+				activeElement.closest('.monaco-editor');
 
 			if (!isInMonacoEditor) {
 				e.preventDefault();
@@ -1506,6 +1496,18 @@ function clearHighlights() {
 	}
 }
 
+// Escape text before it is inserted into the highlight overlay's innerHTML.
+// Frida output comes from the instrumented (untrusted) target, and this
+// renderer has Node integration, so unescaped output could both misalign the
+// highlight overlay and execute injected markup. Escapes the HTML-significant
+// characters; newlines are converted to <br> separately by the caller.
+function escapeHtml(text) {
+	return String(text)
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;');
+}
+
 // Enhanced highlight function
 function highlightMatches() {
 	if (!searchRegex) return;
@@ -1534,7 +1536,7 @@ function highlightMatches() {
 
 	while ((match = processRegex.exec(content)) !== null) {
 		// Add text before the match
-		htmlContent += content.substring(lastIndex, match.index);
+		htmlContent += escapeHtml(content.substring(lastIndex, match.index));
 
 		// Store match position
 		matchPositions.push({
@@ -1544,7 +1546,7 @@ function highlightMatches() {
 		});
 
 		// Add the highlighted match with a data attribute for the match index
-		htmlContent += `<span class="highlight-match" data-match-index="${matchPositions.length - 1}">${match[0]}</span>`;
+		htmlContent += `<span class="highlight-match" data-match-index="${matchPositions.length - 1}">${escapeHtml(match[0])}</span>`;
 
 		lastIndex = processRegex.lastIndex;
 		totalMatches++;
@@ -1557,7 +1559,7 @@ function highlightMatches() {
 
 	// Add remaining text after the last match
 	if (lastIndex < content.length) {
-		htmlContent += content.substring(lastIndex);
+		htmlContent += escapeHtml(content.substring(lastIndex));
 	}
 
 	// Replace newlines with <br> tags for proper display
@@ -1951,16 +1953,17 @@ function loadSettings() {
 			document.documentElement.style.setProperty('--current-match-bg', currentMatchColor);
 			document.documentElement.style.setProperty('--current-match-text', currentMatchTextColor);
 
-			// Apply layout direction
-			if (settings.hasOwnProperty('isVertical')) {
-				isVertical = settings.isVertical;
-
-				// If not vertical, toggle the layout after a short delay
-				if (!isVertical && typeof window.split !== 'undefined') {
-					setTimeout(function () {
-						toggleLayout();
-					}, 500);
-				}
+			// Apply layout direction. The app starts vertical (isVertical = true)
+			// and toggleLayout() both flips isVertical and rebuilds the split, so
+			// restore a saved HORIZONTAL layout by calling toggleLayout() once.
+			// (Previously this also did `isVertical = settings.isVertical`, which
+			// cancelled out the flip inside toggleLayout and then re-saved the
+			// preference as vertical, so horizontal was never restored.)
+			if (settings.hasOwnProperty('isVertical') && settings.isVertical === false
+				&& typeof window.split !== 'undefined') {
+				setTimeout(function () {
+					toggleLayout();
+				}, 500);
 			}
 
 			// Apply Monaco Editor theme

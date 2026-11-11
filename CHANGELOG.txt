@@ -149,3 +149,16 @@
 
 * This is a CI build
 * Upgrade Frida v16.0.10 -> v16.0.17
+
+-= Fermion v1.9.4 =-
+
+* Maintenance revival as a community-maintained fork (full credit to the original author, Ruben Boonen / @FuzzySec)
+* Upgrade Electron v21.0.0 -> v45.3.0
+* Upgrade Frida v16.0.17 -> v17.26.2. Frida 17 is ESM-only but loads via Node 24's require(esm) inside Electron 45, and it ships N-API prebuilds, so the old "npm_config_runtime/npm_config_target" ABI install environment is no longer required
+* Upgrade Monaco Editor v0.30.0 -> v0.57.0, jQuery v3.6.0 -> v3.7.1, node-graphviz v0.1.0 -> v0.1.1, @electron/remote -> v2.1.4
+* Fix: child windows (Process List, Device, Trace, Docs, About, Instrument) now load via loadFile() instead of a malformed file:// URL that modern Electron rejected — restores the sidebar buttons
+* Fix: Fermion/Frida version display adapted to Frida 17's package layout
+* enhanced-ui bug sweep: HTML-escape Frida output in the search highlighter (prevents markup/script injection in the Node-integrated renderer), stop an active search from yanking the output pane while output streams, restore horizontal-layout persistence across restarts, remove duplicate search event handlers, and harden the Ctrl+F shortcut
+* Replace the deprecated electron-packager with @electron/packager
+* New tag-triggered GitHub Actions release workflow: builds Windows, Linux and macOS (arm64, ad-hoc signed) and smoke-launches every package with Playwright before publishing. Removed the old 12-hour auto-update cron pipeline
+* Added a .gitignore

@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+Fermion/node_modules/
+
+# Build / packaging output
+build/
+dist/
+out/
+*.zip
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+
+# Local tooling / agent working files
+.claude/
+.superpowers/

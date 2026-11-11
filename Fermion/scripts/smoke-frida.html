@@ -1,0 +1,22 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8"></head>
+  <body>
+    <script>
+      // Renderer side of the Frida smoke test. Mirrors how src/renderer.js
+      // loads Frida: a plain require() resolved by Node (available here
+      // because nodeIntegration is on).
+      const { ipcRenderer } = require('electron');
+      (async () => {
+        try {
+          const frida = require('frida');
+          const devices = await frida.enumerateDevices();
+          ipcRenderer.send('smoke-result', { ok: true, devices: devices.length });
+        } catch (e) {
+          const message = String(e && e.message ? e.message : e).split('\n')[0];
+          ipcRenderer.send('smoke-result', { ok: false, message });
+        }
+      })();
+    </script>
+  </body>
+</html>

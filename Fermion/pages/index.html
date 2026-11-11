@@ -418,16 +418,33 @@
 
     </script>
     <script type="text/javascript">
-      const { dirname, join } = require("path");
-      const FRIDA_VER = require(join(
-        dirname(dirname(require.resolve("frida"))),
-        "package.json"
-      )).version;
-      const FERMION_VER = require('../package.json').version;
+      // Wrapped in an IIFE so helper locals do not collide with globals
+      // already declared by renderer.js (which has its own `fs`). The two
+      // versions are published on `window` so the editor banner above can
+      // read FERMION_VER.
+      (function () {
+        const { dirname, join } = require("path");
+        const nodeFs = require("fs");
+        // Resolve a package's version without assuming its internal file
+        // layout. Frida 17's entry point is build/src/frida.js and its
+        // "exports" map blocks require('frida/package.json'), so walk up from
+        // the resolved entry until the package.json is found.
+        function packageVersion(moduleName) {
+          let dir = dirname(require.resolve(moduleName));
+          while (!nodeFs.existsSync(join(dir, "package.json"))) {
+            const parent = dirname(dir);
+            if (parent === dir) throw new Error("package.json not found for " + moduleName);
+            dir = parent;
+          }
+          return require(join(dir, "package.json")).version;
+        }
+        window.FRIDA_VER = packageVersion("frida");
+        window.FERMION_VER = require('../package.json').version;
 
-      // Print release firda version to textarea
-      appendFridaLog("[+] Fermion v" + FERMION_VER + " -> Frida v" + FRIDA_VER);
-      appendFridaLog("    |_ https://github.com/frida/frida/releases/tag/" + FRIDA_VER);
+        // Print release Frida version to textarea
+        appendFridaLog("[+] Fermion v" + window.FERMION_VER + " -> Frida v" + window.FRIDA_VER);
+        appendFridaLog("    |_ https://github.com/frida/frida/releases/tag/" + window.FRIDA_VER);
+      })();
     </script>
   </body>
 
