@@ -10,13 +10,16 @@
   "author": "Ruben Boonen (@FuzzySec)",
   "license": "BSD-3-Clause",
   "dependencies": {
-    "@electron/remote": "^2.0.0",
-    "@types/frida-gum": "^18.3.1",
-    "electron": "21.0.0",
-    "frida": "^16.0.17",
-    "jquery": "3.6.0",
-    "monaco-editor": "0.30.0",
+    "@electron/remote": "2.1.4",
+    "@types/frida-gum": "19.13.0",
+    "electron": "45.3.0",
+    "frida": "17.26.2",
+    "jquery": "3.7.1",
+    "monaco-editor": "0.57.0",
     "mutex-promise": "0.1.0",
-    "node-graphviz": "0.1.0"
+    "node-graphviz": "0.1.1"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0"
   }
 }
