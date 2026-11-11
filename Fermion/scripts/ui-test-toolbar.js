@@ -37,14 +37,14 @@ const rowsText = () => {
     }, { timeout: 15000 });
 
     // Toggle WARN off -> bravo hidden, alpha stays.
-    await win.click('#flt-warn');
+    await win.click('[data-testid="flt-WARN"]');
     await win.waitForFunction(() => {
       const r = document.querySelector('.xterm-rows').textContent;
       return r.includes('alpha-line') && !r.includes('bravo-line');
     }, { timeout: 15000 });
 
     // Toggle WARN back on -> both visible.
-    await win.click('#flt-warn');
+    await win.click('[data-testid="flt-WARN"]');
     await win.waitForFunction(() => {
       const r = document.querySelector('.xterm-rows').textContent;
       return r.includes('alpha-line') && r.includes('bravo-line');
@@ -61,7 +61,7 @@ const rowsText = () => {
     if (threw) throw new Error('invalid regex threw out of searchNext');
 
     // Clear empties the terminal.
-    await win.click('#clear-output');
+    await win.click('[data-testid="clear-output"]');
     await win.waitForFunction(() => {
       const r = document.querySelector('.xterm-rows').textContent;
       return !r.includes('alpha-line') && !r.includes('bravo-line');

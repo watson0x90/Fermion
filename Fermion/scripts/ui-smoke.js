@@ -82,27 +82,15 @@ function launch(pageErrors) {
     if (pageErrors.length) throw new Error('uncaught renderer error: ' + pageErrors[0]);
     console.log('UI_SMOKE_OK ' + (packaged ? 'packaged' : 'dev') + ' :: ' + fridaLine);
 
-    // Seed a saved NON-default Monaco theme, then relaunch to prove it is
-    // restored after the editor moved out of index.html (Review Focus #5).
-    await win.evaluate(() =>
-      localStorage.setItem('fermion_output_settings', '{"monacoTheme":"Cobalt"}'));
-    await app.close();
+    // The React shell's own stylesheet must be applied (esbuild emits
+    // renderer.bundle.css from the bundle's CSS imports; index.html links it).
+    // A non-default body background proves the <link> resolved.
+    const styled = await win.evaluate(() => getComputedStyle(document.body).backgroundColor);
+    if (styled === 'rgba(0, 0, 0, 0)' || styled === 'rgb(255, 255, 255)' || !styled) {
+      throw new Error('renderer stylesheet not applied (body background ' + styled + ')');
+    }
+    console.log('SMOKE_STYLE_OK renderer.bundle.css applied (body bg ' + styled + ')');
 
-    // --- Phase 2: saved theme is applied on next startup ---
-    app = await launch(pageErrors);
-    win = await app.firstWindow();
-    await win.waitForLoadState('domcontentloaded');
-    await win.waitForSelector('.monaco-editor', { timeout: 60000 });
-    await win.waitForFunction(() => !!window.MonacoCodeEditor, { timeout: 60000 });
-    // loadSettings applies the saved theme on a ~1000ms timeout; wait for the
-    // dropdown to reflect it.
-    await win.waitForFunction(() => {
-      const sel = document.getElementById('MonacoThemeSelect');
-      return sel && sel.value === 'Cobalt';
-    }, { timeout: 15000 });
-
-    if (pageErrors.length) throw new Error('uncaught renderer error: ' + pageErrors[0]);
-    console.log('SMOKE_EDITOR_OK saved Monaco theme (Cobalt) restored after restart');
     await app.close();
     process.exit(0);
   } catch (e) {

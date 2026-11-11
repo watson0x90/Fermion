@@ -1,5 +1,5 @@
 {
-  "//": "Type-checking only (no build). Modules opt in with `// @ts-check`; this config provides the DOM + Node libs and ambient page globals (src/globals.d.ts). Run: npx tsc -p tsconfig.json",
+  "//": "Type-checking only (no build). JS modules opt in with `// @ts-check`; the React app (src/ui, .ts/.tsx) is fully checked. Run: npx tsc -p tsconfig.json",
   "compilerOptions": {
     "allowJs": true,
     "checkJs": false,
@@ -8,11 +8,14 @@
     "module": "commonjs",
     "moduleResolution": "node",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["node"],
+    "types": ["node", "vitest/globals"],
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
     "strict": false,
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*.js", "src/globals.d.ts"],
+  "include": ["src/**/*.js", "src/**/*.ts", "src/**/*.tsx", "src/globals.d.ts"],
   "exclude": ["node_modules", "src/frameworks", "src/lang", "src/tools", "out", "src/renderer.bundle.js"]
 }
