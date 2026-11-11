@@ -1,24 +1,111 @@
 // Modules to control application life and create native browser window
-const {app, BrowserWindow} = require('electron');
+const {app, BrowserWindow, ipcMain, dialog, shell} = require('electron');
 const path = require('path');
-const ipcMain = require('electron').ipcMain;
+const fs = require('fs');
+const { FridaService } = require('./src/frida-service.js');
+const { createDispatch, wireServiceEvents } = require('./src/frida-ipc.js');
+const { buildWindowOptions } = require('./src/windows.js');
+const { isAllowedPage, isSafeExternalUrl } = require('./src/ipc-guards.js');
 var bWin;
-app.commandLine.appendSwitch('disable-features', 'CrossOriginOpenerPolicy');
-const remoteMain = require('@electron/remote/main');
-remoteMain.initialize();
-// Enable @electron/remote for every window created in the main process,
-// including child windows the renderer opens (e.g. the Trace window). Doing it
-// in the main process avoids the renderer calling
-// remote.require('@electron/remote/main'), which no longer resolves under
-// modern Electron (the remote server's module lookup fails).
-app.on('browser-window-created', (_event, win) => {
-  remoteMain.enable(win.webContents);
+
+// All frida-node interaction runs here in the main process. The renderer drives
+// it over the 'fermion:invoke' channel (guarded method dispatch) and receives
+// message/log/detached events over 'fermion:event'.
+const fridaService = new FridaService();
+const fridaDispatch = createDispatch(fridaService);
+ipcMain.handle('fermion:invoke', (_event, method, ...args) => fridaDispatch(method, ...args));
+wireServiceEvents(fridaService, (kind, ...payload) => {
+  if (bWin && !bWin.isDestroyed()) bWin.webContents.send('fermion:event', kind, ...payload);
 });
+
+// -= Host services the isolated renderer needs over IPC =-
+
+// Package versions (the renderer can't resolve node modules once isolated).
+function packageVersion(moduleName) {
+  let dir = path.dirname(require.resolve(moduleName));
+  while (!fs.existsSync(path.join(dir, 'package.json'))) {
+    const parent = path.dirname(dir);
+    if (parent === dir) throw new Error('package.json not found for ' + moduleName);
+    dir = parent;
+  }
+  return require(path.join(dir, 'package.json')).version;
+}
+ipcMain.handle('fermion:versions', () => ({
+  fermion: require('./package.json').version,
+  frida: packageVersion('frida'),
+}));
+
+// Window controls (were @electron/remote.getCurrentWindow()).
+ipcMain.handle('fermion:closeWindow', (e) => {
+  const w = BrowserWindow.fromWebContents(e.sender);
+  if (w) w.close();
+});
+ipcMain.handle('fermion:openDevTools', (e) => e.sender.openDevTools({ mode: 'detach' }));
+
+// Open an http(s) link in the user's browser (validated; was renderer shell).
+ipcMain.handle('fermion:openExternal', (_e, url) => {
+  if (isSafeExternalUrl(url)) return shell.openExternal(url);
+});
+
+// File dialogs + I/O. Main owns the "current file" so the renderer never gets an
+// arbitrary write-anywhere primitive: the overwrite path (saveCurrent) can only
+// write the path a dialog previously returned to this app.
+let currentFilePath = null;
+ipcMain.handle('fermion:openFile', async () => {
+  const r = await dialog.showOpenDialog({ properties: ['openFile'], title: 'Fermion Open File' });
+  if (!r.filePaths || r.filePaths.length === 0) return null;
+  currentFilePath = r.filePaths[0];
+  const content = await fs.promises.readFile(currentFilePath, 'utf-8');
+  return { path: currentFilePath, content };
+});
+ipcMain.handle('fermion:saveFile', async (_e, content, opts) => {
+  const r = await dialog.showSaveDialog(opts || { title: 'Fermion Save File' });
+  if (!r.filePath) return null;
+  await fs.promises.writeFile(r.filePath, content);
+  currentFilePath = r.filePath;
+  return r.filePath;
+});
+ipcMain.handle('fermion:saveCurrent', async (_e, content) => {
+  if (!currentFilePath) return null;
+  await fs.promises.writeFile(currentFilePath, content);
+  return currentFilePath;
+});
+ipcMain.handle('fermion:messageBox', async (_e, options) => dialog.showMessageBox(options));
+
+// A remote origin must never inherit the bridge-privileged webPreferences, so
+// block navigation away from local files and deny popups.
+function hardenWindow(win) {
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('file://')) e.preventDefault(); });
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+}
+
+// Child-window creation (was remote.BrowserWindow + loadFile in the renderer).
+ipcMain.handle('fermion:openWindow', (_e, page, dims) => {
+  if (!isAllowedPage(page)) return null;  // no path traversal / arbitrary files
+  const opts = buildWindowOptions(dims || {});
+  opts.webPreferences.preload = path.join(__dirname, 'src', 'preload.js');
+  const win = new BrowserWindow(opts);
+  hardenWindow(win);
+  win.loadFile(path.join(__dirname, 'pages', page));
+  win.once('ready-to-show', () => setTimeout(() => { win.show(); win.focus(); }, 50));
+  return win.id;
+});
+
+// Child windows relay their selections to the main window via these channels;
+// the preload re-exposes them to the isolated renderer.
+for (const ch of ['new-device', 'attach-process', 'attach-process-shim', 'start-process-shim']) {
+  ipcMain.on(ch, (_e, message) => { if (bWin && !bWin.isDestroyed()) bWin.webContents.send(ch, message); });
+}
+app.commandLine.appendSwitch('disable-features', 'CrossOriginOpenerPolicy');
+
+// Trace graph rendering runs in the main process (node-graphviz is a Node
+// module the isolated renderer/trace window can't require); DOT -> SVG string.
+const { graphviz } = require('node-graphviz');
+ipcMain.handle('fermion:renderGraph', (_event, dot) => graphviz.dot(dot, 'svg'));
 
 function createWindow() {
   // Create the browser window.
   bWin = new BrowserWindow({
-    contextIsolation: false,
     width: 1024,
     minWidth: 1024,
     maxWidth: 3000,
@@ -28,15 +115,17 @@ function createWindow() {
     show: false,
     transparent: false,
     webPreferences: {
-      nodeIntegration: true,
-      nodeIntegrationInWorker: true,
-      enableRemoteModule: true,
-      contextIsolation: false,
-      webviewTag: true
+      // Secured renderer: no Node, isolated world. All host access is through
+      // the preload bridge (window.fermion). sandbox:false lets the preload
+      // require its local api module.
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+      preload: path.join(__dirname, 'src', 'preload.js')
     }
   });
-  
-  // (remote is enabled for every window by the browser-window-created handler above)
+
+  hardenWindow(bWin);
 
   // and load the index.html of the app.
   bWin.loadFile(path.join(__dirname, '/pages/index.html'));
@@ -71,9 +160,5 @@ app.on('window-all-closed', function () {
   if (process.platform !== 'darwin') app.quit()
 })
 
-// IPC listeners
-ipcMain.on('new-device', (event, message) => bWin.webContents.send('new-device', message));
-ipcMain.on('attach-process', (event, message) => bWin.webContents.send('attach-process', message));
-ipcMain.on('attach-process-shim', (event, message) => bWin.webContents.send('attach-process-shim', message));
-ipcMain.on('start-process-shim', (event, message) => bWin.webContents.send('start-process-shim', message));
-ipcMain.on('trace-data-recv', (event, message) => bWin.webContents.send('trace-data-recv', message));
+// (Child-window relay listeners are registered near the top, next to the other
+// IPC handlers.)

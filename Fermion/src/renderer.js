@@ -1,17 +1,13 @@
-const electron = require('electron');
-const ipc = require('electron').ipcRenderer;
-const remote = require('@electron/remote');
-const dialog = remote.dialog;
-var fs = require('fs');
 const { createTerminal } = require('../src/terminal.js');
 const { formatMessage } = require('../src/output-model.js');
 const { readSettings, writeSettings } = require('../src/settings.js');
 const { createLayout } = require('../src/layout.js');
-const { openWindow } = require('../src/windows.js');
 const { initEditor, setMonacoTheme, toggleWrap } = require('../src/editor.js');
-const { FridaService, routeMessage } = require('../src/frida-service.js');
-// Inline index.html handler onchange="setMonacoTheme()" needs this on window.
+// Inline index.html handlers (onchange="setMonacoTheme()", onclick="exitFermion()")
+// resolve against window; the renderer is bundled (IIFE) so top-level functions
+// are no longer implicit globals — expose the ones HTML references.
 window.setMonacoTheme = setMonacoTheme;
+window.exitFermion = () => exitFermion();
 
 // Overwrite default node.js prop to get Jquery working
 window.$ = window.jQuery = require('jquery');
@@ -34,15 +30,23 @@ let fermionTerminal = null;
 // Globals
 //////////////////////////////////////////////////
 
-var MonacoCodeEditor;
 var currentFilePath = null;
 
-// All frida-node interaction goes through this service (src/frida-service.js).
-// The UI subscribes to its message/log/detached events (wired below, after
-// traceSender exists) and calls its async methods. `traceMode` is a UI-side
-// flag: while on, SEND payloads are forwarded to the trace window instead of
-// the terminal (see onServiceMessage + routeMessage).
-const service = new FridaService();
+// All frida-node interaction runs in the MAIN process; the renderer drives it
+// through the preload bridge (window.fermion) and keeps a small local state
+// mirror for synchronous UI guards (the bridge is async-only). Events
+// (message/log/detached) are subscribed below, after traceSender exists.
+const fapi = window.fermion;
+let fstate = { deviceId: 'local', isAttached: false, hasScript: false, currentPid: null };
+function refreshState() { return fapi.getState().then((s) => { fstate = s; return s; }); }
+
+// Pure trace routing (was frida-service.routeMessage): a SEND payload goes to
+// the trace window only while trace mode is on, otherwise to the terminal.
+function routeMessage(kind, mode) { return (mode && kind === 'SEND') ? 'trace' : 'terminal'; }
+
+// UI-side flag: while on, SEND payloads route to the trace window (see
+// onServiceMessage). Tied to the loaded script (reset on user-script load +
+// detach; set once the tracer is live).
 let traceMode = false;
 
 // Enhanced Frida Output variables
@@ -59,12 +63,13 @@ let layout = null;
 // create+load the editor's script. Status text ("[+] Injecting => …") is
 // logged by the caller, as before.
 function injectVia(pid) {
-	service.attach(pid)
-		.then(() => {
-			traceSender.postMessage(service.currentPid);
-			return service.loadScript(MonacoCodeEditor.getValue());
+	fapi.attach(pid)
+		.then(() => refreshState())
+		.then((s) => {
+			traceSender.postMessage(s.currentPid);
+			return fapi.loadScript(window.MonacoCodeEditor.getValue());
 		})
-		.then(() => { traceMode = false; })  // user script loaded -> terminal routing
+		.then(() => { fstate.hasScript = true; traceMode = false; })  // user script loaded -> terminal routing
 		.catch(e => { appendFridaLog(e); });
 }
 
@@ -72,22 +77,25 @@ function injectVia(pid) {
 // Matches the old start(): spawn+attach -> publish PID -> "[+] Injecting" ->
 // load script -> resume -> "[+] Process start success".
 function startVia(ProcPath, ProcArgs) {
-	service.spawn(ProcPath, ProcArgs)
-		.then(({ pid }) => {
-			traceSender.postMessage(service.currentPid);
-			appendFridaLog('[+] Injecting => PID: ' + pid + ', Name: ' + ProcPath);
-			return service.loadScript(MonacoCodeEditor.getValue()).then(() => service.resume(pid));
+	let spawnedPid;
+	fapi.spawn(ProcPath, ProcArgs)
+		.then(({ pid }) => { spawnedPid = pid; return refreshState(); })
+		.then((s) => {
+			traceSender.postMessage(s.currentPid);
+			appendFridaLog('[+] Injecting => PID: ' + spawnedPid + ', Name: ' + ProcPath);
+			return fapi.loadScript(window.MonacoCodeEditor.getValue()).then(() => fapi.resume(spawnedPid));
 		})
-		.then(() => { traceMode = false; appendFridaLog('[+] Process start success'); })
+		.then(() => { fstate.hasScript = true; traceMode = false; appendFridaLog('[+] Process start success'); })
 		.catch(e => { appendFridaLog(e); });
 }
 
 // -= Detach =-
 
 document.getElementById("FridaDetach").onclick = function () {
-	if (service.isAttached) {
+	if (fstate.isAttached) {
 		appendFridaLog('[+] Detaching..');
-		service.detach();
+		fapi.detach();
+		fstate.isAttached = false;
 		traceSender.postMessage(null);
 	} else {
 		appendFridaLog('[!] Not currently attached..');
@@ -97,9 +105,9 @@ document.getElementById("FridaDetach").onclick = function () {
 // -= Reload Script =-
 
 document.getElementById("FridaReload").onclick = function () {
-	if (service.isAttached) {
-		if (service.hasScript) {
-			service.reloadScript(MonacoCodeEditor.getValue())
+	if (fstate.isAttached) {
+		if (fstate.hasScript) {
+			fapi.reloadScript(window.MonacoCodeEditor.getValue())
 				.then(() => { traceMode = false; appendFridaLog('[+] Script reloaded..'); })
 				.catch(e => { appendFridaLog(e); });
 		} else {
@@ -112,10 +120,10 @@ document.getElementById("FridaReload").onclick = function () {
 
 // -= Shim for process list attach =-
 
-ipc.on('attach-process', async (event, message) => {
-	if (!service.isAttached) {
+function handleAttachProcess(message) {
+	if (!fstate.isAttached) {
 		appendFridaLog('[?] Attempting process attach..');
-		service.enumerateProcesses().then(data => {
+		fapi.enumerateProcesses().then(data => {
 			// Search active processes
 			var resultArray = [];
 			data.find(function (element) {
@@ -145,14 +153,15 @@ ipc.on('attach-process', async (event, message) => {
 	} else {
 		appendFridaLog('[!] Already attached to a process..');
 	}
-});
+}
+fapi.onAttachProcess(handleAttachProcess);
 
 // -= Shim for attach invocation =-
 
-ipc.on('attach-process-shim', async (event, message) => {
-	if (!service.isAttached) {
+fapi.onAttachProcessShim(async (message) => {
+	if (!fstate.isAttached) {
 		appendFridaLog('[?] Attempting process attach..');
-		service.enumerateProcesses().then(data => {
+		fapi.enumerateProcesses().then(data => {
 			// What are we searching for?
 			var ProcName = message[0];
 			var ProcId = message[1];
@@ -203,8 +212,8 @@ ipc.on('attach-process-shim', async (event, message) => {
 
 // -= Shim for start invocation =-
 
-ipc.on('start-process-shim', async (event, message) => {
-	if (!service.isAttached) {
+fapi.onStartProcessShim(async (message) => {
+	if (!fstate.isAttached) {
 		appendFridaLog('[?] Attempting process start..');
 		var ProcPath = message[0];
 		var ProcAgrs = message[1];
@@ -225,35 +234,36 @@ ipc.on('start-process-shim', async (event, message) => {
 // -= Device Selector =-
 
 document.getElementById("setDevice").onclick = function () {
-	openWindow('device.html', { width: 420, height: 615, extraArgs: [service.deviceId] });
+	fapi.openWindow('device.html', { width: 420, height: 615, extraArgs: [fstate.deviceId] });
 }
 
-ipc.on('new-device', async (event, message) => {
-	await service.setDevice(message);
+fapi.onNewDevice(async (message) => {
+	const id = await fapi.setDevice(message);
+	fstate.deviceId = id;
 });
 
 // -= Process Listing =-
 
 document.getElementById("FridaProc").onclick = function () {
-	openWindow('proc.html', { width: 570, height: 600, extraArgs: [service.deviceId] });
+	fapi.openWindow('proc.html', { width: 570, height: 600, extraArgs: [fstate.deviceId] });
 }
 
 // -= Instrument Manager =-
 
 document.getElementById("FridaAttach").onclick = function () {
-	openWindow('instrument.html', { width: 420, height: 595 });
+	fapi.openWindow('instrument.html', { width: 420, height: 595 });
 }
 
 // -= About =-
 
 document.getElementById("FermionAbout").onclick = function () {
-	openWindow('about.html', { width: 460, height: 270, extraArgs: [service.deviceId] });
+	fapi.openWindow('about.html', { width: 460, height: 270, extraArgs: [fstate.deviceId] });
 }
 
 // -= JS API Docs =-
 
 document.getElementById("FermionDocs").onclick = function () {
-	openWindow('docs.html', { width: 800, height: 800 });
+	fapi.openWindow('docs.html', { width: 800, height: 800 });
 }
 
 // -= Trace =-
@@ -261,11 +271,11 @@ document.getElementById("FermionDocs").onclick = function () {
 let TraceWin = null;
 document.getElementById("FermionTools").onclick = function () {
 	// The trace window expects a PID string; use "null" when not attached.
-	const pidArg = (service.currentPid == null || service.currentPid.length == 0)
-		? "null" : service.currentPid;
+	const pidArg = (fstate.currentPid == null || fstate.currentPid.length == 0)
+		? "null" : fstate.currentPid;
 	// @electron/remote is enabled for this window by the main process
 	// (browser-window-created handler in core.js).
-	TraceWin = openWindow('trace.html', { width: 425, height: 615, extraArgs: [pidArg] });
+	TraceWin = fapi.openWindow('trace.html', { width: 425, height: 615, extraArgs: [pidArg] });
 }
 
 // Create IPC sender
@@ -284,9 +294,9 @@ traceSender.onmessage = function (message) {
 		appendFridaLog('    |_ Reloading script in Monaco editor\n');
 		document.getElementById("FridaReload").click();
 	} else {
-		if (service.isAttached) {
-			if (service.hasScript) {
-				service.reloadScript(message.data)
+		if (fstate.isAttached) {
+			if (fstate.hasScript) {
+				fapi.reloadScript(message.data)
 					.then(() => {
 						// Flip to trace routing only once the tracer is live, so a
 						// send() during the reload gap still goes to the terminal.
@@ -317,14 +327,28 @@ function onServiceMessage(message) {
 		fermionTerminal.write(kind, text);
 	}
 }
-service.on('message', onServiceMessage);
-service.on('log', (level, text) => handleScriptMessage({ type: 'log', level, payload: text }));
-service.on('detached', (reason) => {
+fapi.onMessage(onServiceMessage);
+fapi.onLog((level, text) => handleScriptMessage({ type: 'log', level, payload: text }));
+fapi.onDetached((reason) => {
 	traceMode = false;  // no active script -> routing resets (fixes trace->detach->re-attach misroute)
+	fstate.isAttached = false;
 	traceSender.postMessage(null);
 	appendFridaLog(`[+] Exit Reason: ${reason}`);
 });
-if (window.__fermion) window.__fermion.service = service;
+// Prime the local state mirror from the main-process service.
+refreshState();
+// Sync view of the service state for the Playwright suite (bridge is async),
+// plus a test-surface attach trigger (the isolated renderer has no ipcRenderer,
+// so tests can't send the 'attach-process' relay directly).
+if (window.__fermion) {
+	window.__fermion.service = {
+		get isAttached() { return fstate.isAttached; },
+		get hasScript() { return fstate.hasScript; },
+		get currentPid() { return fstate.currentPid; },
+		get deviceId() { return fstate.deviceId; },
+	};
+	window.__fermion.triggerAttach = (pid) => handleAttachProcess(pid);
+}
 
 // Logging
 //////////////////////////////////////////////////
@@ -353,71 +377,42 @@ function appendFridaLog(data) {
 //////////////////////////////////////////////////
 
 function exitFermion() {
-	var CurrWnd = remote.getCurrentWindow();
-	CurrWnd.close();
+	fapi.closeWindow();
 }
 
 document.getElementById("FermionDevTools").onclick = function () {
-	var CurrWnd = remote.getCurrentWindow();
-	CurrWnd.webContents.openDevTools({ mode: 'detach' });
+	fapi.openDevTools();
 }
 
 document.getElementById("FermionOpen").onclick = function () {
-	dialog.showOpenDialog(
-		{
-			properties: ['openFile'],
-			title: "Fermion Open File",
-		}
-	).then(result => {
-		if (result.filePaths.length == 0) {
-			return;
-		} else {
-			fs.readFile(result.filePaths[0], 'utf-8', (err, data) => {
-				if (err) {
-					appendFridaLog("[!] Error opening file: " + err.message);
-					return;
-				} else {
-					appendFridaLog("[+] File opened..");
-					appendFridaLog("    |-> Path: " + result.filePaths[0]);
-				}
-				MonacoCodeEditor.setValue(data);
-				// Set global filepath on success
-				currentFilePath = result.filePaths[0];
-			});
-		}
+	fapi.openFile().then(result => {
+		if (!result) return;
+		appendFridaLog("[+] File opened..");
+		appendFridaLog("    |-> Path: " + result.path);
+		window.MonacoCodeEditor.setValue(result.content);
+		// Set global filepath on success
+		currentFilePath = result.path;
 	}).catch(err => {
 		appendFridaLog("[!] Error opening file: " + err)
 	})
 }
 
 document.getElementById("FermionSave").onclick = function () {
-	dialog.showSaveDialog(
-		{
-			title: "Fermion Save File",
-		}
-	).then(result => {
-		if (result.filePath) {
-			content = MonacoCodeEditor.getValue();
-			fs.writeFile(result.filePath, content, (err) => {
-				if (err) {
-					appendFridaLog("[!] Error saving file: " + err.message)
-					return;
-				} else {
-					appendFridaLog("[+] File saved..");
-					appendFridaLog("    |-> Path: " + result.filePath);
-				}
-				// Set global filepath on success
-				currentFilePath = result.filePath;
-			});
-		}
+	const content = window.MonacoCodeEditor.getValue();
+	fapi.saveFile(content, { title: "Fermion Save File" }).then(savedPath => {
+		if (!savedPath) return;
+		appendFridaLog("[+] File saved..");
+		appendFridaLog("    |-> Path: " + savedPath);
+		// Set global filepath on success
+		currentFilePath = savedPath;
 	}).catch(err => {
 		appendFridaLog("[!] Error saving file: " + err)
 	})
 }
 
 document.getElementById("getDeviceDetail").onclick = function () {
-	appendFridaLog("\n[>] Device --> " + service.deviceId);
-	service.getDeviceInfo().then(({ name, params, paramsError }) => {
+	appendFridaLog("\n[>] Device --> " + fstate.deviceId);
+	fapi.getDeviceInfo().then(({ name, params, paramsError }) => {
 		appendFridaLog("    |_ Device Name : " + name);
 		if (paramsError) {
 			appendFridaLog("[!] Failed to enumerate device properties: " + paramsError + "\n");
@@ -463,27 +458,23 @@ document.addEventListener("keydown", function (e) {
 			document.getElementById("FermionSave").click();
 		} else {
 			// Overwrite known file
-			dialog.showMessageBox(
-				{
-					type: "warning",
-					buttons: ["Yes", "No"],
-					defaultId: 1,
-					title: "Save File",
-					message: "Overwrite existing file?",
-					detail: currentFilePath,
-					cancelId: 1,
-				}
-			).then(result => {
+			fapi.messageBox({
+				type: "warning",
+				buttons: ["Yes", "No"],
+				defaultId: 1,
+				title: "Save File",
+				message: "Overwrite existing file?",
+				detail: currentFilePath,
+				cancelId: 1,
+			}).then(result => {
 				if (result.response == 0) {
-					content = MonacoCodeEditor.getValue();
-					fs.writeFile(currentFilePath, content, (err) => {
-						if (err) {
-							appendFridaLog("[!] Error saving file: " + err.message);
-							appendFridaLog("    |-> Path: " + currentFilePath);
-						} else {
-							appendFridaLog("[+] File saved..");
-							appendFridaLog("    |-> Path: " + currentFilePath);
-						}
+					const content = window.MonacoCodeEditor.getValue();
+					fapi.saveCurrentFile(content).then(() => {
+						appendFridaLog("[+] File saved..");
+						appendFridaLog("    |-> Path: " + currentFilePath);
+					}).catch(err => {
+						appendFridaLog("[!] Error saving file: " + err);
+						appendFridaLog("    |-> Path: " + currentFilePath);
 					})
 				}
 			})
@@ -545,7 +536,7 @@ document.addEventListener('DOMContentLoaded', function () {
 	// layout.toggleLayout() to restore a saved horizontal layout.
 	layout = createLayout({
 		getTerminal: () => fermionTerminal,
-		getEditor: () => MonacoCodeEditor,
+		getEditor: () => window.MonacoCodeEditor,
 		onChange: saveSettings,
 	});
 
@@ -726,30 +717,20 @@ function saveOutputArea() {
 		return;
 	}
 
-	// Show save dialog
-	dialog.showSaveDialog(
-		{
-			title: "Save Frida Output",
-			defaultPath: "frida-output.txt",
-			filters: [
-				{ name: 'Text Files', extensions: ['txt'] },
-				{ name: 'Log Files', extensions: ['log'] },
-				{ name: 'All Files', extensions: ['*'] }
-			]
-		}
-	).then(result => {
-		if (result.filePath) {
-			// Write the content to the file
-			fs.writeFile(result.filePath, content, (err) => {
-				if (err) {
-					appendFridaLog("[!] Error saving output: " + err.message);
-					return;
-				} else {
-					showNotification('Output saved successfully');
-					appendFridaLog("[+] Output saved..");
-					appendFridaLog("    |-> Path: " + result.filePath);
-				}
-			});
+	// Show save dialog (write happens in main via the bridge)
+	fapi.saveFile(content, {
+		title: "Save Frida Output",
+		defaultPath: "frida-output.txt",
+		filters: [
+			{ name: 'Text Files', extensions: ['txt'] },
+			{ name: 'Log Files', extensions: ['log'] },
+			{ name: 'All Files', extensions: ['*'] }
+		]
+	}).then(savedPath => {
+		if (savedPath) {
+			showNotification('Output saved successfully');
+			appendFridaLog("[+] Output saved..");
+			appendFridaLog("    |-> Path: " + savedPath);
 		}
 	}).catch(err => {
 		appendFridaLog("[!] Error saving output: " + err);
@@ -797,8 +778,8 @@ function loadSettings() {
 						wrapToggle.children[0].checked = settings.monacoWrap;
 
 						// Apply the wrap setting to Monaco
-						if (MonacoCodeEditor) {
-							MonacoCodeEditor.updateOptions({
+						if (window.MonacoCodeEditor) {
+							window.MonacoCodeEditor.updateOptions({
 								wordWrap: settings.monacoWrap ? "on" : "off"
 							});
 						}

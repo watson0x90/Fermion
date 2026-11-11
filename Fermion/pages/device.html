@@ -68,19 +68,12 @@
 
         </div>
     </body>
-    <script type="text/javascript">
-        const frida = require('frida');
-        window.$ = window.jQuery = require('jquery');
-	</script>
+    <script src="../node_modules/jquery/dist/jquery.min.js"></script>
     <link rel="stylesheet" type="text/css" href="../src/frameworks/semantic/semantic.css">
     <script src="../src/frameworks/semantic/semantic.js"></script>
-    <script src="../src/helper.js"></script>
     <script type="text/javascript">
-      // Set current device in form
-      document.getElementById("currentDeviceName").value = getExtraArgs()[0];
-
-      // Create IPC renderer
-      const ipc = require('electron').ipcRenderer;
+      // Set current device in form (launch args come from the preload bridge).
+      document.getElementById("currentDeviceName").value = window.fermion.launchArgs[0];
 
       // Close dialog, make no changes to the device
       document.getElementById("CloseDevice").onclick = function () {
@@ -94,9 +87,8 @@
       	var currentDevice = dn.options[deviceName.selectedIndex].value;
       	var dnArr = Array.from(dn.options).map(elem => elem.text);
       
-      	// Get device array
-      	var dm = frida.getDeviceManager();
-      	var dev = await dm.enumerateDevices();
+      	// Get device array (enumerated in the main process over the bridge)
+      	var dev = await window.fermion.enumerateDevices();
       	var devArr = dev.map(elem => elem.id);
       
       	// Does the current device still exist?
@@ -139,8 +131,7 @@
           newDevice = document.getElementById("deviceName").value;
       }
 
-      // Pass by IPC
-      ipc.send('new-device', newDevice);
+      window.fermion.sendNewDevice(newDevice);
 
       // Close window
       window.close();

@@ -53,8 +53,9 @@ function killTarget(pid) {
     await win.evaluate((c) => window.MonacoCodeEditor.setValue(c),
       "console.log('" + marker + " ' + Process.id);");
 
-    // Fire the real attach path (identical to proc.html).
-    await win.evaluate((p) => require('electron').ipcRenderer.send('attach-process', p), pid);
+    // Fire the real attach path (same handler the proc window's relay drives).
+    // The renderer is context-isolated, so drive it through the test surface.
+    await win.evaluate((p) => window.__fermion.triggerAttach(p), pid);
 
     // Give the attach + inject a moment, then inspect the terminal.
     let injected = false;

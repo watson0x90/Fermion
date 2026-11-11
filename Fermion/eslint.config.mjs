@@ -27,6 +27,7 @@ export default [
   {
     ignores: [
       'node_modules/**',
+      'src/renderer.bundle.js',
       'src/frameworks/**',
       'src/lang/**',
       'src/images/**',
@@ -41,6 +42,15 @@ export default [
     ],
   },
   js.configs.recommended,
+  {
+    // Build tooling / ESM config files (esbuild.config.mjs).
+    files: ['**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      globals: { ...globals.node },
+    },
+  },
   {
     files: ['src/**/*.js', 'scripts/**/*.js', 'core.js', '*.js'],
     languageOptions: {

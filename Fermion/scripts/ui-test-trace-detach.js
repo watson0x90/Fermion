@@ -34,7 +34,7 @@ function killTarget(pid) {
 }
 
 async function attachAndWait(win, pid) {
-  await win.evaluate((p) => require('electron').ipcRenderer.send('attach-process', p), pid);
+  await win.evaluate((p) => window.__fermion.triggerAttach(p), pid);
   await win.waitForFunction(() => {
     const s = window.__fermion && window.__fermion.service;
     return s && s.isAttached && s.hasScript;

@@ -39,9 +39,7 @@
 
         </div>
     </body>
-    <script type="text/javascript">
-        window.$ = window.jQuery = require('jquery');
-	</script>
+    <script src="../node_modules/jquery/dist/jquery.min.js"></script>
     <link rel="stylesheet" type="text/css" href="../src/frameworks/semantic/semantic.css">
     <script src="../src/frameworks/semantic/semantic.js"></script>
     <script type="text/javascript">
@@ -50,9 +48,9 @@
 	    	window.close();
 	    }
 
-        // Visit GitHub
+        // Visit GitHub (opened in the user's browser by the main process)
         document.getElementById("OpenGitHub").onclick = function () {
-	    	require("electron").shell.openExternal("https://github.com/FuzzySecurity/Fermion");
+	    	window.fermion.openExternal("https://github.com/FuzzySecurity/Fermion");
 	    }
 	</script>
 </html>

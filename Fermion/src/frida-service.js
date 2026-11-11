@@ -22,6 +22,17 @@ function routeMessage(kind, traceMode) {
 	return (traceMode && kind === 'SEND') ? 'trace' : 'terminal';
 }
 
+// Frida model objects (Process, Device, parameters) are not own-enumerable, so
+// they structured-clone to {} over IPC. Convert to a plain, JSON-safe object
+// (drops binary like a process icon) before returning across the seam.
+function toPlain(value) {
+	try {
+		return JSON.parse(JSON.stringify(value));
+	} catch {
+		return {};
+	}
+}
+
 // Pure: classify a device spec. 'socket@HOST' selects a remote device named by
 // HOST; anything else is a plain device id.
 function parseDeviceSpec(spec) {
@@ -58,6 +69,16 @@ class FridaService extends EventEmitter {
 	get hasScript() { return this._script != null; }
 	get currentPid() { return this._sessionPID; }
 
+	// Plain snapshot of the getters, for the renderer over IPC.
+	getState() {
+		return {
+			deviceId: this._deviceId,
+			isAttached: this.isAttached,
+			hasScript: this.hasScript,
+			currentPid: this._sessionPID,
+		};
+	}
+
 	// Select a device, registering/unregistering remote socket devices as the
 	// old `new-device` handler did. Returns the effective device id.
 	async setDevice(spec) {
@@ -78,10 +99,23 @@ class FridaService extends EventEmitter {
 		return this._deviceId;
 	}
 
+	async enumerateDevices() {
+		const frida = this._getFrida();
+		const devices = await frida.enumerateDevices();
+		return devices.map((d) => ({ id: d.id, name: d.name, type: d.type }));
+	}
+
 	async enumerateProcesses() {
 		const frida = this._getFrida();
 		const device = await frida.getDevice(this._deviceId);
-		return device.enumerateProcesses();
+		const procs = await device.enumerateProcesses(/** @type {any} */ ({ scope: 'full' }));
+		// Return IPC-serializable plain objects. Drop the binary `icons` (huge,
+		// not cloneable) but keep user/ppid/path etc. for the process view/tree.
+		return procs.map((p) => {
+			const params = Object.assign({}, p.parameters);
+			delete params.icons;
+			return { pid: p.pid, name: p.name, parameters: toPlain(params) };
+		});
 	}
 
 	// Device name + system parameters for the "Device Info" readout. Returns a
@@ -93,9 +127,10 @@ class FridaService extends EventEmitter {
 		let params = null;
 		let paramsError = null;
 		try {
-			params = await dev.querySystemParameters();
+			params = toPlain(await dev.querySystemParameters());
 		} catch (e) {
-			paramsError = e;
+			// IPC-serializable: a string, not an Error object.
+			paramsError = (e && e.message) ? e.message : String(e);
 		}
 		return { name: dev.name, params, paramsError };
 	}

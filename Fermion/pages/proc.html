@@ -35,10 +35,8 @@
 			width: 100%;
         }
 	</style>
+	<script src="../node_modules/jquery/dist/jquery.min.js"></script>
 	<script type="text/javascript">
-		const frida = require('frida');
-		window.$ = window.jQuery = require('jquery');
-
 		// Based on https://github.com/kylefox/jquery-tablesort
 		(function($) {
 			$.tablesort = function ($table, settings) {
@@ -222,50 +220,14 @@
 		<div id="IsError"></div>
 	</div>
 
-	<script src="../src/helper.js"></script>
 	<script type="text/javascript">
-        // Create IPC renderer
-        const ipc = require('electron').ipcRenderer;
+        // Device ID (from the preload bridge)
+        var deviceId = window.fermion.launchArgs[0];
 
-        // Device ID
-        var deviceId = getExtraArgs()[0];
-
-        // Retrieve device list
-		async function getDeviceList(devInst) {
-			var dm = await frida.getDeviceManager();
-			// If the device is a remote socket we need to add it
-			// manually
-			if (devInst.startsWith("socket@")) {
-				var sRemoteSocket = devInst.split('@')[1];
-				dm.addRemoteDevice(sRemoteSocket);
-			}
-			var dev = await dm.enumerateDevices();
-			return dev;
-		}
-
-        // There is a bug in the latest Frida, a delay in the device
-		// listing for non-default entries. All we do here is try 
-		// three times and sleep 1000ms.
-		// Reff: https://github.com/frida/frida/issues/1111
-		const sleep = (milliseconds) => {
-			return new Promise(resolve => setTimeout(resolve, milliseconds))
-		}
-
-        // Populate poc list
+        // Populate proc list
 		async function getProcList() {
-			// Make sure the device list has updated
-			if (deviceId != "local") {
-				for (i = 0; i < 3; i++) {
-					var dev = await getDeviceList(deviceId);
-					if (dev.length > 2) {
-						break;
-					}
-					await sleep(1000);
-				}
-			}
-			let currentDevice = await frida.getDevice(deviceId);
-			let Applications = await currentDevice.enumerateProcesses({scope:"full"});
-			return Applications;
+			// Enumerated in the main process over the bridge (current device).
+			return window.fermion.enumerateProcesses();
 		}
 		getProcList().then(data => {
 			// Get table reff
@@ -375,8 +337,7 @@
 
         // Pass by IPC to main which process to attach
         function attachProcess(pid) {
-            // Pass PID by IPC to attach
-			ipc.send('attach-process', pid);
+			window.fermion.sendAttachProcess(pid);
         }
 
 		// Close dialog, make no changes to the device

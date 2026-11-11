@@ -281,8 +281,8 @@
     </div>
     </div>
 
-    <!-- You can also require other files to run in this process -->
-    <script src="../src/renderer.js"></script>
+    <!-- Bundled renderer (esbuild). Source entry is ../src/renderer.js. -->
+    <script src="../src/renderer.bundle.js"></script>
     <script defer src="../src/lang/monaco-theme.js"></script>
     <script src="../src/frameworks/split-1.6.4.js"></script>
     <link rel="stylesheet" type="text/css" href="../node_modules/@xterm/xterm/css/xterm.css">
@@ -297,6 +297,10 @@
       });
 
     </script>
+    <!-- Monaco AMD loader LAST (it sets a global define.amd; loading it after the
+         UMD scripts keeps Split/Semantic as globals). defer so it runs after the
+         other defer scripts but before DOMContentLoaded + the async editor load. -->
+    <script defer src="../node_modules/monaco-editor/min/vs/loader.js"></script>
   </body>
 
 </html>

@@ -41,6 +41,9 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Build renderer bundle
+        run: npm run build
+
       # Electron needs a virtual display and its GUI runtime libraries to launch
       # headlessly on a CI runner.
       - name: Install Linux GUI runtime deps
@@ -76,8 +79,8 @@ jobs:
       - name: Terminal toolbar (filter/search/clear)
         run: xvfb-run -a node scripts/ui-test-toolbar.js
 
-      - name: Trace window remote enabled
-        run: xvfb-run -a node scripts/ui-test-trace-remote.js
+      - name: Child windows open isolated
+        run: xvfb-run -a node scripts/ui-test-child-windows.js
 
       # End-to-end: attach to a real process and confirm the agent's console.log
       # reaches the terminal. Skips gracefully where the runner can't attach

@@ -5,6 +5,9 @@
   "main": "core.js",
   "scripts": {
     "start": "electron .",
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "prestart": "npm run build",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json"
   },
@@ -12,7 +15,6 @@
   "author": "Ruben Boonen (@FuzzySec)",
   "license": "BSD-3-Clause",
   "dependencies": {
-    "@electron/remote": "2.1.4",
     "@types/frida-gum": "19.13.0",
     "@xterm/addon-fit": "0.11.0",
     "@xterm/addon-search": "0.16.0",
@@ -26,6 +28,7 @@
   "devDependencies": {
     "@electron/packager": "20.3.0",
     "@types/node": "^22.10.2",
+    "esbuild": "^0.24.2",
     "eslint": "9.37.0",
     "playwright-core": "1.65.0",
     "typescript": "^5.9.2"
