@@ -44,7 +44,11 @@ function createWindow() {
       nodeIntegrationInWorker: true,
       enableRemoteModule: true,
       contextIsolation: false,
-      webviewTag: true
+      webviewTag: true,
+      // The bridge exposes window.fermion. Additive here (isolation still off);
+      // the security flip (contextIsolation:true, nodeIntegration:false) lands
+      // in a later task.
+      preload: path.join(__dirname, 'src', 'preload.js')
     }
   });
   
