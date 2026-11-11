@@ -1,3 +1,4 @@
+// @ts-check
 // Preload: exposes the frida bridge as `window.fermion` to the renderer.
 // Under contextIsolation (the Phase 1 end state) this uses contextBridge; during
 // the interim where isolation is still off, contextBridge refuses, so we fall

@@ -224,28 +224,7 @@
         // Device ID (from the preload bridge)
         var deviceId = window.fermion.launchArgs[0];
 
-        // Retrieve device list
-		async function getDeviceList(devInst) {
-			var dm = await frida.getDeviceManager();
-			// If the device is a remote socket we need to add it
-			// manually
-			if (devInst.startsWith("socket@")) {
-				var sRemoteSocket = devInst.split('@')[1];
-				dm.addRemoteDevice(sRemoteSocket);
-			}
-			var dev = await dm.enumerateDevices();
-			return dev;
-		}
-
-        // There is a bug in the latest Frida, a delay in the device
-		// listing for non-default entries. All we do here is try 
-		// three times and sleep 1000ms.
-		// Reff: https://github.com/frida/frida/issues/1111
-		const sleep = (milliseconds) => {
-			return new Promise(resolve => setTimeout(resolve, milliseconds))
-		}
-
-        // Populate poc list
+        // Populate proc list
 		async function getProcList() {
 			// Enumerated in the main process over the bridge (current device).
 			return window.fermion.enumerateProcesses();
