@@ -21,6 +21,10 @@ jobs:
   smoke:
     name: Smoke & regression (ubuntu)
     runs-on: ubuntu-latest
+    # GitHub runners aren't configured for Electron's SUID sandbox (chrome-sandbox
+    # is not root-owned), so disable it for the headless smoke launches.
+    env:
+      ELECTRON_DISABLE_SANDBOX: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -49,7 +53,7 @@ jobs:
       # electron binary (running it with plain `node` makes require('electron')
       # return the path string, not the API).
       - name: Frida load smoke
-        run: xvfb-run -a ./node_modules/.bin/electron scripts/smoke-frida.js
+        run: xvfb-run -a ./node_modules/.bin/electron --no-sandbox scripts/smoke-frida.js
 
       - name: UI renders smoke
         run: xvfb-run -a node scripts/ui-smoke.js
