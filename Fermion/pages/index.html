@@ -297,6 +297,10 @@
       });
 
     </script>
+    <!-- Monaco AMD loader LAST (it sets a global define.amd; loading it after the
+         UMD scripts keeps Split/Semantic as globals). defer so it runs after the
+         other defer scripts but before DOMContentLoaded + the async editor load. -->
+    <script defer src="../node_modules/monaco-editor/min/vs/loader.js"></script>
   </body>
 
 </html>

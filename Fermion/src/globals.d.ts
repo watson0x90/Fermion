@@ -18,6 +18,8 @@ declare var FRIDA_VER: string;
 
 interface Window {
   monaco?: any;
+  fermion?: any;
+  require?: any;
   FermionThemes?: Record<string, any>;
   MonacoCodeEditor?: any;
   FERMION_VER?: string;

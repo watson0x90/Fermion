@@ -1,13 +1,7 @@
-const electron = require('electron');
-const ipc = require('electron').ipcRenderer;
-const remote = require('@electron/remote');
-const dialog = remote.dialog;
-var fs = require('fs');
 const { createTerminal } = require('../src/terminal.js');
 const { formatMessage } = require('../src/output-model.js');
 const { readSettings, writeSettings } = require('../src/settings.js');
 const { createLayout } = require('../src/layout.js');
-const { openWindow } = require('../src/windows.js');
 const { initEditor, setMonacoTheme, toggleWrap } = require('../src/editor.js');
 // Inline index.html handlers (onchange="setMonacoTheme()", onclick="exitFermion()")
 // resolve against window; the renderer is bundled (IIFE) so top-level functions
@@ -126,7 +120,7 @@ document.getElementById("FridaReload").onclick = function () {
 
 // -= Shim for process list attach =-
 
-ipc.on('attach-process', async (event, message) => {
+function handleAttachProcess(message) {
 	if (!fstate.isAttached) {
 		appendFridaLog('[?] Attempting process attach..');
 		fapi.enumerateProcesses().then(data => {
@@ -159,11 +153,12 @@ ipc.on('attach-process', async (event, message) => {
 	} else {
 		appendFridaLog('[!] Already attached to a process..');
 	}
-});
+}
+fapi.onAttachProcess(handleAttachProcess);
 
 // -= Shim for attach invocation =-
 
-ipc.on('attach-process-shim', async (event, message) => {
+fapi.onAttachProcessShim(async (message) => {
 	if (!fstate.isAttached) {
 		appendFridaLog('[?] Attempting process attach..');
 		fapi.enumerateProcesses().then(data => {
@@ -217,7 +212,7 @@ ipc.on('attach-process-shim', async (event, message) => {
 
 // -= Shim for start invocation =-
 
-ipc.on('start-process-shim', async (event, message) => {
+fapi.onStartProcessShim(async (message) => {
 	if (!fstate.isAttached) {
 		appendFridaLog('[?] Attempting process start..');
 		var ProcPath = message[0];
@@ -239,10 +234,10 @@ ipc.on('start-process-shim', async (event, message) => {
 // -= Device Selector =-
 
 document.getElementById("setDevice").onclick = function () {
-	openWindow('device.html', { width: 420, height: 615, extraArgs: [fstate.deviceId] });
+	fapi.openWindow('device.html', { width: 420, height: 615, extraArgs: [fstate.deviceId] });
 }
 
-ipc.on('new-device', async (event, message) => {
+fapi.onNewDevice(async (message) => {
 	const id = await fapi.setDevice(message);
 	fstate.deviceId = id;
 });
@@ -250,25 +245,25 @@ ipc.on('new-device', async (event, message) => {
 // -= Process Listing =-
 
 document.getElementById("FridaProc").onclick = function () {
-	openWindow('proc.html', { width: 570, height: 600, extraArgs: [fstate.deviceId] });
+	fapi.openWindow('proc.html', { width: 570, height: 600, extraArgs: [fstate.deviceId] });
 }
 
 // -= Instrument Manager =-
 
 document.getElementById("FridaAttach").onclick = function () {
-	openWindow('instrument.html', { width: 420, height: 595 });
+	fapi.openWindow('instrument.html', { width: 420, height: 595 });
 }
 
 // -= About =-
 
 document.getElementById("FermionAbout").onclick = function () {
-	openWindow('about.html', { width: 460, height: 270, extraArgs: [fstate.deviceId] });
+	fapi.openWindow('about.html', { width: 460, height: 270, extraArgs: [fstate.deviceId] });
 }
 
 // -= JS API Docs =-
 
 document.getElementById("FermionDocs").onclick = function () {
-	openWindow('docs.html', { width: 800, height: 800 });
+	fapi.openWindow('docs.html', { width: 800, height: 800 });
 }
 
 // -= Trace =-
@@ -280,7 +275,7 @@ document.getElementById("FermionTools").onclick = function () {
 		? "null" : fstate.currentPid;
 	// @electron/remote is enabled for this window by the main process
 	// (browser-window-created handler in core.js).
-	TraceWin = openWindow('trace.html', { width: 425, height: 615, extraArgs: [pidArg] });
+	TraceWin = fapi.openWindow('trace.html', { width: 425, height: 615, extraArgs: [pidArg] });
 }
 
 // Create IPC sender
@@ -342,13 +337,18 @@ fapi.onDetached((reason) => {
 });
 // Prime the local state mirror from the main-process service.
 refreshState();
-// Sync view of the service state for the Playwright suite (bridge is async).
-if (window.__fermion) window.__fermion.service = {
-	get isAttached() { return fstate.isAttached; },
-	get hasScript() { return fstate.hasScript; },
-	get currentPid() { return fstate.currentPid; },
-	get deviceId() { return fstate.deviceId; },
-};
+// Sync view of the service state for the Playwright suite (bridge is async),
+// plus a test-surface attach trigger (the isolated renderer has no ipcRenderer,
+// so tests can't send the 'attach-process' relay directly).
+if (window.__fermion) {
+	window.__fermion.service = {
+		get isAttached() { return fstate.isAttached; },
+		get hasScript() { return fstate.hasScript; },
+		get currentPid() { return fstate.currentPid; },
+		get deviceId() { return fstate.deviceId; },
+	};
+	window.__fermion.triggerAttach = (pid) => handleAttachProcess(pid);
+}
 
 // Logging
 //////////////////////////////////////////////////
@@ -377,63 +377,34 @@ function appendFridaLog(data) {
 //////////////////////////////////////////////////
 
 function exitFermion() {
-	var CurrWnd = remote.getCurrentWindow();
-	CurrWnd.close();
+	fapi.closeWindow();
 }
 
 document.getElementById("FermionDevTools").onclick = function () {
-	var CurrWnd = remote.getCurrentWindow();
-	CurrWnd.webContents.openDevTools({ mode: 'detach' });
+	fapi.openDevTools();
 }
 
 document.getElementById("FermionOpen").onclick = function () {
-	dialog.showOpenDialog(
-		{
-			properties: ['openFile'],
-			title: "Fermion Open File",
-		}
-	).then(result => {
-		if (result.filePaths.length == 0) {
-			return;
-		} else {
-			fs.readFile(result.filePaths[0], 'utf-8', (err, data) => {
-				if (err) {
-					appendFridaLog("[!] Error opening file: " + err.message);
-					return;
-				} else {
-					appendFridaLog("[+] File opened..");
-					appendFridaLog("    |-> Path: " + result.filePaths[0]);
-				}
-				window.MonacoCodeEditor.setValue(data);
-				// Set global filepath on success
-				currentFilePath = result.filePaths[0];
-			});
-		}
+	fapi.openFile().then(result => {
+		if (!result) return;
+		appendFridaLog("[+] File opened..");
+		appendFridaLog("    |-> Path: " + result.path);
+		window.MonacoCodeEditor.setValue(result.content);
+		// Set global filepath on success
+		currentFilePath = result.path;
 	}).catch(err => {
 		appendFridaLog("[!] Error opening file: " + err)
 	})
 }
 
 document.getElementById("FermionSave").onclick = function () {
-	dialog.showSaveDialog(
-		{
-			title: "Fermion Save File",
-		}
-	).then(result => {
-		if (result.filePath) {
-			content = window.MonacoCodeEditor.getValue();
-			fs.writeFile(result.filePath, content, (err) => {
-				if (err) {
-					appendFridaLog("[!] Error saving file: " + err.message)
-					return;
-				} else {
-					appendFridaLog("[+] File saved..");
-					appendFridaLog("    |-> Path: " + result.filePath);
-				}
-				// Set global filepath on success
-				currentFilePath = result.filePath;
-			});
-		}
+	const content = window.MonacoCodeEditor.getValue();
+	fapi.saveFile(content, { title: "Fermion Save File" }).then(savedPath => {
+		if (!savedPath) return;
+		appendFridaLog("[+] File saved..");
+		appendFridaLog("    |-> Path: " + savedPath);
+		// Set global filepath on success
+		currentFilePath = savedPath;
 	}).catch(err => {
 		appendFridaLog("[!] Error saving file: " + err)
 	})
@@ -487,27 +458,23 @@ document.addEventListener("keydown", function (e) {
 			document.getElementById("FermionSave").click();
 		} else {
 			// Overwrite known file
-			dialog.showMessageBox(
-				{
-					type: "warning",
-					buttons: ["Yes", "No"],
-					defaultId: 1,
-					title: "Save File",
-					message: "Overwrite existing file?",
-					detail: currentFilePath,
-					cancelId: 1,
-				}
-			).then(result => {
+			fapi.messageBox({
+				type: "warning",
+				buttons: ["Yes", "No"],
+				defaultId: 1,
+				title: "Save File",
+				message: "Overwrite existing file?",
+				detail: currentFilePath,
+				cancelId: 1,
+			}).then(result => {
 				if (result.response == 0) {
-					content = window.MonacoCodeEditor.getValue();
-					fs.writeFile(currentFilePath, content, (err) => {
-						if (err) {
-							appendFridaLog("[!] Error saving file: " + err.message);
-							appendFridaLog("    |-> Path: " + currentFilePath);
-						} else {
-							appendFridaLog("[+] File saved..");
-							appendFridaLog("    |-> Path: " + currentFilePath);
-						}
+					const content = window.MonacoCodeEditor.getValue();
+					fapi.saveFileTo(currentFilePath, content).then(() => {
+						appendFridaLog("[+] File saved..");
+						appendFridaLog("    |-> Path: " + currentFilePath);
+					}).catch(err => {
+						appendFridaLog("[!] Error saving file: " + err);
+						appendFridaLog("    |-> Path: " + currentFilePath);
 					})
 				}
 			})
@@ -750,30 +717,20 @@ function saveOutputArea() {
 		return;
 	}
 
-	// Show save dialog
-	dialog.showSaveDialog(
-		{
-			title: "Save Frida Output",
-			defaultPath: "frida-output.txt",
-			filters: [
-				{ name: 'Text Files', extensions: ['txt'] },
-				{ name: 'Log Files', extensions: ['log'] },
-				{ name: 'All Files', extensions: ['*'] }
-			]
-		}
-	).then(result => {
-		if (result.filePath) {
-			// Write the content to the file
-			fs.writeFile(result.filePath, content, (err) => {
-				if (err) {
-					appendFridaLog("[!] Error saving output: " + err.message);
-					return;
-				} else {
-					showNotification('Output saved successfully');
-					appendFridaLog("[+] Output saved..");
-					appendFridaLog("    |-> Path: " + result.filePath);
-				}
-			});
+	// Show save dialog (write happens in main via the bridge)
+	fapi.saveFile(content, {
+		title: "Save Frida Output",
+		defaultPath: "frida-output.txt",
+		filters: [
+			{ name: 'Text Files', extensions: ['txt'] },
+			{ name: 'Log Files', extensions: ['log'] },
+			{ name: 'All Files', extensions: ['*'] }
+		]
+	}).then(savedPath => {
+		if (savedPath) {
+			showNotification('Output saved successfully');
+			appendFridaLog("[+] Output saved..");
+			appendFridaLog("    |-> Path: " + savedPath);
 		}
 	}).catch(err => {
 		appendFridaLog("[!] Error saving output: " + err);

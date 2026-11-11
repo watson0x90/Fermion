@@ -10,7 +10,6 @@
 // paths below are unchanged from when this lived in pages/. The frida-gum def
 // is fetched via XHR (resolved against the document, i.e. pages/), so it keeps
 // the '../node_modules/...' form.
-const path = require('path');
 
 // XHR loader for the in-editor frida-gum .d.ts (internal to this module now).
 function LocalLoadLang(url, method) {
@@ -115,48 +114,25 @@ function toggleWrap() {
 	}
 }
 
-// Resolve a package's version without assuming its internal file layout. Frida
-// 17's entry point is build/src/frida.js and its "exports" map blocks
-// require('frida/package.json'), so walk up from the resolved entry until the
-// package.json is found.
-function packageVersion(moduleName) {
-	const { dirname, join } = require("path");
-	const nodeFs = require("fs");
-	let dir = dirname(require.resolve(moduleName));
-	while (!nodeFs.existsSync(join(dir, "package.json"))) {
-		const parent = dirname(dir);
-		if (parent === dir) throw new Error("package.json not found for " + moduleName);
-		dir = parent;
-	}
-	return require(join(dir, "package.json")).version;
-}
-
-// Create the Monaco editor and print the startup banner. deps.log is the
-// terminal logger (appendFridaLog). Versions are resolved and the banner is
-// printed synchronously; the editor itself mounts when the async AMD load
-// completes.
+// Create the Monaco editor and print the startup banner. Versions come from the
+// main process over the bridge (the isolated renderer can't resolve node
+// modules). deps.log is the terminal logger (appendFridaLog). The editor mounts
+// when the async AMD load completes.
 function initEditor(deps) {
-	// Resolve versions first so the editor banner art can embed FERMION_VER and
-	// the startup banner lines are correct.
-	window.FRIDA_VER = packageVersion("frida");
-	window.FERMION_VER = require('../package.json').version;
+	window.fermion.versions().then((v) => {
+		window.FERMION_VER = v.fermion;
+		window.FRIDA_VER = v.frida;
+		deps.log("[+] Fermion v" + v.fermion + " -> Frida v" + v.frida);
+		deps.log("    |_ https://github.com/frida/frida/releases/tag/" + v.frida);
+		loadMonaco();
+	});
 
-	// Print release versions to the terminal (startup banner).
-	deps.log("[+] Fermion v" + window.FERMION_VER + " -> Frida v" + window.FRIDA_VER);
-	deps.log("    |_ https://github.com/frida/frida/releases/tag/" + window.FRIDA_VER);
-
-	const amdLoader = require('../node_modules/monaco-editor/min/vs/loader.js');
-	const amdRequire = amdLoader.require;
-	const amdDefine = amdLoader.require.define;
-	function uriFromPath(_path) {
-		var pathName = path.resolve(_path).replace(/\\/g, '/');
-		if (pathName.length > 0 && pathName.charAt(0) !== '/') {
-			pathName = '/' + pathName;
-		}
-		return encodeURI('file://' + pathName);
-	}
+	function loadMonaco() {
+	// Monaco's AMD loader is loaded via a <script> tag in index.html and sets
+	// the global require/define. baseUrl is a document-relative URL (no node).
+	const amdRequire = window.require;
 	amdRequire.config({
-		baseUrl: uriFromPath(path.join(__dirname, '../node_modules/monaco-editor/min'))
+		baseUrl: '../node_modules/monaco-editor/min'
 	});
 	// workaround monaco-css not understanding the environment
 	self.module = undefined;
@@ -178,7 +154,7 @@ function initEditor(deps) {
 		// Load custom Frida Lang TypeScript defs
 		var fridaDefFile = '../node_modules/@types/frida-gum/index.d.ts'
 		LocalLoadLang(fridaDefFile).then(function (data) {
-			monaco.languages.typescript.typescriptDefaults.addExtraLib(data.responseText, uriFromPath(fridaDefFile));
+			monaco.languages.typescript.typescriptDefaults.addExtraLib(data.responseText, 'file:///frida-gum.d.ts');
 		});
 
 		// Load monaco theme
@@ -224,6 +200,7 @@ function initEditor(deps) {
 		// Store the editor reff as a global var
 		window.MonacoCodeEditor = editor;
 	});
+	}
 }
 
 module.exports = { initEditor, setMonacoTheme, toggleWrap };

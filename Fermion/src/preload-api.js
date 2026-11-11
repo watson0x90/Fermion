@@ -26,8 +26,29 @@ function buildApi(ipcRenderer) {
 		return () => listeners[kind].delete(cb);
 	}
 
+	// Subscribe to a plain relay channel (child windows -> main -> renderer).
+	function onChannel(channel, cb) {
+		const listener = (_event, msg) => cb(msg);
+		ipcRenderer.on(channel, listener);
+		return () => ipcRenderer.removeListener(channel, listener);
+	}
+
 	return {
 		invoke,
+		// Host services the isolated renderer needs over IPC.
+		versions: () => ipcRenderer.invoke('fermion:versions'),
+		closeWindow: () => ipcRenderer.invoke('fermion:closeWindow'),
+		openDevTools: () => ipcRenderer.invoke('fermion:openDevTools'),
+		openFile: () => ipcRenderer.invoke('fermion:openFile'),
+		saveFile: (content, opts) => ipcRenderer.invoke('fermion:saveFile', content, opts),
+		saveFileTo: (filePath, content) => ipcRenderer.invoke('fermion:saveFileTo', filePath, content),
+		messageBox: (options) => ipcRenderer.invoke('fermion:messageBox', options),
+		openWindow: (page, dims) => ipcRenderer.invoke('fermion:openWindow', page, dims),
+		// Relay events from child windows.
+		onNewDevice: (cb) => onChannel('new-device', cb),
+		onAttachProcess: (cb) => onChannel('attach-process', cb),
+		onAttachProcessShim: (cb) => onChannel('attach-process-shim', cb),
+		onStartProcessShim: (cb) => onChannel('start-process-shim', cb),
 		setDevice: (spec) => invoke('setDevice', spec),
 		enumerateProcesses: () => invoke('enumerateProcesses'),
 		getDeviceInfo: () => invoke('getDeviceInfo'),
