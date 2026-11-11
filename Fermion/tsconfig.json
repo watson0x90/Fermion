@@ -17,5 +17,5 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*.js", "src/**/*.ts", "src/**/*.tsx", "src/globals.d.ts"],
-  "exclude": ["node_modules", "src/frameworks", "src/lang", "src/tools", "out", "src/renderer.bundle.js", "src/renderer.react.js"]
+  "exclude": ["node_modules", "src/frameworks", "src/lang", "src/tools", "out", "src/renderer.bundle.js"]
 }

@@ -66,7 +66,7 @@ export function useMonaco(initialValue: string) {
       editorRef.current?.dispose();
       editorRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Mount/dispose once — the editor is created imperatively, not from props.
   }, []);
 
   return { hostRef, editorRef };

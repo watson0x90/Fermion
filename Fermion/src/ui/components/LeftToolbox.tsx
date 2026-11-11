@@ -2,6 +2,9 @@ import { useAppDispatch, useAppSelector } from '../store';
 import { uiActions, ToolboxTab } from '../store/uiSlice';
 import { EditorPane } from './EditorPane';
 import { GraphPanel } from './GraphPanel';
+import { ReplPanel } from './panels/ReplPanel';
+import { InspectorPanel } from './panels/InspectorPanel';
+import { ProcessTreePanel } from './panels/ProcessTreePanel';
 
 const TABS: { id: ToolboxTab; label: string }[] = [
   { id: 'editor', label: 'Editor' },
@@ -11,14 +14,17 @@ const TABS: { id: ToolboxTab; label: string }[] = [
   { id: 'inspector', label: 'Inspector' },
 ];
 
-// Panel bodies are stubbed in Task 3; Editor (Task 5), Graph + Process (Task 6),
-// and REPL/Inspector/Process-tree (Phase 3 stubs, Task 8) replace these.
+// Editor (Task 5) and Graph (Task 6) are live; REPL, Process-tree, and Inspector
+// are Phase-3 stub panels (Task 8) occupying their final slots.
 function PanelBody({ tab }: { tab: ToolboxTab }) {
   return (
     <div className="panel-body" data-testid={`panel-${tab}`}>
       {tab === 'editor' ? <EditorPane />
         : tab === 'graph' ? <GraphPanel />
-          : <div className="stub">{TABS.find((t) => t.id === tab)?.label} — coming soon</div>}
+          : tab === 'repl' ? <ReplPanel />
+            : tab === 'tree' ? <ProcessTreePanel />
+              : tab === 'inspector' ? <InspectorPanel />
+                : <div className="stub">{TABS.find((t) => t.id === tab)?.label}</div>}
     </div>
   );
 }

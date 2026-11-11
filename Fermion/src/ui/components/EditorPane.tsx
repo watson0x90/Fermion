@@ -35,7 +35,7 @@ export function EditorPane() {
     let cancelled = false;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const f = (window as any).fermion;
-    f?.versions?.().then((v: any) => {
+    f?.versions?.().then((v: { fermion: string; frida: string }) => {
       if (cancelled) return;
       setValue(makeBanner(v.fermion, v.frida));
       writeTerminal('STATUS', `[+] Fermion v${v.fermion} -> Frida v${v.frida}`);

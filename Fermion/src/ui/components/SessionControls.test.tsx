@@ -1,7 +1,6 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { configureStore } from '@reduxjs/toolkit';
-import { vi } from 'vitest';
 import session from '../store/sessionSlice';
 import output from '../store/outputSlice';
 import ui from '../store/uiSlice';

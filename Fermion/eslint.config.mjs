@@ -1,13 +1,14 @@
-// Flat ESLint config for Fermion's renderer-side CommonJS modules and the
-// Playwright/node test scripts. No bundler/compile step — this is the lint
-// guardrail for the Tier 1 refactor. Baseline goal: runs clean on today's
-// tree (warnings allowed, zero errors). Tightening rules is out of scope.
+// Flat ESLint config for Fermion. Three surfaces:
+//  - renderer-side CommonJS modules + Playwright/node test scripts (browser+node),
+//  - ESM build/config files (*.mjs),
+//  - the React app (TS/TSX) under src/ui, linted with typescript-eslint.
+// Baseline goal: zero errors; stylistic rules stay advisory (warn).
 import js from '@eslint/js';
 import globals from 'globals';
+import tseslint from 'typescript-eslint';
 
 // Monaco theme objects are declared as file-level globals in
-// src/lang/monaco-theme.js and read by setMonacoTheme(); treat them as globals
-// so no-undef does not fire on the renderer side.
+// src/lang/monaco-theme.js and read on the renderer side.
 const monacoThemes = {
   Kuroir: 'readonly', idleFingers: 'readonly', Cobalt: 'readonly', Amy: 'readonly',
   MerbivoreSoft: 'readonly', VibrantInk: 'readonly', Katzenmilch: 'readonly',
@@ -17,21 +18,28 @@ const monacoThemes = {
 };
 
 const projectGlobals = {
-  // jQuery, Monaco, Split, and the shared cross-module handles live on window.
-  $: 'writable', jQuery: 'writable', monaco: 'readonly', Split: 'readonly',
+  // jQuery, Monaco, and the shared cross-module handles live on window.
+  $: 'writable', jQuery: 'writable', monaco: 'readonly',
   MonacoCodeEditor: 'writable', FERMION_VER: 'writable', FRIDA_VER: 'writable',
   ...monacoThemes,
 };
 
-export default [
+const advisory = {
+  'no-unused-vars': 'warn',
+  'no-undef': 'warn',
+  'no-redeclare': 'warn',
+  'no-empty': 'warn',
+  'no-cond-assign': 'warn',
+  'no-prototype-builtins': 'warn',
+  'no-useless-escape': 'warn',
+  'no-control-regex': 'warn',
+};
+
+export default tseslint.config(
   {
     ignores: [
       'node_modules/**',
       'src/renderer.bundle.js',
-      'src/renderer.react.js',
-      // The React app (TS/TSX) is checked by tsc + Vitest; proper
-      // typescript-eslint linting is a Task 8 follow-up.
-      'src/ui/**',
       'src/frameworks/**',
       'src/lang/**',
       'src/images/**',
@@ -45,10 +53,10 @@ export default [
       '*-linux-*/**',
     ],
   },
-  js.configs.recommended,
   {
     // Build tooling / ESM config files (esbuild.config.mjs).
     files: ['**/*.mjs'],
+    extends: [js.configs.recommended],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'module',
@@ -56,7 +64,9 @@ export default [
     },
   },
   {
+    // Renderer-side CommonJS modules, main process, and test scripts.
     files: ['src/**/*.js', 'scripts/**/*.js', 'core.js', '*.js'],
+    extends: [js.configs.recommended],
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'commonjs',
@@ -66,17 +76,25 @@ export default [
         ...projectGlobals,
       },
     },
+    rules: advisory,
+  },
+  {
+    // The React app (TS/TSX): typescript-eslint, non-type-aware (fast) baseline.
+    files: ['src/ui/**/*.{ts,tsx}'],
+    extends: [js.configs.recommended, ...tseslint.configs.recommended],
+    languageOptions: {
+      ecmaVersion: 2023,
+      sourceType: 'module',
+      parserOptions: { ecmaFeatures: { jsx: true } },
+      globals: { ...globals.browser },
+    },
     rules: {
-      // The current tree predates linting; keep these as advisory so the
-      // baseline is error-free. The refactor can tighten later.
-      'no-unused-vars': 'warn',
-      'no-undef': 'warn',
-      'no-redeclare': 'warn',
-      'no-empty': 'warn',
-      'no-cond-assign': 'warn',
-      'no-prototype-builtins': 'warn',
-      'no-useless-escape': 'warn',
-      'no-control-regex': 'warn',
+      ...advisory,
+      // TS checks these; the core versions misfire on type syntax.
+      'no-undef': 'off',
+      'no-redeclare': 'off',
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': 'warn',
     },
   },
-];
+);
