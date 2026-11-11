@@ -1,12 +1,11 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { useDispatch, useSelector } from 'react-redux';
+import session from './store/sessionSlice';
+import output from './store/outputSlice';
+import ui from './store/uiSlice';
 
-// Slices are added in Task 2 (session/output/ui). A placeholder reducer keeps
-// configureStore valid until then.
 export const store = configureStore({
-  reducer: {
-    _placeholder: (state: null = null) => state,
-  },
+  reducer: { session, output, ui },
 });
 
 export type RootState = ReturnType<typeof store.getState>;
