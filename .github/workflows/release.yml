@@ -6,11 +6,6 @@ on:
   push:
     tags:
       - 'v*'
-    # TEMP(validation): remove before merge. Lets this feature branch run the
-    # build + smoke matrix without pushing a tag, to verify the Linux/macOS
-    # jobs. No release is published (the release job is gated to tag refs).
-    branches:
-      - fix/modernize-stack
   workflow_dispatch:
 
 defaults:
