@@ -210,7 +210,7 @@
 * Catch child processes on Linux and macOS: a new process is caught as a fork, and when it (or the attached process) replaces itself with another program (exec) the session follows it, with the script and hooks in place before the new program runs.
 * Tests: a failing end-to-end test can no longer hang on a program it spawned; the CI job has a time limit
 
--= Unreleased (after v2.1.0) =-
+-= Fermion v2.1.1 =-
 
 * Hooks and bookmarks are kept as a set per program. Attaching or spawning brings that program's set in; Set (Hooks tab, Inspector > Bookmarks) picks another. What was saved before is under General
 * Hooks: the handler is edited in the same editor as scripts, with syntax errors marked and Frida's API completed
