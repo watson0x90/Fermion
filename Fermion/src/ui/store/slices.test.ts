@@ -86,3 +86,26 @@ test('uiSlice: openAddress switches to the Inspector and counts requests, so the
   s = uiReducer(s, uiActions.openAddress({ view: 'code', address: '0x10' }));
   expect(s.addressRequest).toEqual({ view: 'code', address: '0x10', n: 2 });
 });
+
+test('sessionSlice: a session that ends keeps its target and the reason; a new one clears the reason', () => {
+  let s = sessionReducer(undefined, sessionActions.sessionStarted({ kind: 'attach', pid: 7, name: 'a.exe' }));
+  s = sessionReducer(s, sessionActions.attached('7'));
+  s = sessionReducer(s, sessionActions.suspendedSet(7));
+  s = sessionReducer(s, sessionActions.detached('process-terminated'));
+  expect(s.ended).toBe('process-terminated');
+  expect(s.target).toEqual({ kind: 'attach', pid: 7, name: 'a.exe' });
+  expect(s.suspendedPid).toBeNull();
+  // A second "detached" for a session that is already over does not overwrite the reason.
+  s = sessionReducer(s, sessionActions.detached('user'));
+  expect(s.ended).toBe('process-terminated');
+  s = sessionReducer(s, sessionActions.sessionStarted({ kind: 'attach', pid: 8, name: 'a.exe' }));
+  expect(s.ended).toBeNull();
+  s = sessionReducer(s, sessionActions.endedDismissed());
+  expect(s.ended).toBeNull();
+});
+
+test('sessionSlice: with no known target there is nothing to offer when a session ends', () => {
+  let s = sessionReducer(undefined, sessionActions.attached('7'));
+  s = sessionReducer(s, sessionActions.detached('process-terminated'));
+  expect(s.ended).toBeNull();
+});

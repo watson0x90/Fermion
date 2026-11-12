@@ -41,6 +41,75 @@ function checkThreadId(id) {
 	if (!Number.isSafeInteger(id) || id < 0) throw new Error('invalid thread id');
 	return id;
 }
+// ---- spawn arguments ----
+const MAX_PATH_CHARS = 4096;
+const MAX_ARGS_CHARS = 32768;
+const MAX_ENV_VARS = 256;
+const MAX_ENV_VALUE = 32767;
+// Split a command line into arguments: spaces separate, and single or double
+// quotes keep an argument with spaces together. Backslashes are ordinary
+// characters, so Windows paths need no escaping.
+function splitArgs(text) {
+	const out = [];
+	const s = typeof text === 'string' ? text : '';
+	let current = '';
+	let quote = '';
+	let started = false;
+	for (const ch of s) {
+		if (quote) {
+			if (ch === quote) quote = ''; else current += ch;
+		} else if (ch === '"' || ch === "'") {
+			quote = ch;
+			started = true;
+		} else if (ch === ' ' || ch === '\t') {
+			if (started) { out.push(current); current = ''; started = false; }
+		} else {
+			current += ch;
+			started = true;
+		}
+	}
+	if (started) out.push(current);
+	return out;
+}
+function checkSpawnPath(program) {
+	if (typeof program !== 'string' || !program.trim()) throw new Error('spawn: the program path is empty');
+	if (program.length > MAX_PATH_CHARS || program.includes('\0')) throw new Error('spawn: invalid program path');
+	return program;
+}
+function checkSpawnArgs(args) {
+	if (args === undefined || args === null) return '';
+	if (typeof args !== 'string' || args.length > MAX_ARGS_CHARS || args.includes('\0')) throw new Error('spawn: invalid arguments');
+	return args;
+}
+// { env, cwd }: variables added to (or replacing ones in) the environment the
+// program would get anyway, and the directory it starts in. Returns a fresh
+// object with only what was set.
+function checkSpawnOptions(options) {
+	/** @type {{ env?: { [name: string]: string }, cwd?: string, argv?: string[] }} */
+	const out = {};
+	if (options === undefined || options === null) return out;
+	if (typeof options !== 'object' || Array.isArray(options)) throw new Error('invalid spawn options');
+	if (options.env !== undefined && options.env !== null) {
+		if (typeof options.env !== 'object' || Array.isArray(options.env)) throw new Error('spawn: the environment must be an object of NAME: value');
+		const names = Object.keys(options.env);
+		if (names.length > MAX_ENV_VARS) throw new Error('spawn: too many environment variables');
+		/** @type {{ [name: string]: string }} */
+		const env = {};
+		for (const name of names) {
+			if (!name || name.length > 256 || /[=\0]/.test(name)) throw new Error('spawn: invalid environment variable name');
+			const value = options.env[name];
+			if (typeof value !== 'string' || value.length > MAX_ENV_VALUE || value.includes('\0')) throw new Error('spawn: invalid value for environment variable ' + name);
+			env[name] = value;
+		}
+		if (names.length) out.env = env;
+	}
+	if (options.cwd !== undefined && options.cwd !== null && options.cwd !== '') {
+		if (typeof options.cwd !== 'string' || options.cwd.length > MAX_PATH_CHARS || options.cwd.includes('\0')) throw new Error('spawn: invalid working directory');
+		out.cwd = options.cwd;
+	}
+	return out;
+}
+
 // ---- Hooks tab arguments ----
 const HOOK_KINDS = ['exports', 'imports', 'symbols'];
 const MAX_HOOK_QUERY = 256;
@@ -297,19 +366,20 @@ class FridaService extends EventEmitter {
 		this._agents = new Map();
 	}
 
-	// Spawn (arg-splitting identical to the old start()) + attach. Returns the
-	// spawned pid; call resume(pid) after the script is loaded.
-	async spawn(path, args) {
+	// Spawn suspended and attach. `args` is one command-line string (quotes
+	// keep an argument with spaces together); `options` may add environment
+	// variables and set the working directory. Returns the spawned pid; call
+	// resume(pid) once the script and hooks are in place.
+	async spawn(path, args, options) {
+		const program = checkSpawnPath(path);
+		const argv = splitArgs(checkSpawnArgs(args));
+		const spawnOptions = checkSpawnOptions(options);
+		if (argv.length) spawnOptions.argv = [program, ...argv];
 		const frida = this._getFrida();
 		const device = await frida.getDevice(this._deviceId);
-		let procID;
-		if (!args || 0 === args.length) {
-			procID = await device.spawn(path);
-		} else {
-			const aBuildArgs = args.split(" ");
-			aBuildArgs.unshift(path);
-			procID = await device.spawn(aBuildArgs);
-		}
+		const procID = Object.keys(spawnOptions).length
+			? await device.spawn(program, spawnOptions)
+			: await device.spawn(program);
 		this._adoptSession(await device.attach(procID));
 		this._spawnDevice = device;
 		return { pid: procID };
@@ -499,4 +569,4 @@ class FridaService extends EventEmitter {
 	}
 }
 
-module.exports = { FridaService, routeMessage, parseDeviceSpec, toPlain };
+module.exports = { FridaService, routeMessage, parseDeviceSpec, toPlain, splitArgs };

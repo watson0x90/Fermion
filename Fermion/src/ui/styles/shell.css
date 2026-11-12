@@ -457,3 +457,16 @@ select.mini:disabled, input.mini:disabled { opacity: .5; }
 .code-row .ctgt { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; padding: 0; font: inherit; color: var(--accent); cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
 .code-row .ctgt:hover { text-decoration: underline; }
 .code-foot { padding: 8px 12px; font-family: "IBM Plex Sans", system-ui, sans-serif; font-size: 11.5px; color: var(--faint); }
+
+/* ---- Session sidebar: launch options, suspended and ended notes ---- */
+.session-note { display: flex; flex-direction: column; gap: 7px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--elev); font-size: 11.5px; line-height: 1.45; color: var(--muted); }
+.session-note strong { color: var(--fg); font-weight: 600; }
+.session-note .err, .field .err { color: var(--err); font-size: 11px; }
+.session-note .btns { flex-wrap: wrap; }
+.linkrow { display: inline-flex; align-items: center; gap: 5px; align-self: flex-start; border: 0; background: transparent; padding: 0; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.linkrow:hover { color: var(--fg); }
+.linkrow .chev { display: inline-flex; transition: transform .12s; }
+.linkrow .chev.open { transform: rotate(90deg); }
+.group textarea.sel { resize: vertical; min-height: 54px; padding: 6px 8px; font-size: 11.5px; line-height: 1.4; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.group .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.group .chk input { margin: 0; accent-color: var(--accent); }

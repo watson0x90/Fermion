@@ -73,7 +73,7 @@ export function ProcessTreePanel() {
   const attach = async (pid: number) => {
     if (isAttached || busyPid != null) return;
     setBusyPid(pid);
-    try { await attachAndLoad(dispatch, pid); } finally { setBusyPid(null); }
+    try { await attachAndLoad(dispatch, pid, procs.find((p) => p.pid === pid)?.name ?? ''); } finally { setBusyPid(null); }
   };
 
   const count = filter.trim() || onlyAncestry ? `${rows.length} of ${procs.length} processes` : `${procs.length} processes`;

@@ -94,6 +94,9 @@ jobs:
       - name: REPL evaluates in the attached process
         run: xvfb-run -a node scripts/ui-test-repl.js
 
+      - name: Spawn with options, suspended start, start again
+        run: xvfb-run -a node scripts/ui-test-launch.js
+
       - name: Hooks tab finds, hooks and lists calls
         run: xvfb-run -a node scripts/ui-test-hooks.js
 

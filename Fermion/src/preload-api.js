@@ -85,7 +85,7 @@ function buildApi(ipcRenderer) {
 		enumerateProcesses: () => invoke('enumerateProcesses'),
 		getDeviceInfo: () => invoke('getDeviceInfo'),
 		attach: (pid) => invoke('attach', pid),
-		spawn: (path, args) => invoke('spawn', path, args),
+		spawn: (path, args, options) => (options === undefined ? invoke('spawn', path, args) : invoke('spawn', path, args, options)),
 		resume: (pid) => invoke('resume', pid),
 		loadScript: (src) => invoke('loadScript', src),
 		reloadScript: (src) => invoke('reloadScript', src),
