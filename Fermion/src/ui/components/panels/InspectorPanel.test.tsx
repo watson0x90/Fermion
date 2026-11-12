@@ -576,3 +576,107 @@ test('Follow results: a new follow starts with the filter cleared', async () => 
   expect((await screen.findAllByTestId('follow-row')).length).toBe(2);
   expect((screen.getByTestId('follow-filter') as HTMLInputElement).value).toBe('');
 });
+
+// ---- Disassembly ----
+const INSNS = (base: number, n: number) => Array.from({ length: n }, (_, i) => {
+  const address = '0x' + (base + i * 4).toString(16);
+  if (i === 2) return { address, size: 4, bytes: 'e8000000', text: 'call 0x7fff96125a70', kind: 'call', target: '0x7fff96125a70', targetName: 'ntdll.dll!RtlSizeHeap' };
+  if (i === 3) return { address, size: 4, bytes: 'c3', text: 'ret', kind: 'ret', target: null, targetName: '' };
+  return { address, size: 4, bytes: '4889d8', text: 'mov rax, rbx', kind: '', target: null, targetName: '' };
+});
+function withDisassembly() {
+  inspect.disassemble = vi.fn(async (address: string, count: number) => {
+    const base = parseInt(address, 16);
+    return { address, next: '0x' + (base + count * 4).toString(16), stopped: '', where: 'node.exe+0x100', symbol: 'node.exe!main', protection: 'r-x', items: INSNS(base, Math.min(count, 6)) };
+  });
+}
+
+test('Disassembly: Go lists the instructions at an address with bytes, and marks calls and returns', async () => {
+  setup();
+  withDisassembly();
+  open('code');
+  expect(screen.getByTestId('code-list')).toHaveTextContent('Enter an address');
+  fireEvent.change(screen.getByTestId('code-addr'), { target: { value: '0x1000' } });
+  fireEvent.click(screen.getByTestId('code-go'));
+  const rows = await screen.findAllByTestId('code-row');
+  expect(inspect.disassemble).toHaveBeenCalledWith('0x1000', 60);
+  expect(rows.length).toBe(6);
+  expect(rows[0]).toHaveTextContent('0x1000');
+  expect(rows[0]).toHaveTextContent('4889d8');
+  expect(rows[0]).toHaveTextContent('mov rax, rbx');
+  expect(rows[2]).toHaveClass('k-call');
+  expect(rows[3]).toHaveClass('k-ret');
+  expect(screen.getByTestId('code-where')).toHaveTextContent('node.exe!main · r-x');
+});
+
+test('Disassembly: an address that is not hex is refused without asking the target', async () => {
+  setup();
+  withDisassembly();
+  open('code');
+  fireEvent.change(screen.getByTestId('code-addr'), { target: { value: 'main' } });
+  fireEvent.keyDown(screen.getByTestId('code-addr'), { key: 'Enter' });
+  expect(screen.getByRole('alert')).toHaveTextContent('Enter a hex address');
+  expect(inspect.disassemble).not.toHaveBeenCalled();
+});
+
+test('Disassembly: a call target can be followed, and Back returns', async () => {
+  setup();
+  withDisassembly();
+  open('code');
+  expect(screen.getByTestId('code-back')).toBeDisabled();
+  fireEvent.change(screen.getByTestId('code-addr'), { target: { value: '0x1000' } });
+  fireEvent.click(screen.getByTestId('code-go'));
+  const target = await screen.findByTestId('code-target');
+  expect(target).toHaveTextContent('ntdll.dll!RtlSizeHeap');
+  fireEvent.click(target);
+  await waitFor(() => expect(inspect.disassemble).toHaveBeenLastCalledWith('0x7fff96125a70', 60));
+  await waitFor(() => expect(screen.getAllByTestId('code-row')[0]).toHaveTextContent('0x7fff96125a70'));
+  expect((screen.getByTestId('code-addr') as HTMLInputElement).value).toBe('0x7fff96125a70');
+  fireEvent.click(screen.getByTestId('code-back'));
+  await waitFor(() => expect(screen.getAllByTestId('code-row')[0]).toHaveTextContent('0x1000'));
+  expect(screen.getByTestId('code-back')).toBeDisabled();
+});
+
+test('Disassembly: More continues where the listing ended; the end of a range is stated', async () => {
+  setup();
+  withDisassembly();
+  open('code');
+  fireEvent.change(screen.getByTestId('code-addr'), { target: { value: '0x1000' } });
+  fireEvent.click(screen.getByTestId('code-go'));
+  await screen.findAllByTestId('code-row');
+  inspect.disassemble.mockResolvedValueOnce({ address: '0x10f0', next: '0x10f8', stopped: 'end', where: 'x', symbol: '', protection: 'r-x', items: INSNS(0x10f0, 2) });
+  fireEvent.click(screen.getByTestId('code-more'));
+  await waitFor(() => expect(screen.getAllByTestId('code-row').length).toBe(8));
+  expect(inspect.disassemble).toHaveBeenLastCalledWith('0x10f0', 60);
+  expect(screen.getByTestId('code-stopped')).toHaveTextContent('End of this memory range.');
+  expect(screen.queryByTestId('code-more')).toBeNull();
+});
+
+test('Disassembly: memory that cannot be read is reported; non-executable memory is flagged', async () => {
+  setup();
+  withDisassembly();
+  open('code');
+  inspect.disassemble.mockRejectedValueOnce(new Error("Error invoking remote method 'fermion:invoke': Error: 0x10 is not in readable memory."));
+  fireEvent.change(screen.getByTestId('code-addr'), { target: { value: '0x10' } });
+  fireEvent.click(screen.getByTestId('code-go'));
+  await waitFor(() => expect(screen.getByTestId('code-error')).toHaveTextContent('0x10 is not in readable memory.'));
+  expect(screen.queryAllByTestId('code-row').length).toBe(0);
+  inspect.disassemble.mockResolvedValueOnce({ address: '0x2000', next: '0x2008', stopped: 'undecodable', where: '0x2000', symbol: '', protection: 'rw-', items: INSNS(0x2000, 2) });
+  fireEvent.change(screen.getByTestId('code-addr'), { target: { value: '0x2000' } });
+  fireEvent.click(screen.getByTestId('code-go'));
+  await waitFor(() => expect(screen.getByTestId('code-not-exec')).toBeInTheDocument());
+  expect(screen.getByTestId('code-stopped')).toHaveTextContent('not an instruction');
+});
+
+test('an address request from elsewhere opens the Inspector on the view it names', async () => {
+  const store = setup();
+  withDisassembly();
+  act(() => { store.dispatch(uiActions.setActiveTab('hooks' as any)); });
+  act(() => { store.dispatch(uiActions.openAddress({ view: 'code', address: '0x1000' })); });
+  expect(store.getState().ui.activeTab).toBe('inspector');
+  await waitFor(() => expect(screen.getByTestId('insp-code')).toHaveAttribute('aria-selected', 'true'));
+  await waitFor(() => expect(inspect.disassemble).toHaveBeenCalledWith('0x1000', 60));
+  act(() => { store.dispatch(uiActions.openAddress({ view: 'memory', address: '0x7fff960d0000' })); });
+  await waitFor(() => expect(screen.getByTestId('insp-memory')).toHaveAttribute('aria-selected', 'true'));
+  await waitFor(() => expect(inspect.read).toHaveBeenCalledWith('0x7fff960d0000', 256));
+});

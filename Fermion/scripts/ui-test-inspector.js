@@ -219,13 +219,93 @@ const T = { timeout: 20000 };
     await win.waitForFunction(() => document.querySelector('[data-testid="insp-memory"]').getAttribute('aria-selected') === 'true'
       && document.querySelectorAll('[data-testid="hex-row"]').length > 0, undefined, T);
 
+    step = 'address menu -> disassembly';
+    {
+      const rowAddresses = () => win.evaluate(() => [...document.querySelectorAll('[data-testid="code-row"] .ca')].map((e) => e.textContent));
+      await win.click('[data-testid="insp-threads"]');
+      const pc = await win.evaluate(() => document.querySelector('[data-testid="reg-pc"]').textContent);
+      await win.click('[data-testid="reg-pc"]', { button: 'right' });
+      await win.waitForSelector('[data-testid="addr-menu"]', T);
+      const items = await win.evaluate(() => [...document.querySelectorAll('[data-testid="addr-menu"] [role="menuitem"]')].map((b) => b.textContent));
+      if (items.join('|') !== 'Copy address|Open in Memory|Open in Disassembly|Hook this address') throw new Error('menu items: ' + items.join('|'));
+      await win.click('[data-testid="addr-menu-code"]');
+      await win.waitForFunction(() => document.querySelector('[data-testid="insp-code"]').getAttribute('aria-selected') === 'true'
+        && document.querySelectorAll('[data-testid="code-row"]').length >= 10, undefined, T);
+      if (await win.evaluate(() => !!document.querySelector('[data-testid="addr-menu"]'))) throw new Error('the menu stayed open');
+      const atPc = await rowAddresses();
+      if (atPc[0] !== pc) throw new Error('disassembly starts at ' + atPc[0] + ', not at pc ' + pc);
+      const texts = await win.evaluate(() => [...document.querySelectorAll('[data-testid="code-row"] .ct')].map((e) => e.textContent));
+      if (!texts.every((t) => /^[a-z]/.test(t))) throw new Error('instructions look wrong: ' + JSON.stringify(texts.slice(0, 5)));
+      for (let i = 1; i < atPc.length; i++) if (BigInt(atPc[i]) <= BigInt(atPc[i - 1])) throw new Error('addresses do not increase at row ' + i);
+
+      step = 'disassembly: more';
+      const before = atPc.length;
+      if (await win.evaluate(() => !!document.querySelector('[data-testid="code-more"]'))) {
+        await win.click('[data-testid="code-more"]');
+        await win.waitForFunction((n) => document.querySelectorAll('[data-testid="code-row"]').length > n
+          || !!document.querySelector('[data-testid="code-stopped"]'), before, T);
+      }
+
+      step = 'disassembly: a function, follow a call, back';
+      const fn = await win.evaluate(async () => {
+        const r = await window.fermion.hooks.search('symbols', 'uv_fs_stat');
+        return (r.items || []).find((i) => /!uv_fs_stat$/.test(i.name)) || null;
+      });
+      let followed = 'no function with debug symbols to follow on this platform';
+      if (fn) {
+        await win.fill('[data-testid="code-addr"]', fn.address);
+        await win.press('[data-testid="code-addr"]', 'Enter');
+        await win.waitForFunction((a) => document.querySelector('[data-testid="code-row"] .ca')?.textContent === a, fn.address, T);
+        const where = await win.evaluate(() => document.querySelector('[data-testid="code-where"]').textContent);
+        if (!/uv_fs_stat/.test(where) || !/r-x/.test(where)) throw new Error('header: ' + where);
+        for (let i = 0; i < 4 && !(await win.evaluate(() => !!document.querySelector('[data-testid="code-target"]'))); i++) {
+          if (!(await win.evaluate(() => !!document.querySelector('[data-testid="code-more"]')))) break;
+          const n = (await rowAddresses()).length;
+          await win.click('[data-testid="code-more"]');
+          await win.waitForFunction((k) => document.querySelectorAll('[data-testid="code-row"]').length > k || !!document.querySelector('[data-testid="code-stopped"]'), n, T);
+        }
+        const target = await win.evaluate(() => {
+          const b = document.querySelector('[data-testid="code-target"]');
+          return b ? { title: b.getAttribute('title'), name: b.textContent } : null;
+        });
+        if (!target) throw new Error('no direct call or jump found in uv_fs_stat');
+        const to = /Go to (0x[0-9a-f]+)/.exec(target.title)[1];
+        await win.click('[data-testid="code-target"]');
+        await win.waitForFunction((a) => document.querySelector('[data-testid="code-row"] .ca')?.textContent === a, to, T);
+        await snap('disassembly');
+        await win.click('[data-testid="code-back"]');
+        await win.waitForFunction((a) => document.querySelector('[data-testid="code-row"] .ca')?.textContent === a, fn.address, T);
+        followed = 'followed ' + target.name;
+
+        step = 'address menu -> hook';
+        await win.click('[data-testid="code-row"] .ca', { button: 'right' });
+        await win.waitForSelector('[data-testid="addr-menu"]', T);
+        await win.click('[data-testid="addr-menu-hook"]');
+        await win.waitForFunction(() => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent.includes('Hooks')
+          && document.querySelector('[data-testid="hook-status"]')?.textContent === 'hooked', undefined, T);
+        const hookName = await win.evaluate(() => document.querySelector('[data-testid^="hook-row-"] .nm').textContent);
+        if (!/!uv_fs_stat$/.test(hookName)) throw new Error('hooked ' + hookName);
+        await win.waitForFunction(() => Number(document.querySelector('[data-testid="hook-calls"]').textContent.replace(/,/g, '')) > 0, undefined, T);
+        await win.click('[data-testid="hook-remove"]');
+        await win.waitForSelector('[data-testid="hook-empty"]', T);
+        await win.click('role=tab[name="Inspector"]');
+      }
+
+      step = 'unreadable address in disassembly';
+      await win.click('[data-testid="insp-code"]');
+      await win.fill('[data-testid="code-addr"]', '0x10');
+      await win.click('[data-testid="code-go"]');
+      await win.waitForFunction(() => /not in readable memory/.test(document.querySelector('[data-testid="code-error"]')?.textContent ?? ''), undefined, T);
+      console.log('DISASM ' + before + ' instructions at pc; ' + followed);
+    }
+
     step = 'target unharmed + detach';
     const alive = await win.evaluate(() => window.fermion.evaluate('Process.id'));
     if (!alive.ok || alive.text !== String(target.pid)) throw new Error('target no longer answers: ' + JSON.stringify(alive));
     await win.click('[data-testid="detach"]');
     await win.waitForFunction(() => /Attach to a process/.test(document.querySelector('[data-testid="inspector-panel"]').textContent), undefined, T);
 
-    console.log('INSPECT_OK modules + exports/imports + hex view + paging + unreadable address + text scan (' + status.trim() + ') + threads/registers/backtrace + follow (scope, filter, by module)');
+    console.log('INSPECT_OK modules + exports/imports + hex view + paging + unreadable address + text scan (' + status.trim() + ') + threads/registers/backtrace + follow (scope, filter, by module) + address menu + disassembly');
     await app.close();
     done(0);
   } catch (e) {

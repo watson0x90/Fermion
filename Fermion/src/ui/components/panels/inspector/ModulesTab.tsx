@@ -1,3 +1,4 @@
+import { addrMenu } from '../../../addressMenu';
 import { useMemo, useState } from 'react';
 import { Icon } from '../../Icon';
 import { fmtSize } from '../../../inspector/format';
@@ -96,7 +97,7 @@ export function ModulesTab({ active, onViewMemory }: { active: boolean; onViewMe
                 <span className={'tag ' + (s.type === 'variable' ? 'var' : 'fn')}>{s.type === 'variable' ? 'var' : 'fn'}</span>
                 <span className="nm mono">{s.name}{kind === 'imports' && s.module ? <span className="dim"> · {s.module}</span> : null}</span>
                 {s.address
-                  ? <button className="addr mono" data-testid="sym-addr" title="Open in the Memory tab" onClick={() => onViewMemory(s.address as string)}>{s.address}</button>
+                  ? <button className="addr mono" data-testid="sym-addr" title="Open in the Memory tab (right-click for more)" {...addrMenu(s.address)} onClick={() => onViewMemory(s.address as string)}>{s.address}</button>
                   : <span className="num mono dim">—</span>}
               </div>
             ))}

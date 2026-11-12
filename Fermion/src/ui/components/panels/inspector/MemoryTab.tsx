@@ -1,3 +1,4 @@
+import { addrMenu } from '../../../addressMenu';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../../Icon';
 import {
@@ -133,7 +134,7 @@ export function MemoryTab({ active, goto }: { active: boolean; goto: Goto | null
         {view.error && <div className="insp-note err" role="alert" data-testid="hex-error">{view.error}</div>}
         {rows.map((r) => (
           <div className="hexrow" key={r.address} data-testid="hex-row">
-            <span className="ha">{r.address}</span>
+            <span className="ha" {...addrMenu(r.address)}>{r.address}</span>
             <span className="hb">
               {r.bytes.map((b, i) => {
                 const at = BigInt(r.address) + BigInt(i);
@@ -193,7 +194,7 @@ export function MemoryTab({ active, goto }: { active: boolean; goto: Goto | null
             <div className="insp-list">
               <div className="insp-head rng-cols" aria-hidden="true"><span className="num">Base</span><span className="num">Size</span><span>Prot</span><span>File</span></div>
               {rangeRows.slice(0, MAX_RANGE_ROWS).map((r) => (
-                <div key={r.base} className={'insp-row rng-cols' + (address === pageBase(r.base) ? ' sel' : '')} data-testid="range-row" title={r.file} onClick={() => show(r.base)}>
+                <div key={r.base} className={'insp-row rng-cols' + (address === pageBase(r.base) ? ' sel' : '')} data-testid="range-row" title={r.file} {...addrMenu(r.base)} onClick={() => show(r.base)}>
                   <span className="num mono">{r.base}</span>
                   <span className="num mono dim">{fmtSize(r.size)}</span>
                   <span className="mono">{r.protection}</span>
@@ -215,7 +216,7 @@ export function MemoryTab({ active, goto }: { active: boolean; goto: Goto | null
             )}
             <div className="insp-list">
               {(scan?.items ?? []).map((m) => (
-                <div key={m.address} className="insp-row scan-cols" data-testid="scan-row" onClick={() => show(m.address, m.size)}>
+                <div key={m.address} className="insp-row scan-cols" data-testid="scan-row" {...addrMenu(m.address)} onClick={() => show(m.address, m.size)}>
                   <span className="mono">{m.address}</span>
                   <span className="nm mono dim">{m.where !== m.address ? m.where : ''}</span>
                 </div>

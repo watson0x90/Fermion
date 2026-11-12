@@ -156,3 +156,10 @@ test('the Hooks tab operations use the invoke channel', async () => {
     ['hookEnable', 'h', false], ['hookRemove', 'h'], ['hookSymbolicate', ['0x1']],
   ]);
 });
+
+test('inspect.disassemble uses the invoke channel', async () => {
+  const sent = [];
+  const api = buildApi({ invoke: (...a) => { sent.push(a.slice(1)); return Promise.resolve({}); }, on: () => {} });
+  await api.inspect.disassemble('0x10', 40);
+  assert.deepEqual(sent, [['inspectDisassemble', '0x10', 40]]);
+});

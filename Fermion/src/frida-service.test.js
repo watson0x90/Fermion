@@ -184,7 +184,7 @@ function inspectorService() {
     if (/Inspector agent/.test(src)) {
       const rec = (name) => async (...args) => { calls.push([name, ...args]); return { items: [], total: 0, truncated: false }; };
       s.exports = { modules: rec('modules'), exports: rec('exports'), imports: rec('imports'), threads: rec('threads'),
-        backtrace: rec('backtrace'), ranges: rec('ranges'), read: rec('read'), scan: rec('scan'), follow: rec('follow'), unfollow: rec('unfollow') };
+        backtrace: rec('backtrace'), ranges: rec('ranges'), read: rec('read'), scan: rec('scan'), follow: rec('follow'), unfollow: rec('unfollow'), disassemble: rec('disassemble') };
     }
     return s;
   };
@@ -550,4 +550,16 @@ test('hook arguments are validated before anything reaches the target', async ()
   ];
   for (const [call, re] of bad) await assert.rejects(call, re, String(call));
   assert.equal(calls.length, 0);
+});
+
+test('inspectDisassemble: address and count are validated; the count defaults to 60', async () => {
+  const { svc, calls } = inspectorService();
+  await svc.attach(1);
+  await svc.inspectDisassemble('0x7FF010', 40);
+  await svc.inspectDisassemble('0x10');
+  assert.deepEqual(calls, [['disassemble', '0x7ff010', 40], ['disassemble', '0x10', 60]]);
+  for (const bad of [['nope', 5], ['0x10', 0], ['0x10', 201], ['0x10', 1.5], ['0x10', '5'], [16, 5]]) {
+    await assert.rejects(() => svc.inspectDisassemble(...bad), /invalid (address|instruction count)/i, JSON.stringify(bad));
+  }
+  assert.equal(calls.length, 2);
 });

@@ -1,3 +1,4 @@
+import { addrMenu } from '../../../addressMenu';
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../../Icon';
 import { parseAddress, cleanIpcError } from '../../../inspector/format';
@@ -187,7 +188,7 @@ export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMe
                   <div className="reg" key={name}>
                     <span className="rn">{name}</span>
                     {addr
-                      ? <button className="addr mono" data-testid={'reg-' + name} title="Open in the Memory tab" onClick={() => onViewMemory(addr)}>{value}</button>
+                      ? <button className="addr mono" data-testid={'reg-' + name} title="Open in the Memory tab (right-click for more)" {...addrMenu(addr)} onClick={() => onViewMemory(addr)}>{value}</button>
                       : <span className="mono" data-testid={'reg-' + name}>{value}</span>}
                   </div>
                 );
@@ -202,7 +203,7 @@ export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMe
               {(trace.data?.items ?? []).map((f, i) => (
                 <div className="frame" key={f.address + i} data-testid="bt-row">
                   <span className="fi">{i}</span>
-                  <button className="fsym mono" title={`${f.address} · ${f.where} — open in the Memory tab`} onClick={() => onViewMemory(f.address)}>{f.symbol || f.where}</button>
+                  <button className="fsym mono" title={`${f.address} · ${f.where} — open in the Memory tab (right-click for more)`} {...addrMenu(f.address)} onClick={() => onViewMemory(f.address)}>{f.symbol || f.where}</button>
                 </div>
               ))}
             </div>

@@ -6,6 +6,7 @@ import { LeftToolbox } from './LeftToolbox';
 import { OutputPane } from './OutputPane';
 import { StatusBar } from './StatusBar';
 import { Settings } from './Settings';
+import { AddressMenu } from './AddressMenu';
 import { useKeybinds } from '../hooks/useKeybinds';
 import { useAppSelector } from '../store';
 import { applyTheme } from '../theme/themeEngine';
@@ -33,6 +34,7 @@ export function Layout() {
         <Settings />
       </div>
       <StatusBar />
+      <AddressMenu />
     </div>
   );
 }
