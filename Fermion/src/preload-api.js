@@ -86,6 +86,8 @@ function buildApi(ipcRenderer) {
 		detach: () => invoke('detach'),
 		unload: () => invoke('unload'),
 		getState: () => invoke('getState'),
+		// REPL: evaluate one entry in the attached process.
+		evaluate: (code) => invoke('evaluate', code),
 		onMessage: (cb) => on('message', cb),
 		onLog: (cb) => on('log', cb),
 		onDetached: (cb) => on('detached', cb),

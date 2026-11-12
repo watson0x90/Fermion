@@ -93,3 +93,10 @@ test('output detach/dock invoke fermion:output; relay sends and subscribes on it
   assert.deepEqual(relayed, [{ t: 'line', kind: 'LOG', text: 'x' }]);
   assert.deepEqual(states, [true]);
 });
+
+test('evaluate invokes the evaluate method over fermion:invoke', async () => {
+  const sent = [];
+  const api = buildApi({ invoke: (...a) => { sent.push(a); return Promise.resolve({ ok: true }); }, on: () => {} });
+  await api.evaluate('1+1');
+  assert.deepEqual(sent, [['fermion:invoke', 'evaluate', '1+1']]);
+});

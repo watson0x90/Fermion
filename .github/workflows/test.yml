@@ -88,6 +88,9 @@ jobs:
       - name: Process tree (hierarchy, filter, attach from row)
         run: xvfb-run -a node scripts/ui-test-process-tree.js
 
+      - name: REPL evaluates in the attached process
+        run: xvfb-run -a node scripts/ui-test-repl.js
+
       # End-to-end: attach to a real process and confirm the agent's console.log
       # reaches the terminal. Skips gracefully where the runner can't attach
       # (ptrace restrictions); the real coverage is on the Windows dev machine.

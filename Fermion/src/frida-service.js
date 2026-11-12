@@ -14,6 +14,12 @@
 // `frida` is required lazily (inside _getFrida) so the pure helpers below are
 // requirable headless (unit tests) without an Electron/Frida runtime.
 const { EventEmitter } = require('events');
+const fs = require('fs');
+const path = require('path');
+
+// The REPL helper agent (runs inside the target; see the file's header).
+const REPL_AGENT_PATH = path.join(__dirname, 'tools', 'repl-agent.js');
+const MAX_EVAL_CHARS = 200000;
 
 // Pure: where does a formatted message go? SEND payloads are forwarded to the
 // trace window only while trace mode is on; everything else goes to the
@@ -56,6 +62,10 @@ class FridaService extends EventEmitter {
 		this._script = null;
 		this._sessionPID = null;
 		this._spawnDevice = null;
+		// REPL agent: its own script in the session, separate from the user's.
+		this._replScript = null;
+		this._replLoading = null;
+		this._replSession = null;
 		// Unload the active script on process termination (the old inject/start
 		// registered these per call; once is equivalent and avoids leaking a
 		// listener per attach).
@@ -191,6 +201,51 @@ class FridaService extends EventEmitter {
 			this._script.unload();
 		}
 		await this.loadScript(src);
+	}
+
+	// REPL: evaluate one entry in the attached process and return a printable
+	// result ({ ok, type, text } or { ok:false, error, stack }). The code runs in
+	// a dedicated agent script, so it works with or without a user script and is
+	// untouched by script reloads; its console/send output joins the normal
+	// message/log events.
+	async evaluate(code) {
+		if (typeof code !== 'string') throw new Error('evaluate: code must be a string');
+		if (!code.trim()) throw new Error('evaluate: code is empty');
+		if (code.length > MAX_EVAL_CHARS) throw new Error('evaluate: code is too long');
+		if (!this._session) throw new Error('Not attached to a process');
+		const script = await this._getReplScript();
+		try {
+			const result = toPlain(await script.exports.evaluate(code));
+			if (result && typeof result.ok === 'boolean') return result;
+			return { ok: false, error: 'The REPL agent returned no result', stack: '' };
+		} catch (e) {
+			// e.g. the target exited mid-call and the script was destroyed.
+			return { ok: false, error: e && e.message ? e.message : String(e), stack: '' };
+		}
+	}
+
+	// One agent per session; concurrent first calls share the same load.
+	_getReplScript() {
+		const session = this._session;
+		if (this._replSession !== session) {
+			this._replSession = session;
+			this._replScript = null;
+			this._replLoading = null;
+		}
+		if (this._replScript) return Promise.resolve(this._replScript);
+		if (!this._replLoading) {
+			const loading = (async () => {
+				const script = await session.createScript(fs.readFileSync(REPL_AGENT_PATH, 'utf8'));
+				this._wireScript(script);
+				await script.load();
+				if (this._replSession === session) this._replScript = script;
+				return script;
+			})();
+			this._replLoading = loading;
+			// A failed load must not be cached: the next entry retries.
+			loading.catch(() => { if (this._replLoading === loading) this._replLoading = null; });
+		}
+		return this._replLoading;
 	}
 
 	async detach() {

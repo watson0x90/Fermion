@@ -32,3 +32,10 @@ test('wireServiceEvents forwards message/log/detached with their payloads', () =
     ['detached', 'process-terminated'],
   ]);
 });
+
+test('evaluate (REPL) is allow-listed and forwards its code argument', async () => {
+  const calls = [];
+  const dispatch = createDispatch({ evaluate: async (code) => { calls.push(code); return { ok: true }; } });
+  assert.deepEqual(await dispatch('evaluate', 'Process.id'), { ok: true });
+  assert.deepEqual(calls, ['Process.id']);
+});
