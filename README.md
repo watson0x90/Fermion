@@ -419,7 +419,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach) |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.
