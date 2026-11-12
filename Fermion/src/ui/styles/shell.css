@@ -115,8 +115,22 @@ button, input, select { font-family: inherit; }
 .pill:disabled { opacity: .45; cursor: default; }
 .editor-host { flex: 1; min-height: 0; }
 .graphpanel { height: 100%; display: flex; flex-direction: column; }
-.graph-svg { flex: 1; overflow: auto; padding: 10px 12px; }
-.graph-svg svg { max-width: 100%; }
+.graphpanel .ptool { flex-wrap: wrap; row-gap: 6px; }
+.graphpanel input.gin { flex: 1 1 130px; min-width: 0; max-width: 220px; cursor: text; color: var(--fg); outline: 0; }
+.graphpanel input.gin:focus { border-color: var(--accent); }
+.graphpanel input.gin::placeholder { color: var(--faint); }
+.graphpanel input.gin:disabled { opacity: .6; }
+.graph-note { padding: 6px 12px; font-size: 11.5px; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--panel); }
+.graph-note.err { color: var(--err); }
+.graph-bar { display: flex; align-items: center; gap: 6px; padding: 5px 10px 5px 12px; font-size: 11.5px; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--panel); }
+.graph-bar .grow { flex: 1; min-width: 0; }
+.graph-bar .pill { padding: 2px 8px; }
+.graph-bar .zoomlvl { min-width: 38px; text-align: center; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; color: var(--fg); }
+/* The graph is always drawn on a light ground: Graphviz output has dark text
+   and edges, which would vanish on a dark theme. */
+.graph-svg { flex: 1; min-height: 0; overflow: auto; padding: 12px; background: #fbfbfa; }
+.graph-svg img { display: block; height: auto; user-select: none; }
+.graph-empty { color: #6c6e68; font-size: 12px; max-width: 56ch; }
 
 /* ---- inspector ---- */
 .inspector { height: 100%; display: flex; flex-direction: column; min-height: 0; background: var(--editor-bg); }
