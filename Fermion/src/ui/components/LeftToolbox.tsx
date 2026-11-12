@@ -15,8 +15,8 @@ const TABS: { id: ToolboxTab; label: string; icon: IconName }[] = [
   { id: 'inspector', label: 'Inspector', icon: 'inspect' },
 ];
 
-// Editor (Task 5) and Graph (Task 6) are live; REPL, Process-tree, and Inspector
-// are Phase-3 stub panels (Task 8) occupying their final slots.
+// Editor, Graph and Process tree are live; REPL and Inspector are still Phase-3
+// stub panels occupying their final slots.
 //
 // Every panel stays MOUNTED; only the active one is visible (inactive ones are
 // `hidden`). The Editor's Monaco instance is referenced globally via

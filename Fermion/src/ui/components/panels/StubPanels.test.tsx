@@ -29,7 +29,6 @@ function renderApp() {
 
 test.each([
   ['REPL', 'repl-panel'],
-  ['Process tree', 'tree-panel'],
   ['Inspector', 'inspector-panel'],
 ])('%s tab renders its Phase-3 stub panel', (tabLabel, testid) => {
   renderApp();

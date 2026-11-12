@@ -25,9 +25,14 @@ function routeMessage(kind, traceMode) {
 // Frida model objects (Process, Device, parameters) are not own-enumerable, so
 // they structured-clone to {} over IPC. Convert to a plain, JSON-safe object
 // (drops binary like a process icon) before returning across the seam.
+// BigInt (Frida 17 reports e.g. a process's ppid as one) is not JSON-serializable:
+// it becomes a number when that is exact, otherwise a decimal string.
 function toPlain(value) {
 	try {
-		return JSON.parse(JSON.stringify(value));
+		return JSON.parse(JSON.stringify(value, (_k, v) => {
+			if (typeof v !== 'bigint') return v;
+			return (v <= BigInt(Number.MAX_SAFE_INTEGER) && v >= BigInt(Number.MIN_SAFE_INTEGER)) ? Number(v) : v.toString();
+		}));
 	} catch {
 		return {};
 	}
@@ -108,9 +113,10 @@ class FridaService extends EventEmitter {
 	async enumerateProcesses() {
 		const frida = this._getFrida();
 		const device = await frida.getDevice(this._deviceId);
-		const procs = await device.enumerateProcesses(/** @type {any} */ ({ scope: 'full' }));
-		// Return IPC-serializable plain objects. Drop the binary `icons` (huge,
-		// not cloneable) but keep user/ppid/path etc. for the process view/tree.
+		// 'metadata' = user/ppid/path/argv/started without the icons ('full' adds
+		// them; they are large, not cloneable, and never shown).
+		const procs = await device.enumerateProcesses(/** @type {any} */ ({ scope: 'metadata' }));
+		// Return IPC-serializable plain objects for the process view/tree.
 		return procs.map((p) => {
 			const params = Object.assign({}, p.parameters);
 			delete params.icons;
@@ -202,4 +208,4 @@ class FridaService extends EventEmitter {
 	}
 }
 
-module.exports = { FridaService, routeMessage, parseDeviceSpec };
+module.exports = { FridaService, routeMessage, parseDeviceSpec, toPlain };

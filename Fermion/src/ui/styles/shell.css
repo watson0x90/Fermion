@@ -111,10 +111,54 @@ button, input, select { font-family: inherit; }
 .ptool .grow { flex: 1; }
 .pill { border: 1px solid var(--border); background: var(--elev); color: var(--muted); border-radius: 6px; padding: 4px 8px; font-size: 11px; cursor: pointer; display: inline-flex; gap: 5px; align-items: center; }
 .pill:hover { color: var(--fg); }
+.pill.on { color: var(--accent); border-color: var(--accent); }
+.pill:disabled { opacity: .45; cursor: default; }
 .editor-host { flex: 1; min-height: 0; }
 .graphpanel { height: 100%; display: flex; flex-direction: column; }
 .graph-svg { flex: 1; overflow: auto; padding: 10px 12px; }
 .graph-svg svg { max-width: 100%; }
+
+/* ---- process tree ---- */
+.ptree { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.ptree .ptool { flex-wrap: wrap; }
+.ptree .count { color: var(--faint); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; white-space: nowrap; }
+.ptree-filter { display: flex; align-items: center; gap: 7px; flex: 1 1 180px; max-width: 300px; min-width: 0; border: 1px solid var(--border); background: var(--elev); border-radius: 7px; padding: 3px 9px; color: var(--faint); }
+.ptree-filter:focus-within { border-color: var(--accent); }
+.ptree-filter input { flex: 1 1 auto; min-width: 0; height: 22px; border: 0; outline: 0; background: transparent; font-size: 12px; color: var(--fg); }
+.ptree-filter input::placeholder { color: var(--faint); }
+.ptree-note { padding: 7px 12px; font-size: 11.5px; color: var(--muted); border-bottom: 1px solid var(--border); background: var(--panel); }
+.ptree-note.err { color: var(--err); }
+.ptree-rows { flex: 1; min-height: 0; overflow: auto; padding: 0 0 8px; background: var(--editor-bg); }
+/* Every row is as wide as the deepest visible row needs (indent + a readable
+   name), so a deep branch scrolls sideways instead of squeezing the name to
+   nothing, and the PID/User columns line up across rows. */
+.ptree-head, .prow { display: grid; grid-template-columns: minmax(150px, 1fr) 58px 96px 0; align-items: center; column-gap: 10px; padding: 0 10px 0 8px; min-width: calc(var(--maxd, 0) * 12px + 340px); }
+.ptree-head { position: sticky; top: 0; z-index: 2; height: 26px; margin-bottom: 4px; font-size: 10.5px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--faint); border-bottom: 1px solid var(--border); background: var(--panel); }
+.ptree-head span:first-child { padding-left: 22px; }
+.prow { height: 26px; font-size: 12.5px; color: var(--fg); cursor: default; }
+.prow:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.prow.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.prow.attached { background: color-mix(in srgb, var(--accent) 20%, transparent); box-shadow: inset 2.5px 0 0 var(--accent); }
+.prow .nm { display: flex; align-items: center; gap: 4px; min-width: 0; padding-left: calc(var(--d, 0) * 12px); }
+.prow .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow.match .name { font-weight: 600; }
+.prow .badge { flex: 0 0 auto; margin-left: 4px; font-size: 10px; font-weight: 600; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 0 6px; line-height: 15px; }
+.prow .pid, .ptree-head .pid { text-align: right; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.prow .pid { font-size: 12px; color: var(--muted); }
+.prow .usr { font-size: 11.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow .twisty { flex: 0 0 18px; width: 18px; height: 18px; border: 0; background: transparent; color: var(--faint); display: grid; place-items: center; padding: 0; border-radius: 4px; cursor: pointer; }
+.prow .twisty svg { transition: transform .12s ease; }
+.prow .twisty.open svg { transform: rotate(90deg); }
+.prow .twisty:not(.none):hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 9%, transparent); }
+.prow .twisty.none { cursor: default; }
+/* The Attach button takes no column: it floats at the right edge of the visible
+   area (sticky, so it stays reachable when the tree is scrolled sideways). */
+.prow .act { position: sticky; right: 8px; width: 0; display: flex; justify-content: flex-end; }
+.prow .attach { flex: 0 0 auto; height: 20px; padding: 0 9px; font-size: 11px; font-weight: 500; border-radius: 5px; border: 1px solid var(--border); background: var(--elev); color: var(--fg); cursor: pointer; visibility: hidden; white-space: nowrap; }
+.prow:hover .attach, .prow.sel .attach, .prow .attach:focus-visible { visibility: visible; }
+.prow .attach:hover { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.prow .attach:disabled { opacity: .5; cursor: default; }
+.ptree-empty { padding: 16px 14px; color: var(--faint); font-size: 12px; }
 
 /* ---- output ---- */
 .output { display: flex; flex-direction: column; min-width: 0; background: var(--term-bg); }
