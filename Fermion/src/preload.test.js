@@ -163,3 +163,10 @@ test('inspect.disassemble uses the invoke channel', async () => {
   await api.inspect.disassemble('0x10', 40);
   assert.deepEqual(sent, [['inspectDisassemble', '0x10', 40]]);
 });
+
+test('spawn passes its options through the invoke channel', async () => {
+  const sent = [];
+  const api = buildApi({ invoke: (...a) => { sent.push(a.slice(1)); return Promise.resolve({}); }, on: () => {} });
+  await api.spawn('a.exe', '-v', { cwd: 'C:/w' });
+  assert.deepEqual(sent, [['spawn', 'a.exe', '-v', { cwd: 'C:/w' }]]);
+});

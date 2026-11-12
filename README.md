@@ -86,7 +86,17 @@ On Apple Silicon an unsigned app is blocked from launching, so ad-hoc sign the b
 4. Edit the script and press **Reload** (in the Editor toolbar or the sidebar, or `Ctrl-T`) to load the new version without detaching.
 5. Press **Detach** when you are done.
 
-To start a program under Frida instead of attaching to a running one, fill in **Spawn new** in the sidebar (executable path and optional arguments). The process is started suspended, the script is loaded, and then it is resumed, so hooks are in place before its first instruction runs.
+To start a program under Frida instead of attaching to a running one, fill in **Spawn new** in the sidebar (executable path and optional arguments). The process is started suspended, the script is loaded and your [hooks](#hooks) are placed, and then it is resumed, so everything is in place before its first instruction runs.
+
+Arguments are separated by spaces; put quotes around one that contains spaces (`--file "C:\My Files\a.txt"`). **Options** adds:
+
+| Option | Does |
+| --- | --- |
+| **Environment** | Variables for the program, one `NAME=value` per line, added to the environment it would get anyway. Lines starting with `#` are ignored. |
+| **Working directory** | The directory the program starts in. |
+| **Start suspended** | Leaves the program suspended after the script and hooks are in place. Add hooks, look around in the Inspector, then press **Resume** in the sidebar to let it run. |
+
+When a session ends, the sidebar says why (the process exited, you detached, the connection was lost) and offers to start it again. **Spawn again** starts the same program with the same arguments and options. **Attach again** attaches to the same process if it is still there, or to the only process with the same name if the program was restarted; if several processes share the name it asks you to pick one.
 
 ## The window
 
@@ -369,7 +379,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, detach, process tree, REPL, hooks, inspector, graph, attach) |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, detach, process tree, REPL, hooks, inspector, graph, launch, attach) |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.

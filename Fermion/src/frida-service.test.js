@@ -563,3 +563,71 @@ test('inspectDisassemble: address and count are validated; the count defaults to
   }
   assert.equal(calls.length, 2);
 });
+
+// ---- spawn options ----
+function spawnService() {
+  const { FridaService } = require('./frida-service.js');
+  const svc = new FridaService();
+  const spawned = [];
+  const session = fakeSession();
+  svc._frida = { getDevice: async () => ({
+    spawn: async (program, options) => { spawned.push(options === undefined ? [program] : [program, options]); return 4242; },
+    attach: async () => session,
+    resume: async () => {},
+  }) };
+  return { svc, spawned };
+}
+
+test('splitArgs: spaces separate arguments; quotes keep an argument with spaces together; backslashes are left alone', () => {
+  const { splitArgs } = require('./frida-service.js');
+  assert.deepEqual(splitArgs('-a -b'), ['-a', '-b']);
+  assert.deepEqual(splitArgs('  --file   "C:\\Program Files\\x y.txt"  -v '), ['--file', 'C:\\Program Files\\x y.txt', '-v']);
+  assert.deepEqual(splitArgs("--name='two words' x"), ['--name=two words', 'x']);
+  assert.deepEqual(splitArgs('""'), ['']);
+  assert.deepEqual(splitArgs('a "unterminated b'), ['a', 'unterminated b']);
+  assert.deepEqual(splitArgs(''), []);
+  assert.deepEqual(splitArgs(undefined), []);
+});
+
+test('spawn: with no arguments or options the program is spawned as before', async () => {
+  const { svc, spawned } = spawnService();
+  assert.deepEqual(await svc.spawn('C:/app.exe', ''), { pid: 4242 });
+  await svc.spawn('C:/app.exe');
+  assert.deepEqual(spawned, [['C:/app.exe'], ['C:/app.exe']]);
+});
+
+test('spawn: arguments become argv after the program; environment and working directory are passed on', async () => {
+  const { svc, spawned } = spawnService();
+  await svc.spawn('C:/app.exe', '--in "a b.txt" -v');
+  await svc.spawn('C:/app.exe', '', { env: { DEBUG: '1', PATH_EXTRA: 'C:\\x y' }, cwd: 'C:\\work dir', extra: 'dropped' });
+  await svc.spawn('C:/app.exe', '-q', { env: {}, cwd: '' });
+  assert.deepEqual(spawned, [
+    ['C:/app.exe', { argv: ['C:/app.exe', '--in', 'a b.txt', '-v'] }],
+    ['C:/app.exe', { env: { DEBUG: '1', PATH_EXTRA: 'C:\\x y' }, cwd: 'C:\\work dir' }],
+    ['C:/app.exe', { argv: ['C:/app.exe', '-q'] }],
+  ]);
+});
+
+test('spawn: the program, arguments and options are validated before anything is started', async () => {
+  const { svc, spawned } = spawnService();
+  const bad = [
+    [['', ''], /program/],
+    [[5, ''], /program/],
+    [['x'.repeat(5000), ''], /program/],
+    [['a.exe', 7], /arguments/],
+    [['a.exe', 'x'.repeat(40000)], /arguments/],
+    [['a.exe', '', 'env'], /spawn options/],
+    [['a.exe', '', []], /spawn options/],
+    [['a.exe', '', { env: 'A=1' }], /environment/],
+    [['a.exe', '', { env: ['A=1'] }], /environment/],
+    [['a.exe', '', { env: { '': '1' } }], /environment variable name/],
+    [['a.exe', '', { env: { 'A=B': '1' } }], /environment variable name/],
+    [['a.exe', '', { env: { A: 1 } }], /environment variable A/],
+    [['a.exe', '', { env: { A: 'x\u0000y' } }], /environment variable A/],
+    [['a.exe', '', { env: Object.fromEntries(Array.from({ length: 300 }, (_, i) => ['V' + i, '1'])) }], /too many environment/],
+    [['a.exe', '', { cwd: 9 }], /working directory/],
+    [['a.exe', '', { cwd: 'x'.repeat(5000) }], /working directory/],
+  ];
+  for (const [args, re] of bad) await assert.rejects(() => svc.spawn(...args), re, JSON.stringify(args).slice(0, 80));
+  assert.equal(spawned.length, 0);
+});

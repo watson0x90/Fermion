@@ -91,7 +91,7 @@ export function initBridge(store: AnyStore, injected?: Fermion): void {
   });
 
   fermion.onDetached((reason: string) => {
-    store.dispatch(sessionActions.detached());
+    store.dispatch(sessionActions.detached(String(reason)));
     if (store.getState().hooks) store.dispatch(hooksActions.sessionEnded());
     writeTerminal('STATUS', `[+] Exit Reason: ${reason}`);
   });

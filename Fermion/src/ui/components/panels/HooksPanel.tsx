@@ -44,7 +44,9 @@ export function HooksPanel() {
   hooksRef.current = hooks;
   useEffect(() => {
     if (!isAttached) { dispatch(hooksActions.sessionEnded()); return; } // however the session ended
-    if (hooksRef.current.length) installAll(dispatch, hooksRef.current);
+    // A spawn places the hooks itself, before the program runs: skip those.
+    const waiting = hooksRef.current.filter((h) => h.status !== 'on' && h.status !== 'off');
+    if (waiting.length) installAll(dispatch, waiting);
   }, [isAttached, dispatch]);
 
   // ---- search ----

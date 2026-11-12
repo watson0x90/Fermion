@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
 import { sessionActions } from '../store/sessionSlice';
-import { attachAndLoad, reloadFromEditor } from '../sessionOps';
+import { attachAndLoad, reloadFromEditor, spawnAndLoad, resumeSpawned, reconnect } from '../sessionOps';
+import { endedText, envCount, parseEnv, targetLabel } from '../session/launch';
 import { writeTerminal } from '../bridge';
 import { Icon } from './Icon';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion;
-const scriptSrc = () => (window as any).MonacoCodeEditor?.getValue?.() ?? '';
 
 interface Dev { id: string; name: string }
 interface Proc { pid: number; name: string }
@@ -24,6 +24,16 @@ export function SessionControls() {
   const [pid, setPid] = useState('');
   const [spawnPath, setSpawnPath] = useState('');
   const [spawnArgs, setSpawnArgs] = useState('');
+  const [spawnEnv, setSpawnEnv] = useState('');
+  const [spawnCwd, setSpawnCwd] = useState('');
+  const [spawnSuspended, setSpawnSuspended] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [reconnectNote, setReconnectNote] = useState('');
+  const target = useAppSelector((s) => s.session.target);
+  const ended = useAppSelector((s) => s.session.ended);
+  const suspendedPid = useAppSelector((s) => s.session.suspendedPid);
+  const hooks = useAppSelector((s) => s.hooks?.hooks ?? []);
   const [remote, setRemote] = useState('');
   const [connecting, setConnecting] = useState(false);
   const deviceId = useAppSelector((s) => s.session.deviceId);
@@ -61,19 +71,34 @@ export function SessionControls() {
 
   const onAttach = async () => {
     if (!pid) return;
-    await attachAndLoad(dispatch, Number(pid)); // shared with the Process tree
+    await attachAndLoad(dispatch, Number(pid), procs.find((p) => String(p.pid) === pid)?.name ?? ''); // shared with the Process tree
   };
   const onReload = () => reloadFromEditor(dispatch);
   const onDetach = async () => {
     await api().detach();
-    dispatch(sessionActions.detached());
+    dispatch(sessionActions.detached('user'));
   };
+  const envError = parseEnv(spawnEnv).error;
+  const optionsSet = envCount(spawnEnv) + (spawnCwd.trim() ? 1 : 0) + (spawnSuspended ? 1 : 0);
   const onSpawn = async () => {
-    const { pid: spid } = await api().spawn(spawnPath, spawnArgs);
-    dispatch(sessionActions.syncState(await api().getState()));
-    await api().loadScript(scriptSrc());
-    dispatch(sessionActions.scriptLoaded());
-    await api().resume(spid);
+    if (busy || envError) return;
+    setBusy(true);
+    setReconnectNote('');
+    try {
+      await spawnAndLoad(dispatch, { path: spawnPath, args: spawnArgs, env: spawnEnv, cwd: spawnCwd, suspended: spawnSuspended }, hooks);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const onReconnect = async () => {
+    if (!target || busy) return;
+    setBusy(true);
+    setReconnectNote('');
+    try {
+      setReconnectNote(await reconnect(dispatch, target, hooks));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -114,12 +139,62 @@ export function SessionControls() {
           <button className="btn ghost" data-testid="reload" onClick={onReload} disabled={!hasScript}><Icon name="reload" size={13} />Reload</button>
           <button className="btn ghost" data-testid="detach" onClick={onDetach} disabled={!isAttached}><Icon name="stop" size={13} />Detach</button>
         </div>
+        {isAttached && suspendedPid !== null && (
+          <div className="session-note" data-testid="session-suspended">
+            <span>Process {suspendedPid} is suspended: nothing in it has run yet.</span>
+            <button className="btn primary" data-testid="resume" onClick={() => resumeSpawned(dispatch, suspendedPid)}><Icon name="play" size={13} />Resume</button>
+          </div>
+        )}
+        {!isAttached && ended && target && (
+          <div className="session-note" data-testid="session-ended">
+            <span>
+              <strong>{endedText(ended)}</strong> Last session: {targetLabel(target)}.
+            </span>
+            {reconnectNote && <span className="err" role="alert" data-testid="reconnect-note">{reconnectNote}</span>}
+            <div className="btns">
+              <button className="btn primary" data-testid="reconnect" disabled={busy} onClick={onReconnect}>
+                <Icon name="reload" size={13} />{target.kind === 'spawn' ? 'Spawn again' : 'Attach again'}
+              </button>
+              <button className="btn ghost" data-testid="ended-dismiss" onClick={() => { setReconnectNote(''); dispatch(sessionActions.endedDismissed()); }}>Dismiss</button>
+            </div>
+          </div>
+        )}
       </div>
       <div className="group">
         <h4>Spawn new</h4>
         <div className="field"><input className="sel" aria-label="spawn path" placeholder="Executable path" value={spawnPath} onChange={(e) => setSpawnPath(e.target.value)} /></div>
-        <div className="field"><input className="sel" aria-label="spawn args" placeholder="Arguments (optional)" value={spawnArgs} onChange={(e) => setSpawnArgs(e.target.value)} /></div>
-        <button className="btn wide" onClick={onSpawn} disabled={!spawnPath || isAttached}><Icon name="play" size={14} />Spawn &amp; suspend</button>
+        <div className="field"><input className="sel" aria-label="spawn args" placeholder="Arguments (optional)" title='Separated by spaces. Put quotes around an argument that contains spaces: --file "C:\My Files\a.txt"' value={spawnArgs} onChange={(e) => setSpawnArgs(e.target.value)} /></div>
+        <button className="linkrow" data-testid="spawn-options-toggle" aria-expanded={optionsOpen} onClick={() => setOptionsOpen(!optionsOpen)}>
+          <span className={'chev' + (optionsOpen ? ' open' : '')}><Icon name="chevron" size={11} /></span>
+          Options{optionsSet ? ` (${optionsSet} set)` : ''}
+        </button>
+        {optionsOpen && (
+          <>
+            <div className="field">
+              <label htmlFor="spawn-env">Environment</label>
+              <textarea
+                id="spawn-env"
+                className="sel mono"
+                aria-label="environment"
+                placeholder={'NAME=value, one per line'}
+                title="Variables added to the environment the program would get anyway. Lines starting with # are ignored."
+                spellCheck={false}
+                rows={3}
+                value={spawnEnv}
+                onChange={(e) => setSpawnEnv(e.target.value)}
+              />
+              {envError && <span className="err" role="alert" data-testid="spawn-env-error">{envError}</span>}
+            </div>
+            <div className="field">
+              <label htmlFor="spawn-cwd">Working directory</label>
+              <input id="spawn-cwd" className="sel" aria-label="working directory" placeholder="Where the program starts (optional)" spellCheck={false} value={spawnCwd} onChange={(e) => setSpawnCwd(e.target.value)} />
+            </div>
+            <label className="chk" title="Leave the program suspended after the script and hooks are in place, so you can add hooks or look around before anything in it runs. Press Resume to let it go.">
+              <input type="checkbox" data-testid="spawn-suspended" checked={spawnSuspended} onChange={(e) => setSpawnSuspended(e.target.checked)} />Start suspended
+            </label>
+          </>
+        )}
+        <button className="btn wide" data-testid="spawn" onClick={onSpawn} disabled={!spawnPath.trim() || isAttached || busy || !!envError}><Icon name="play" size={14} />{spawnSuspended ? 'Spawn suspended' : 'Spawn'}</button>
       </div>
     </div>
   );
