@@ -1,7 +1,9 @@
 import { configureStore } from '@reduxjs/toolkit';
-import session from './store/sessionSlice';
+import session, { sessionActions } from './store/sessionSlice';
 import output from './store/outputSlice';
 import ui from './store/uiSlice';
+import hooks, { hooksActions } from './store/hooksSlice';
+import { hookFromTarget } from './hooking/model';
 import {
   initBridge, setTerminalSink, setTraceSink, routeMessage,
   setOutputMirror, writeTerminal, clearTerminal, terminalEntries, loadTerminal,
@@ -103,4 +105,77 @@ test('initBridge: message in trace mode -> trace sink, not terminal', () => {
   f.emit('message', { type: 'send', payload: 'DOT' });
   expect(writes.length).toBe(0);
   expect(traced).toEqual(['DOT']);
+});
+
+// ---- hook hits ----
+function hookStore() {
+  const store = configureStore({ reducer: { session, output, ui, hooks } });
+  store.dispatch(hooksActions.added(hookFromTarget({ name: 'k32!CreateFileW', module: 'k32', offset: 16, address: '0x10' }, 'h1')));
+  return store;
+}
+const BATCH = { fermionHooks: 'hits', dropped: 0, counts: { h1: 2 }, hits: [
+  { seq: 1, id: 'h1', t: 10, tid: 4, depth: 0, phase: 'enter', text: '(0x1)' },
+  { seq: 2, id: 'h1', t: 11, tid: 4, depth: 0, phase: 'leave', text: '=> 0x0' },
+] };
+
+test('a batch of hook hits goes to the Hooks store and, as readable lines, to Output', () => {
+  const store = hookStore();
+  const f = fakeFermion();
+  const writes: unknown[][] = [];
+  setTerminalSink({ write: (k: string, t: string) => writes.push([k, t]) });
+  initBridge(store, f);
+  f.emit('message', { type: 'send', payload: BATCH });
+  expect(store.getState().hooks.hits.map((h) => h.text)).toEqual(['(0x1)', '=> 0x0']);
+  expect(store.getState().hooks.hooks[0].calls).toBe(2);
+  expect(writes).toEqual([['MSG', '[hook] k32!CreateFileW -> (0x1)'], ['MSG', '[hook] k32!CreateFileW <- => 0x0']]);
+  expect(store.getState().output.count).toBe(2);
+});
+
+test('hook hits are not printed in Output when that is switched off, and errors print as errors', () => {
+  const store = hookStore();
+  const f = fakeFermion();
+  const writes: unknown[][] = [];
+  setTerminalSink({ write: (k: string, t: string) => writes.push([k, t]) });
+  initBridge(store, f);
+  f.emit('message', { type: 'send', payload: { ...BATCH, hits: [{ ...BATCH.hits[0], error: true, text: 'onEnter threw: boom' }] } });
+  expect(writes).toEqual([['ERR', '[hook] k32!CreateFileW -> onEnter threw: boom']]);
+  store.dispatch(hooksActions.echoSet(false));
+  f.emit('message', { type: 'send', payload: BATCH });
+  expect(writes.length).toBe(1);
+  expect(store.getState().hooks.hits.length).toBe(3);
+});
+
+test('hook hits are never taken for graph trace data, and hits for unknown hooks print nothing', () => {
+  const store = hookStore();
+  const f = fakeFermion();
+  const writes: unknown[][] = [];
+  const traced: unknown[] = [];
+  setTerminalSink({ write: (k: string, t: string) => writes.push([k, t]) });
+  setTraceSink((p) => traced.push(p));
+  initBridge(store, f);
+  store.dispatch(sessionActions.setTraceMode(true));
+  f.emit('message', { type: 'send', payload: { ...BATCH, hits: [{ ...BATCH.hits[0], id: 'ghost' }] } });
+  expect(traced).toEqual([]);
+  expect(writes).toEqual([]);
+  setTraceSink(null);
+});
+
+test('when the session detaches, the hooks are marked as waiting', () => {
+  const store = hookStore();
+  const f = fakeFermion();
+  setTerminalSink({ write: () => {} });
+  initBridge(store, f);
+  store.dispatch(hooksActions.patched({ id: 'h1', status: 'on' }));
+  f.emit('detached', 'process-terminated');
+  expect(store.getState().hooks.hooks[0].status).toBe('waiting');
+});
+
+test('a store without the Hooks slice still prints such a message instead of failing', () => {
+  const store = makeStore();
+  const f = fakeFermion();
+  const writes: unknown[][] = [];
+  setTerminalSink({ write: (k: string, t: string) => writes.push([k, t]) });
+  initBridge(store, f);
+  expect(() => f.emit('message', { type: 'send', payload: BATCH })).not.toThrow();
+  expect(writes.length).toBe(1);
 });

@@ -55,3 +55,15 @@ test('cancelEvaluate is allow-listed', async () => {
   const dispatch = createDispatch({ cancelEvaluate: async () => true });
   assert.equal(await dispatch('cancelEvaluate'), true);
 });
+
+test('the Hooks tab operations are allow-listed and forward their arguments', async () => {
+  const names = ['hookSearch', 'hookAdd', 'hookUpdate', 'hookRemove', 'hookEnable', 'hookSymbolicate'];
+  const { INVOKE_METHODS, createDispatch } = require('./frida-ipc.js');
+  assert.deepEqual([...INVOKE_METHODS].filter((m) => m.startsWith('hook')).sort(), names.slice().sort());
+  const seen = [];
+  const service = Object.fromEntries(names.map((n) => [n, async (...a) => { seen.push([n, ...a]); return n; }]));
+  const dispatch = createDispatch(service);
+  assert.equal(await dispatch('hookSearch', 'exports', 'open'), 'hookSearch');
+  assert.equal(await dispatch('hookEnable', 'hk-1', false), 'hookEnable');
+  assert.deepEqual(seen, [['hookSearch', 'exports', 'open'], ['hookEnable', 'hk-1', false]]);
+});

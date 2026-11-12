@@ -8,6 +8,7 @@ const api = () => (window as any).fermion;
 // Views the rail jumps to (also reachable via the toolbox tab row).
 const VIEWS: { tab: ToolboxTab; icon: IconName; label: string }[] = [
   { tab: 'editor', icon: 'session', label: 'Session' },
+  { tab: 'hooks', icon: 'hook', label: 'Hooks' },
   { tab: 'graph', icon: 'graph', label: 'Graph' },
   { tab: 'tree', icon: 'tree', label: 'Process tree' },
   { tab: 'inspector', icon: 'inspect', label: 'Inspector' },

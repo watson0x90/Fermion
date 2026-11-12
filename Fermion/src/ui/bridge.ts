@@ -4,6 +4,8 @@
 import { formatMessage } from '../output-model.js';
 import { sessionActions } from './store/sessionSlice';
 import { outputActions } from './store/outputSlice';
+import { hooksActions } from './store/hooksSlice';
+import { asHitBatch, hitLine, Hook } from './hooking/model';
 
 // Pure: a SEND/MSG payload goes to the trace graph only while trace mode is on.
 export function routeMessage(kind: string, traceMode: boolean): 'trace' | 'terminal' {
@@ -56,6 +58,23 @@ export function initBridge(store: AnyStore, injected?: Fermion): void {
   if (!fermion) return;
 
   fermion.onMessage((m: any) => {
+    // Hits from the Hooks tab's agent: to its store, and as lines to Output.
+    // Checked before trace routing, so tracing a graph does not swallow them.
+    const batch = m?.type === 'send' && store.getState().hooks ? asHitBatch(m.payload) : null;
+    if (batch) {
+      const before = store.getState().hooks;
+      store.dispatch(hooksActions.batchReceived(batch));
+      if (before.echo) {
+        const names = new Map<string, string>(before.hooks.map((h: Hook) => [h.id, h.name]));
+        for (const hit of batch.hits) {
+          const name = names.get(hit.id);
+          if (name === undefined) continue;
+          writeTerminal(hit.error ? 'ERR' : 'MSG', hitLine(name, hit));
+          store.dispatch(outputActions.counted());
+        }
+      }
+      return;
+    }
     const { kind, text } = formatMessage(m);
     if (routeMessage(kind, store.getState().session.traceMode) === 'trace') {
       traceSink?.(m.payload);
@@ -73,6 +92,7 @@ export function initBridge(store: AnyStore, injected?: Fermion): void {
 
   fermion.onDetached((reason: string) => {
     store.dispatch(sessionActions.detached());
+    if (store.getState().hooks) store.dispatch(hooksActions.sessionEnded());
     writeTerminal('STATUS', `[+] Exit Reason: ${reason}`);
   });
 }

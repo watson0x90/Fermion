@@ -4,13 +4,14 @@
 
 export type IconName =
   | 'mark' | 'session' | 'graph' | 'tree' | 'inspect' | 'docs' | 'info' | 'gear'
-  | 'refresh' | 'play' | 'reload' | 'stop' | 'follow' | 'clear' | 'save' | 'floppy'
+  | 'hook' | 'refresh' | 'play' | 'reload' | 'stop' | 'follow' | 'clear' | 'save' | 'floppy'
   | 'search' | 'wrap' | 'expand' | 'popout' | 'dock' | 'chevron' | 'plus' | 'folder' | 'clock' | 'saveas' | 'tick' | 'min' | 'max' | 'unmax' | 'close';
 
 const P: Record<IconName, React.ReactNode> = {
   mark: (<><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none" /><ellipse cx="12" cy="12" rx="10" ry="4.3" /><ellipse cx="12" cy="12" rx="10" ry="4.3" transform="rotate(60 12 12)" /><ellipse cx="12" cy="12" rx="10" ry="4.3" transform="rotate(120 12 12)" /></>),
   session: (<><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 9l3 3-3 3M13 15h4" /></>),
   graph: (<><circle cx="6" cy="6" r="2.4" /><circle cx="18" cy="9" r="2.4" /><circle cx="9" cy="18" r="2.4" /><path d="M8 7.5l7.6 1M8.5 16l-1-6M11 17l5.2-6" /></>),
+  hook: (<><path d="M12 3v9a4 4 0 11-8 0v-1" /><path d="M4 8l0 3 3 0" opacity=".55" /><circle cx="12" cy="3" r="1.2" /><path d="M16 8h5M16 12h5M16 16h3" opacity=".55" /></>),
   tree: (<><rect x="9" y="3" width="6" height="5" rx="1" /><rect x="3" y="16" width="6" height="5" rx="1" /><rect x="15" y="16" width="6" height="5" rx="1" /><path d="M12 8v4M6 16v-2h12v2" /></>),
   inspect: (<><circle cx="11" cy="11" r="7" /><path d="M11 8v6M8 11h6" opacity=".55" /><path d="M16.5 16.5L21 21" /></>),
   docs: (<><path d="M6 3h8l4 4v14H6z" /><path d="M14 3v4h4M9 12h6M9 16h6" /></>),
