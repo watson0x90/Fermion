@@ -840,3 +840,42 @@ test('a caught child with strange data is announced in a bounded, plain form', a
   assert.equal(t.events[0].argv[0].length, 1024);
   assert.deepEqual(t.events[1].argv, []);
 });
+
+// ---- scripts that import packages ----
+test('loadScript: without a preparer the script is loaded as written', async () => {
+  const { svc, session } = attachedService();
+  await svc.attach(1);
+  assert.deepEqual(await svc.loadScript('send(1);'), { compiled: false });
+  assert.equal(session.scripts[0].src, 'send(1);');
+});
+
+test('loadScript / reloadScript load what the preparer returns and say whether it was compiled', async () => {
+  const { svc, session } = attachedService();
+  svc.setScriptPreparer(async (src) => (src.includes('import') ? { code: 'BUNDLE:' + src, compiled: true } : { code: src, compiled: false }));
+  await svc.attach(1);
+  assert.deepEqual(await svc.loadScript('import a from "a";'), { compiled: true });
+  assert.equal(session.scripts[0].src, 'BUNDLE:import a from "a";');
+  assert.deepEqual(await svc.reloadScript('send(2);'), { compiled: false });
+  assert.equal(session.scripts[1].src, 'send(2);');
+  assert.equal(session.scripts[0].unloaded, true);
+});
+
+test('reloadScript: a script that does not compile leaves the running one in place', async () => {
+  const { svc, session } = attachedService();
+  svc.setScriptPreparer(async (src) => { if (src.includes('broken')) throw new Error('The script did not compile:\nscript.js:1:1: nope'); return { code: src, compiled: false }; });
+  await svc.attach(1);
+  await svc.loadScript('send(1);');
+  await assert.rejects(() => svc.reloadScript('broken'), /did not compile/);
+  assert.equal(session.scripts.length, 1);
+  assert.equal(session.scripts[0].unloaded, false);
+  await assert.rejects(() => svc.loadScript(5), /must be text/);
+});
+
+test('reloadScript without a session says so before compiling anything', async () => {
+  const { FridaService } = require('./frida-service.js');
+  const svc = new FridaService();
+  let compiled = 0;
+  svc.setScriptPreparer(async (src) => { compiled++; return { code: src, compiled: true }; });
+  await assert.rejects(() => svc.reloadScript('import a from "a";'), /not attached/i);
+  assert.equal(compiled, 0);
+});

@@ -103,6 +103,9 @@ jobs:
       - name: Hooks and bookmarks survive a restart
         run: xvfb-run -a node scripts/ui-test-workspace.js
 
+      - name: Packages are installed, imported and compiled into the script
+        run: xvfb-run -a node scripts/ui-test-packages.js
+
       - name: Hooks tab finds, hooks and lists calls
         run: xvfb-run -a node scripts/ui-test-hooks.js
 

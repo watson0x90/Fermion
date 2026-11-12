@@ -510,3 +510,29 @@ button.vrow:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 6%, 
 .bm-where { font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bm-actions { display: flex; gap: 5px; align-items: center; }
 .bm-actions .pill { white-space: nowrap; }
+
+/* ---- Editor: Packages ---- */
+.pkg-panel { flex: 0 0 auto; max-height: 60%; min-height: 120px; display: flex; flex-direction: column; border-bottom: 1px solid var(--border); background: var(--panel); }
+.pkg-head { display: flex; align-items: baseline; gap: 10px; padding: 8px 10px 6px; font-size: 12px; color: var(--fg); }
+.pkg-head .pkg-sub { flex: 1; min-width: 0; font-size: 11.5px; color: var(--muted); }
+.pkg-head .pill { align-self: center; }
+.pkg-list { overflow: auto; flex: 0 0 auto; max-height: 116px; }
+.pkg-list.results { flex: 1 1 0; min-height: 56px; max-height: none; border-top: 1px solid var(--border); }
+.pkg-row { display: grid; grid-template-columns: minmax(90px, 1.1fr) auto minmax(0, 2fr) auto auto; column-gap: 9px; align-items: center; height: 28px; padding: 0 10px; font-size: 12px; }
+.pkg-list.results .pkg-row { grid-template-columns: minmax(90px, 1.1fr) auto minmax(0, 2fr) auto; }
+.pkg-row:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.pkg-row .pn { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pkg-row .pv { color: var(--faint); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 11px; white-space: nowrap; }
+.pkg-row .pd { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pkg-row .pill { padding: 2px 8px; white-space: nowrap; }
+.pkg-search { display: flex; gap: 8px; align-items: center; padding: 7px 10px; border-top: 1px solid var(--border); }
+.pkg-search .insp-filter { flex: 1; max-width: none; }
+.pkg-more { padding: 6px 10px; font-size: 11px; color: var(--faint); }
+.pkg-panel .insp-empty code { font-family: "IBM Plex Mono", ui-monospace, monospace; color: var(--muted); }
+
+/* The Editor's Recent menu hangs from the toolbar, not from its button: with
+   more buttons in the toolbar the button sits further left, and a menu
+   anchored to it ran off the edge of the toolbox and was cut off. */
+.editorpane > .ptool { position: relative; }
+.editorpane .menu-anchor { position: static; }
+.editorpane .menu { right: 8px; top: calc(100% + 3px); max-width: calc(100% - 16px); }

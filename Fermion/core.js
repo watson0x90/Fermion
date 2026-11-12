@@ -10,6 +10,7 @@ const { createOutputWindowManager } = require('./src/output-window.js');
 const { createFileHandlers } = require('./src/file-ipc.js');
 const { RecentFiles } = require('./src/recent-files.js');
 const { createWorkspaceStore } = require('./src/workspace-store.js');
+const { createPackages, createPackageHandlers, createScriptPreparer } = require('./src/packages.js');
 var bWin;
 
 // All frida-node interaction runs here in the main process. The renderer drives
@@ -70,6 +71,34 @@ ipcMain.handle('fermion:openRecent', (_e, filePath) => fileHandlers.openRecent(f
 const workspaceStore = createWorkspaceStore(path.join(app.getPath('userData'), 'workspace.json'));
 ipcMain.handle('fermion:workspaceLoad', () => workspaceStore.load());
 ipcMain.handle('fermion:workspaceSave', (_e, data) => workspaceStore.save(data));
+// npm packages for scripts: a fixed folder in userData. A script that imports
+// a package is compiled (Frida's compiler) before it is loaded. Installing is
+// confirmed in a dialog shown from here, not by the window.
+const packages = createPackages({
+  dir: path.join(app.getPath('userData'), 'packages'),
+  getFrida: () => require('frida'),
+  spawn: require('child_process').spawn,
+});
+fridaService.setScriptPreparer(createScriptPreparer(packages));
+const packageHandlers = createPackageHandlers({
+  packages,
+  confirm: async (spec) => {
+    const { response } = await dialog.showMessageBox(bWin, {
+      type: 'question',
+      buttons: ['Install', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Install package',
+      message: 'Install ' + spec + ' from the npm registry?',
+      detail: 'Scripts that import it will run its code inside the processes you instrument. Only install packages you trust. Install scripts are not run on this machine.',
+    });
+    return response === 0;
+  },
+});
+ipcMain.handle('fermion:pkgSearch', (_e, query) => packageHandlers.search(query));
+ipcMain.handle('fermion:pkgList', () => packageHandlers.list());
+ipcMain.handle('fermion:pkgInstall', (_e, spec) => packageHandlers.install(spec));
+ipcMain.handle('fermion:pkgRemove', (_e, name) => packageHandlers.remove(name));
 ipcMain.handle('fermion:messageBox', async (_e, options) => dialog.showMessageBox(options));
 
 // A remote origin must never inherit the bridge-privileged webPreferences, so

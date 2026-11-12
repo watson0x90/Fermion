@@ -130,6 +130,31 @@ The toolbar shows the script's file name (hover for the full path), with a dot b
 
 Saving the Output log or a graph does not change which file the script is saved to.
 
+### Packages
+
+A script can import npm packages:
+
+```js
+import fs from 'frida-fs';
+
+console.log(fs.readdirSync(Process.getTmpDir()).length + ' files in the temp directory');
+```
+
+**Packages** in the Editor toolbar manages them:
+
+- The list at the top shows what is installed. **Import** adds the import line to the top of your script; the bin removes a package.
+- **Search** lists packages published for Frida (the Java, ObjC and Swift bridges among them). Any other npm package can be installed by typing its exact name, optionally with a version (`is-number@7.0.0`); it is then offered as the first result.
+- **Install** asks you to confirm, because a package's code runs inside the processes you instrument. Only install packages you trust.
+
+When a script contains an `import` (or `export`), Fermion compiles it together with its packages into one bundle before loading it, and says so in Output. A script that does not compile is not loaded: the message gives the line and, for a missing package, its name, and on Reload the script that was running stays in place. Errors thrown later, while the script runs, still point at the lines of your own script. A script with no imports is loaded exactly as written, as before.
+
+Things to know:
+
+- Packages are kept in Fermion's data folder (`packages` beside `workspace.json`), not next to your script, and are shared by every script.
+- Installing uses Frida's own package installer and, where that fails, the `npm` on your machine. On Windows Frida's installer currently fails, so Node.js with npm needs to be installed there. Install scripts that a package declares are never run.
+- Compiling uses Frida's built-in compiler. Types are not checked.
+- The REPL and hook handlers do not see packages; they are for the script in the Editor.
+
 ## Output
 
 Output shows what your script produces, coloured by kind:
@@ -336,7 +361,7 @@ Fermion ships Frida 17, which removed some long-standing APIs. Scripts written f
 | `Module.findBaseAddress(mod)` / `Module.getBaseAddress(mod)` | `Process.findModuleByName(mod).base` / `Process.getModuleByName(mod).base` |
 | `Memory.readUtf16String(p)`, `Memory.writeU32(p, v)`, … | `p.readUtf16String()`, `p.writeU32(v)`, … |
 
-The `Java`, `ObjC` and `Swift` bridges are also no longer built into the Frida runtime, so `Java.perform(...)` is not available to a plain script loaded here. A script that needs a bridge has to be bundled with it first (see `frida-compile` in the Frida documentation) and the bundle loaded into Fermion.
+The `Java`, `ObjC` and `Swift` bridges are also no longer built into the Frida runtime, so `Java.perform(...)` is not available to a plain script loaded here. A script that needs one installs it under [Packages](#packages) and imports it, for example `import ObjC from 'frida-objc-bridge';`. Fermion's own tabs do not use the bridges yet, so Android and iOS targets are not otherwise supported.
 
 The scripts in [`Examples`](Examples) have been updated to the Frida 17 export-lookup API. Several of them depend on a specific Windows build or target program, as their headers say.
 
@@ -394,7 +419,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach) |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach) |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.
@@ -426,7 +451,8 @@ If Fermion is useful in your work, pull requests, bug reports and feature reques
 * ~~More native tools built on top of Fermion~~ (REPL, Process tree, Inspector).
 * ~~Follow a thread with Stalker from the Inspector.~~
 * ~~Cancel a running REPL entry.~~
-* Android and iOS scripts: bundle the Java and ObjC bridges, which Frida 17 no longer builds in.
+* ~~Scripts can import npm packages, including the Java, ObjC and Swift bridges.~~
+* Android and iOS support in Fermion's own tabs (Hooks search for Java and ObjC methods, device-side helpers).
 
 ### Special thanks
 
