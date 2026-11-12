@@ -68,3 +68,35 @@ export function cleanIpcError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   return msg.replace(/^Error invoking remote method '[^']*': (?:\w*Error: )?/, '');
 }
+
+// ---- writing memory ----
+export const MAX_WRITE_BYTES = 4096;
+
+// What the operator typed, as the bytes to write: hex ("90 90", "0x90, 0x90",
+// "9090") or text (UTF-8). `hex` is compact lower-case pairs; '' with an
+// `error` when it is not usable. Empty input is not an error, just nothing yet.
+export function parseBytes(input: string, as: 'hex' | 'text'): { hex: string; error: string } {
+  if (!input || (as === 'hex' && !input.trim())) return { hex: '', error: '' };
+  let hex: string;
+  if (as === 'text') {
+    hex = Array.from(new TextEncoder().encode(input), (b) => b.toString(16).padStart(2, '0')).join('');
+  } else {
+    hex = input.toLowerCase().replace(/0x/g, '').replace(/[\s,]+/g, '');
+    if (!/^[0-9a-f]+$/.test(hex)) return { hex: '', error: 'Hex bytes only, e.g. 90 90 or c3.' };
+    if (hex.length % 2 !== 0) return { hex: '', error: 'A byte is two hex digits: the last one is incomplete.' };
+  }
+  if (hex.length / 2 > MAX_WRITE_BYTES) return { hex: '', error: 'At most ' + MAX_WRITE_BYTES + ' bytes can be written at once.' };
+  return { hex, error: '' };
+}
+
+// "4d5a90" -> "4d 5a 90", shortened to `max` bytes.
+export function spacedHex(hex: string, max = 16): string {
+  const bytes = hex.match(/.{2}/g) ?? [];
+  return bytes.slice(0, max).join(' ') + (bytes.length > max ? ' … (' + bytes.length + ' bytes)' : '');
+}
+
+// Do two writes touch any of the same bytes?
+export function overlaps(a: { address: string; size: number }, b: { address: string; size: number }): boolean {
+  const a0 = BigInt(a.address); const b0 = BigInt(b.address);
+  return a0 < b0 + BigInt(b.size) && b0 < a0 + BigInt(a.size);
+}

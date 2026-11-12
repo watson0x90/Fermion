@@ -1032,3 +1032,22 @@ test('without a preparer a TypeScript script is refused, not loaded as it is', a
   await assert.rejects(() => svc.loadScript('let s: string;', { typescript: true }), /cannot be compiled/i);
   assert.equal(session.scripts.length, 0);
 });
+
+// ---- writing memory ----
+test('inspectWrite validates the address and bytes in main, and passes clean values to the agent', async () => {
+  const { svc, session } = attachedService();
+  await svc.attach(1);
+  for (const bad of [[5, 'aa'], ['1000', 'aa'], ['0xzz', 'aa'], ['0x1000', ''], ['0x1000', 'a'], ['0x1000', 'aa bb'], ['0x1000', 'zz'], ['0x1000', 5], ['0x1000', 'aa'.repeat(4097)]]) {
+    await assert.rejects(() => svc.inspectWrite(bad[0], bad[1]), /invalid address|hex bytes/);
+  }
+  assert.equal(session.scripts.length, 0); // nothing reached the target
+  const calls = [];
+  svc._getAgent = async () => ({ exports: { write: async (...a) => { calls.push(a); return { address: a[0], size: 2, original: '0000', written: a[1], protection: 'rw-' }; } } });
+  assert.deepEqual(await svc.inspectWrite('0x7FF010', 'DEad'), { address: '0x7ff010', size: 2, original: '0000', written: 'dead', protection: 'rw-' });
+  assert.deepEqual(calls, [['0x7ff010', 'dead']]);
+});
+
+test('inspectWrite is on the allow-list the window can call', () => {
+  const { INVOKE_METHODS } = require('./frida-ipc.js');
+  assert.ok(INVOKE_METHODS.has('inspectWrite'));
+});

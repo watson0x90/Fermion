@@ -16,6 +16,10 @@ class Ptr {
   sub(o) { return new Ptr(this.v - (o instanceof Ptr ? o.v : BigInt(o))); }
   add(o) { return new Ptr(this.v + (o instanceof Ptr ? o.v : BigInt(o))); }
   compare(o) { return this.v < o.v ? -1 : this.v > o.v ? 1 : 0; }
+  writeByteArray(bytes) {
+    if (Ptr.unwritable) throw new Error('access violation');
+    Ptr.writes.push([this.toString(), Array.from(bytes)]);
+  }
   readByteArray(n) {
     Ptr.reads.push([this.toString(), n]);
     if (Ptr.unreadableFrom !== null && this.v + BigInt(n) > Ptr.unreadableFrom) throw new Error('access violation');
@@ -26,6 +30,8 @@ class Ptr {
 }
 Ptr.unreadableFrom = null;
 Ptr.reads = [];
+Ptr.writes = [];
+Ptr.unwritable = false;
 
 // Like Frida's CpuContext: registers are reachable by name and through toJSON,
 // but are not own enumerable properties (for-in finds none).
@@ -87,6 +93,7 @@ function load(over = {}) {
         cb.onComplete();
       });
     },
+    ...over.Memory,
   };
   const ctx = vm.createContext({
     rpc: {}, Process, Memory, ptr: (v) => new Ptr(v),
@@ -467,4 +474,73 @@ test('disassemble: unmapped or unreadable memory is refused before anything is r
 
 test('disassemble: the count is capped', () => {
   assert.equal(j(load().disassemble('0x7ff100', 100000)).items.length, 200);
+});
+
+// ---- writing memory ----
+// What was done to the fake target, in order.
+function writer(protection, over = {}) {
+  Ptr.writes = []; Ptr.reads = []; Ptr.unwritable = false;
+  const log = [];
+  const a = load({
+    Process: { findRangeByAddress: () => (protection === null ? null : { base: new Ptr(0x1000), size: 0x1000, protection }) },
+    Memory: {
+      patchCode: (p, size, apply) => { log.push(['patchCode', p.toString(), size]); apply(p); },
+      protect: (p, size, prot) => { log.push(['protect', p.toString(), size, prot]); return over.protectFails ? false : true; },
+    },
+  });
+  return { a, log };
+}
+
+test('write: bytes go to writable memory as they are, and what was there comes back', () => {
+  const { a, log } = writer('rw-');
+  assert.deepEqual(j(a.write('0x1010', 'deadbeef')), { address: '0x1010', size: 4, original: '10111213', written: 'deadbeef', protection: 'rw-' });
+  assert.deepEqual(Ptr.writes, [['0x1010', [0xde, 0xad, 0xbe, 0xef]]]);
+  assert.deepEqual(log, []); // no protection change needed
+  assert.deepEqual(Ptr.reads[0], ['0x1010', 4]); // read before it is overwritten
+});
+
+test('write: code is patched through Memory.patchCode, whatever its write permission', () => {
+  for (const prot of ['r-x', 'rwx']) {
+    const { a, log } = writer(prot);
+    assert.equal(a.write('0x1020', '9090').protection, prot);
+    assert.deepEqual(log, [['patchCode', '0x1020', 2]]);
+    assert.deepEqual(Ptr.writes, [['0x1020', [0x90, 0x90]]]);
+  }
+});
+
+test('write: read-only data is made writable for the write and put back as it was', () => {
+  const { a, log } = writer('r--');
+  a.write('0x1030', '00');
+  assert.deepEqual(log, [['protect', '0x1030', 1, 'rw-'], ['protect', '0x1030', 1, 'r--']]);
+  assert.deepEqual(Ptr.writes, [['0x1030', [0]]]);
+});
+
+test('write: the protection is put back even when the write faults', () => {
+  const { a, log } = writer('r--');
+  Ptr.unwritable = true;
+  assert.throws(() => a.write('0x1030', '00'), /Cannot write memory at 0x1030: access violation/);
+  assert.deepEqual(log.map((l) => l[3]), ['rw-', 'r--']);
+  Ptr.unwritable = false;
+});
+
+test('write: memory whose protection cannot be changed is refused, untouched', () => {
+  const { a } = writer('r--', { protectFails: true });
+  assert.throws(() => a.write('0x1030', '00'), /could not be made writable/);
+  assert.deepEqual(Ptr.writes, []);
+});
+
+test('write: outside every range, unreadable memory, or past the end of the range is refused, untouched', () => {
+  assert.throws(() => writer(null).a.write('0x1010', '00'), /is not in mapped memory/);
+  assert.throws(() => writer('---').a.write('0x1010', '00'), /is not readable/);
+  const { a } = writer('rw-');
+  assert.throws(() => a.write('0x1ffe', '000000'), /crosses the end of its range/);
+  a.write('0x1ffe', '0000'); // exactly to the end is fine
+  assert.deepEqual(Ptr.writes, [['0x1ffe', [0, 0]]]);
+});
+
+test('write: only 1..4096 whole hex bytes', () => {
+  const { a } = writer('rw-');
+  for (const bad of ['', 'd', 'xyz1', 'dead beef', 5, null, '00'.repeat(4097)]) assert.throws(() => a.write('0x1010', bad), /hex bytes/);
+  assert.equal(a.write('0x1000', '00'.repeat(4096)).size, 4096);
+  assert.equal(Ptr.writes.length, 1);
 });

@@ -299,13 +299,103 @@ const T = { timeout: 20000 };
       console.log('DISASM ' + before + ' instructions at pc; ' + followed);
     }
 
+    // ---- writing memory ----
+    {
+      const evalIn = async (code) => {
+        const r = await win.evaluate((c) => window.fermion.evaluate(c), code);
+        if (!r || !r.ok) throw new Error('evaluate failed: ' + JSON.stringify(r).slice(0, 200));
+        // A string result is printed quoted, as the REPL shows it.
+        try { return r.text.startsWith('"') ? JSON.parse(r.text) : r.text; } catch (_) { return r.text; }
+      };
+      const firstBytes = () => win.evaluate(() => [...document.querySelectorAll('[data-testid="hex-row"]')][0].querySelector('.hb').textContent.slice(0, 8));
+      const gotoAddress = async (addr) => {
+        await win.fill('[data-testid="mem-addr"]', addr);
+        await win.click('[data-testid="mem-go"]');
+        try {
+          await win.waitForFunction((a) => document.querySelector('[data-testid="hex-row"] .ha')?.textContent === a, addr, T);
+        } catch (_) {
+          throw new Error('the hex view did not show ' + addr + ': ' + JSON.stringify(await win.evaluate(() => ({
+            first: document.querySelector('[data-testid="hex-row"] .ha')?.textContent ?? null,
+            error: document.querySelector('[data-testid="hex-error"]')?.textContent ?? null,
+            input: document.querySelector('[data-testid="mem-addr"]')?.value ?? null,
+          }))));
+        }
+      };
+      const writeAt = async (index, text, as) => {
+        await win.locator('[data-testid="hex-byte"]').nth(index).click();
+        if (as) await win.selectOption('[data-testid="mem-edit-as"]', as);
+        await win.fill('[data-testid="mem-edit-input"]', text);
+        await win.click('[data-testid="mem-write"]');
+      };
+
+      step = 'memory: nothing writes until Edit is on';
+      // A buffer from the target's own malloc (Frida hides memory it allocates itself): 0x100-aligned, so it is the top of a page of the view.
+      const buf = await evalIn('const malloc = new NativeFunction(Module.getGlobalExportByName("malloc"), "pointer", ["size_t"]); globalThis.__fermionBuf = malloc(0x300); const p = globalThis.__fermionBuf.add(0x100).and(ptr(0xff).not()); globalThis.__fermionAt = p; p.writeByteArray([1,2,3,4,5,6,7,8]); p.toString()');
+      if (!/^0x[0-9a-f]+00$/.test(buf)) throw new Error('test buffer address: ' + buf);
+      const bufBefore = await evalIn('Array.from(new Uint8Array(globalThis.__fermionAt.readByteArray(10))).join(",")');
+      await win.click('role=tab[name="Inspector"]');
+      await win.click('[data-testid="insp-memory"]');
+      await gotoAddress(buf);
+      if ((await firstBytes()) !== '01020304') throw new Error('the buffer is not in the view: ' + await firstBytes());
+      if (await win.$('[data-testid="hex-byte"]')) throw new Error('bytes can be picked while Edit is off');
+
+      step = 'memory: write bytes, see them, and the target sees them';
+      await win.click('[data-testid="mem-edit"]');
+      await writeAt(1, 'de ad be');
+      await win.waitForFunction(() => [...document.querySelectorAll('[data-testid="hex-row"]')][0].querySelector('.hb').textContent.startsWith('01deadbe05'), undefined, T);
+      if ((await evalIn('Array.from(new Uint8Array(globalThis.__fermionAt.readByteArray(6))).join(",")')) !== '1,222,173,190,5,6') throw new Error('the target does not hold the written bytes');
+      if (!/Wrote 3 bytes at 0x[0-9a-f]+01: de ad be \(was 02 03 04\)/.test(await win.evaluate(() => window.__fermion.terminal.getText()))) throw new Error('the write was not announced with what it replaced');
+
+      step = 'memory: text is written as its bytes';
+      await writeAt(8, 'Hi', 'text');
+      await win.waitForFunction(() => [...document.querySelectorAll('[data-testid="hex-row"] .hc')].some((e) => e.textContent.includes('Hi')), undefined, T);
+      if ((await evalIn('Array.from(new Uint8Array(globalThis.__fermionAt.add(8).readByteArray(2))).join(",")')) !== '72,105') throw new Error('the text was not written as its bytes');
+      await win.selectOption('[data-testid="mem-edit-as"]', 'hex');
+
+      await win.locator('[data-testid="hex-byte"]').nth(1).click();
+      await win.fill('[data-testid="mem-edit-input"]', '90 90');
+      if (shot) await win.screenshot({ path: shot + '-memory-edit.png' });
+      await win.click('[data-testid="mem-edit-cancel"]');
+
+      step = 'memory: revert, newest first';
+      await win.click('[data-testid="mem-mode-writes"]');
+      await win.waitForFunction(() => document.querySelectorAll('[data-testid="write-row"]').length === 2, undefined, T);
+      await win.locator('[data-testid="write-revert"]').nth(1).click();
+      await win.waitForFunction(() => document.querySelectorAll('[data-testid="write-row"]').length === 1, undefined, T);
+      await win.locator('[data-testid="write-revert"]').first().click();
+      await win.waitForFunction(() => document.querySelectorAll('[data-testid="write-row"]').length === 0, undefined, T);
+      const afterRevert = await evalIn('Array.from(new Uint8Array(globalThis.__fermionAt.readByteArray(10))).join(",")');
+      if (afterRevert !== bufBefore) throw new Error('revert did not restore the buffer: ' + afterRevert + ' (was ' + bufBefore + ')');
+
+      step = 'memory: code can be patched and put back';
+      // A function nobody calls here: overwrite its first byte, check, revert.
+      const fnInfo = JSON.parse(await evalIn('const f = Process.getModuleByName(Process.platform === "windows" ? "kernel32.dll" : Process.mainModule.name).enumerateExports().filter((e) => e.type === "function" && /^(Beep|GetTapeStatus|SetTapePosition)$/.test(e.name))[0] || null; JSON.stringify(f ? { address: f.address.toString(), first: f.address.readU8() } : null)'));
+      if (fnInfo) {
+        await win.click('[data-testid="mem-mode-ranges"]');
+        const page = '0x' + (BigInt(fnInfo.address) & ~0xffn).toString(16);
+        const index = Number(BigInt(fnInfo.address) & 0xffn);
+        await gotoAddress(page);
+        await writeAt(index, 'cc');
+        await win.waitForFunction(() => /Wrote 1 byte at /.test(window.__fermion.terminal.getText().split('\n').filter((l) => l.includes('Wrote')).pop() || ''), undefined, T);
+        if ((await evalIn('ptr("' + fnInfo.address + '").readU8()')) !== '204') throw new Error('the code byte was not patched');
+        await win.click('[data-testid="mem-mode-writes"]');
+        await win.click('[data-testid="write-revert"]');
+        await win.waitForFunction(() => document.querySelectorAll('[data-testid="write-row"]').length === 0, undefined, T);
+        if ((await evalIn('ptr("' + fnInfo.address + '").readU8()')) !== String(fnInfo.first)) throw new Error('the code byte was not restored');
+      }
+
+      step = 'memory: Edit off again';
+      await win.click('[data-testid="mem-edit"]');
+      if (await win.$('[data-testid="mem-editbar"]')) throw new Error('the write bar stayed after Edit was switched off');
+    }
+
     step = 'target unharmed + detach';
     const alive = await win.evaluate(() => window.fermion.evaluate('Process.id'));
     if (!alive.ok || alive.text !== String(target.pid)) throw new Error('target no longer answers: ' + JSON.stringify(alive));
     await win.click('[data-testid="detach"]');
     await win.waitForFunction(() => /Attach to a process/.test(document.querySelector('[data-testid="inspector-panel"]').textContent), undefined, T);
 
-    console.log('INSPECT_OK modules + exports/imports + hex view + paging + unreadable address + text scan (' + status.trim() + ') + threads/registers/backtrace + follow (scope, filter, by module) + address menu + disassembly');
+    console.log('INSPECT_OK modules + exports/imports + hex view + paging + memory write and revert (data, text, code) + unreadable address + text scan (' + status.trim() + ') + threads/registers/backtrace + follow (scope, filter, by module) + address menu + disassembly');
     await app.close();
     done(0);
   } catch (e) {

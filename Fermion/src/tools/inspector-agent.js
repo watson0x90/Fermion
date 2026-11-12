@@ -10,6 +10,7 @@
 	var MAX_SYMBOLS = 20000;   // exports / imports per module
 	var MAX_RANGES = 20000;
 	var MAX_READ = 4096;       // bytes per read
+	var MAX_WRITE = 4096;      // bytes per write
 	var MAX_MATCHES = 500;     // scan results
 	var SCAN_BUDGET_MS = 8000; // stop scanning after this long
 	var SCAN_CHUNK = 16 * 1024 * 1024; // bytes scanned per step, so the limits are checked often
@@ -311,6 +312,45 @@
 				protection: range.protection,
 				items: items,
 			};
+		},
+
+		// Overwrite bytes. The write must lie inside one mapped, readable
+		// range. What was there is read first and returned, so it can be put
+		// back. Code goes through Memory.patchCode (which handles pages that
+		// may not be writable and executable at once, and the instruction
+		// cache); read-only data is made writable for the write only.
+		write: function (address, bytesHex) {
+			if (typeof bytesHex !== 'string' || !/^(?:[0-9a-fA-F]{2})+$/.test(bytesHex) || bytesHex.length > MAX_WRITE * 2) {
+				throw new Error('The bytes to write must be 1..' + MAX_WRITE + ' hex bytes');
+			}
+			var n = bytesHex.length / 2;
+			var bytes = [];
+			for (var i = 0; i < n; i++) bytes.push(parseInt(bytesHex.substr(i * 2, 2), 16));
+			var p = ptr(address);
+			var range = Process.findRangeByAddress(p);
+			if (!range) throw new Error('Memory at ' + hex(p) + ' is not in mapped memory');
+			var prot = range.protection;
+			if (prot.charAt(0) !== 'r') throw new Error('Memory at ' + hex(p) + ' is not readable');
+			if (range.size - Number(p.sub(range.base).toString()) < n) throw new Error('A write of ' + n + ' bytes at ' + hex(p) + ' crosses the end of its range');
+			var original;
+			try {
+				original = bytesToHex(p.readByteArray(n));
+			} catch (e) {
+				throw new Error('Cannot read memory at ' + hex(p) + ': ' + e.message);
+			}
+			try {
+				if (prot.charAt(2) === 'x') {
+					Memory.patchCode(p, n, function (code) { code.writeByteArray(bytes); });
+				} else if (prot.charAt(1) === 'w') {
+					p.writeByteArray(bytes);
+				} else {
+					if (!Memory.protect(p, n, 'rw-')) throw new Error('the memory could not be made writable');
+					try { p.writeByteArray(bytes); } finally { Memory.protect(p, n, prot); }
+				}
+			} catch (e) {
+				throw new Error('Cannot write memory at ' + hex(p) + ': ' + e.message);
+			}
+			return { address: hex(p), size: n, original: original, written: bytesHex.toLowerCase(), protection: prot };
 		},
 
 		ranges: function (protection) {

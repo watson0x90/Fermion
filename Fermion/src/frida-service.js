@@ -189,6 +189,14 @@ function checkInstructionCount(count) {
 	if (!Number.isSafeInteger(count) || count < 1 || count > MAX_INSTRUCTIONS) throw new Error('invalid instruction count (must be 1..' + MAX_INSTRUCTIONS + ')');
 	return count;
 }
+// Bytes to write: 1..4096 hex byte pairs, nothing else.
+const MAX_WRITE_BYTES = 4096;
+function checkWriteBytes(bytes) {
+	if (typeof bytes !== 'string' || !/^(?:[0-9a-fA-F]{2})+$/.test(bytes) || bytes.length > MAX_WRITE_BYTES * 2) {
+		throw new Error('the bytes to write must be 1..' + MAX_WRITE_BYTES + ' hex bytes');
+	}
+	return bytes.toLowerCase();
+}
 function checkReadSize(size) {
 	if (!Number.isSafeInteger(size) || size < 1 || size > MAX_READ_BYTES) throw new Error('invalid size (must be 1..' + MAX_READ_BYTES + ' bytes)');
 	return size;
@@ -589,6 +597,9 @@ class FridaService extends EventEmitter {
 	async inspectBacktrace(threadId) { return this._inspect('backtrace', checkThreadId(threadId)); }
 	async inspectRanges(protection) { return this._inspect('ranges', checkProtection(protection)); }
 	async inspectRead(address, size) { return this._inspect('read', checkAddress(address), checkReadSize(size)); }
+	// Overwrite bytes in the attached process. Returns what was there, which
+	// is how a write is undone: by writing that back.
+	async inspectWrite(address, bytes) { return this._inspect('write', checkAddress(address), checkWriteBytes(bytes)); }
 	async inspectDisassemble(address, count) { return this._inspect('disassemble', checkAddress(address), checkInstructionCount(count)); }
 	async inspectScan(pattern, protection) { return this._inspect('scan', checkPattern(pattern), checkProtection(protection)); }
 	// Follow one thread with Stalker and count the calls it makes; unfollow
