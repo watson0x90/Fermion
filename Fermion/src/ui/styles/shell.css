@@ -470,3 +470,24 @@ select.mini:disabled, input.mini:disabled { opacity: .5; }
 .group textarea.sel { resize: vertical; min-height: 54px; padding: 6px 8px; font-size: 11.5px; line-height: 1.4; font-family: "IBM Plex Mono", ui-monospace, monospace; }
 .group .chk { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--muted); cursor: pointer; }
 .group .chk input { margin: 0; accent-color: var(--accent); }
+
+/* ---- REPL: a result as an expandable tree ---- */
+.vtree { font: inherit; }
+.vrow { display: flex; align-items: baseline; gap: 0; min-width: 0; }
+button.vrow { width: 100%; border: 0; background: transparent; padding: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+button.vrow:disabled { cursor: default; }
+button.vrow:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.vpad { flex: 0 0 14px; display: inline-flex; align-items: center; justify-content: center; color: var(--faint); align-self: center; }
+.vpad.chev svg { transition: transform .1s; }
+.vpad.chev.open svg { transform: rotate(90deg); }
+.vkids { margin-left: 14px; border-left: 1px solid var(--border); padding-left: 2px; }
+.vk { color: var(--muted); white-space: pre; }
+.vsum { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.vv { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
+.vv.str { color: var(--log); }
+.vv.num, .vv.bool { color: var(--msg); }
+.vv.null, .vv.undef, .vv.cut { color: var(--faint); }
+.vv.fn { color: var(--warn); }
+.vv.ptr { border: 0; background: transparent; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.vv.ptr:hover { text-decoration: underline; }
+.vmore { color: var(--faint); font-style: italic; }

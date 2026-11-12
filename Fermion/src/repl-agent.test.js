@@ -35,7 +35,7 @@ test('objects and arrays are pretty-printed; Frida value types print as themselv
   assert.equal(obj.ok, true);
   assert.equal(obj.type, 'object');
   assert.equal(obj.text, '{\n  "name": "kernel32.dll",\n  "base": "0x7ff0",\n  "n": [\n    1,\n    2\n  ]\n}');
-  assert.deepEqual(await ev('ptr(0x1000)'), { ok: true, type: 'NativePointer', text: '0x1000' });
+  assert.deepEqual(await ev('ptr(0x1000)'), { ok: true, type: 'NativePointer', text: '0x1000', tree: { t: 'ptr', v: '0x1000' } });
   assert.deepEqual(await ev('new Int64(5)'), { ok: true, type: 'Int64', text: '5' });
   assert.equal((await ev('[ptr(1), ptr(2)]')).text, '[\n  "0x1",\n  "0x2"\n]');
 });
@@ -216,4 +216,75 @@ test('globals: the names available at the prompt (for the help overview)', async
   const r = JSON.parse((await ev('__fermion.globals()')).text);
   assert.ok(r.includes('mine') && r.includes('ptr') && r.includes('NativePointer'));
   assert.ok(!r.includes('__fermion'));
+});
+
+// ---- structured results (the REPL's expandable values) ----
+test('tree: an object comes with a tree of its values; pointers stay pointers, at any depth', async () => {
+  const ev = load();
+  const r = await ev('({ name: "kernel32.dll", base: ptr(0x7ff0), size: 4096, ok: true, none: null, missing: undefined, list: [1, ptr(2)] })');
+  assert.deepEqual(r.tree, {
+    t: 'obj', label: 'Object', n: 7, kids: [
+      { k: 'name', v: { t: 'str', v: 'kernel32.dll' } },
+      { k: 'base', v: { t: 'ptr', v: '0x7ff0' } },
+      { k: 'size', v: { t: 'num', v: '4096' } },
+      { k: 'ok', v: { t: 'bool', v: 'true' } },
+      { k: 'none', v: { t: 'null', v: 'null' } },
+      { k: 'missing', v: { t: 'undef', v: 'undefined' } },
+      { k: 'list', v: { t: 'arr', n: 2, kids: [{ k: '0', v: { t: 'num', v: '1' } }, { k: '1', v: { t: 'ptr', v: '0x2' } }] } },
+    ],
+  });
+  // The printed text is unchanged.
+  assert.match(r.text, /"name": "kernel32.dll"/);
+});
+
+test('tree: plain values need no tree', async () => {
+  const ev = load();
+  for (const code of ['1 + 2', '"hi"', 'true', 'null', 'undefined', 'new Int64(5)', '(function f() {})']) {
+    assert.equal((await ev(code)).tree, undefined, code);
+  }
+});
+
+test('tree: class instances are named; functions, Frida numbers and big integers print as themselves', async () => {
+  const ev = load();
+  const r = await ev('(function () { class Mod { constructor() { this.n = new Int64(5); this.f = function go() {}; this.big = 10n; } } return new Mod(); })()');
+  assert.equal(r.tree.label, 'Mod');
+  assert.deepEqual(r.tree.kids, [
+    { k: 'n', v: { t: 'other', v: '5' } },
+    { k: 'f', v: { t: 'fn', v: 'go()' } },
+    { k: 'big', v: { t: 'num', v: '10n' } },
+  ]);
+});
+
+test('tree: containers list at most 100 children and say how many more there are', async () => {
+  const ev = load();
+  const arr = (await ev('Array.from({ length: 350 }, (_, i) => i)')).tree;
+  assert.equal(arr.n, 350);
+  assert.equal(arr.kids.length, 100);
+  assert.equal(arr.more, 250);
+  const obj = (await ev('Object.fromEntries(Array.from({ length: 130 }, (_, i) => ["k" + i, i]))')).tree;
+  assert.equal(obj.kids.length, 100);
+  assert.equal(obj.more, 30);
+});
+
+test('tree: cycles, great depth and a getter that throws end a branch instead of the result', async () => {
+  const ev = load();
+  const cyc = (await ev('(function () { var a = { name: "a" }; a.self = a; return a; })()')).tree;
+  assert.deepEqual(cyc.kids[1], { k: 'self', v: { t: 'cut', v: '[Circular]' } });
+  const deep = (await ev('(function () { var root = {}, cur = root; for (var i = 0; i < 40; i++) { cur.next = {}; cur = cur.next; } return root; })()')).tree;
+  let node = deep; let depth = 0;
+  while (node.t === 'obj') { node = node.kids[0].v; depth++; }
+  assert.deepEqual(node, { t: 'cut', v: '…' });
+  assert.ok(depth <= 8, 'depth ' + depth);
+  const thrower = (await ev('({ get bad() { throw new Error("nope"); }, fine: 1 })')).tree;
+  assert.deepEqual(thrower.kids, [{ k: 'bad', v: { t: 'other', v: '[Thrown: nope]' } }, { k: 'fine', v: { t: 'num', v: '1' } }]);
+});
+
+test('tree: a huge structure is cut to a bounded number of nodes, and long strings are clipped', async () => {
+  const ev = load();
+  const r = await ev('Array.from({ length: 90 }, () => Array.from({ length: 90 }, () => ({ a: 1 })))');
+  const count = (n) => 1 + (n.kids ? n.kids.reduce((s, k) => s + count(k.v), 0) : 0);
+  assert.ok(count(r.tree) <= 6000, 'nodes ' + count(r.tree));
+  assert.ok(JSON.stringify(r.tree).length < 400000);
+  const long = (await ev('({ s: "x".repeat(50000) })')).tree;
+  assert.equal(long.kids[0].v.v.length, 2001);
 });

@@ -201,3 +201,4 @@
 * Inspector: Disassembly view (instructions at an address, follow calls and jumps, Back, More). Right-click any address in Fermion for a menu: copy, open in Memory, open in Disassembly, hook it
 * Spawn: environment variables, working directory, quoted arguments with spaces, and Start suspended with a Resume button; hooks are placed before a spawned program runs. A failed spawn is reported instead of failing silently
 * When a session ends the sidebar says why and offers Spawn again / Attach again
+* REPL: object and array results are an expandable tree; pointers in a result open the address menu

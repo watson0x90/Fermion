@@ -5,7 +5,9 @@
 // global assignments persist from one entry to the next.
 //
 // The result is always a plain object the host can show as text:
-//   { ok: true,  type, text }      the value, printed
+//   { ok: true,  type, text }      the value, printed. Objects, arrays and
+//                                  pointers also carry `tree`, the value as a
+//                                  bounded tree for the REPL's expandable view
 //   { ok: false, error, stack }    it threw (or the promise rejected)
 
 (function () {
@@ -101,12 +103,81 @@
 		}
 	}
 
+	// ---- the value as a tree ----
+	// { t, v } for a leaf: str, num, bool, null, undef, fn, ptr (a NativePointer),
+	// other (anything else that prints as itself), cut (a branch not followed).
+	// { t: 'obj' | 'arr', label, n, kids: [{ k, v }], more } for a container: n is
+	// how many children it has, kids the first of them, more the number left out.
+	var TREE_DEPTH = 6;       // containers nested inside the result
+	var TREE_CONTAINERS = 400; // containers walked per result
+	var TREE_CHILDREN = 100;  // children listed per container
+	var TREE_TEXT = 2000;     // characters per string
+
+	function isPointer(v) {
+		return typeof NativePointer !== 'undefined' && v instanceof NativePointer;
+	}
+
+	function buildTree(value) {
+		var path = [];
+		var containers = 0;
+		function walk(v) {
+			var t = typeof v;
+			if (v === null) return { t: 'null', v: 'null' };
+			if (t === 'string') return { t: 'str', v: v.length > TREE_TEXT ? v.slice(0, TREE_TEXT) + '…' : v };
+			if (t === 'number') return { t: 'num', v: String(v) };
+			if (t === 'boolean') return { t: 'bool', v: String(v) };
+			if (t === 'undefined') return { t: 'undef', v: 'undefined' };
+			if (t === 'bigint') return { t: 'num', v: v.toString() + 'n' };
+			if (t === 'symbol') return { t: 'other', v: v.toString() };
+			if (t === 'function') return { t: 'fn', v: (v.name || 'anonymous') + '()' };
+			if (isPointer(v)) return { t: 'ptr', v: String(v) };
+			if (!isPlain(v)) {
+				if (typeof v.toJSON === 'function') {
+					var viaJson;
+					try { viaJson = v.toJSON(); } catch (e) { return { t: 'other', v: '[Thrown: ' + e.message + ']' }; }
+					if (viaJson !== v) return walk(viaJson);
+				} else {
+					var s = String(v);
+					if (s !== '[object Object]') return { t: 'other', v: s.length > TREE_TEXT ? s.slice(0, TREE_TEXT) + '…' : s };
+				}
+			}
+			if (path.indexOf(v) !== -1) return { t: 'cut', v: '[Circular]' };
+			if (path.length >= TREE_DEPTH || containers >= TREE_CONTAINERS) return { t: 'cut', v: '…' };
+			containers++;
+			path.push(v);
+			var isArray = Array.isArray(v);
+			var keys = isArray ? null : Object.keys(v);
+			var total = isArray ? v.length : keys.length;
+			var node = isArray ? { t: 'arr', n: total, kids: [] } : { t: 'obj', label: typeName(v) === 'object' ? 'Object' : typeName(v), n: total, kids: [] };
+			var shown = Math.min(total, TREE_CHILDREN);
+			for (var i = 0; i < shown; i++) {
+				var key = isArray ? i : keys[i];
+				var child;
+				try { child = walk(v[key]); } catch (e) { child = { t: 'other', v: '[Thrown: ' + e.message + ']' }; }
+				node.kids.push({ k: String(key), v: child });
+			}
+			if (total > shown) node.more = total - shown;
+			path.pop();
+			return node;
+		}
+		return walk(value);
+	}
+
 	function clip(text) {
 		if (text.length <= MAX_TEXT) return text;
 		return text.slice(0, MAX_TEXT) + '\n… (truncated, ' + text.length + ' characters in total)';
 	}
 
-	function ok(v) { return { ok: true, type: typeName(v), text: clip(describe(v)) }; }
+	function ok(v) {
+		var result = { ok: true, type: typeName(v), text: clip(describe(v)) };
+		if (v !== null && typeof v === 'object') {
+			try {
+				var tree = buildTree(v);
+				if (tree.t === 'obj' || tree.t === 'arr' || tree.t === 'ptr') result.tree = tree;
+			} catch (e) { /* the text alone is the result */ }
+		}
+		return result;
+	}
 	function fail(e) {
 		var isErr = e !== null && typeof e === 'object' && typeof e.message === 'string';
 		return {

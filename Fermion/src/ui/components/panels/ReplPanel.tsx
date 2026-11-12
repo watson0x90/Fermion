@@ -5,6 +5,8 @@ import {
   parseHelpCommand, formatHelp, formatOverview, commonPrefix, loadHelpIndex, Inspection,
 } from '../../repl/help';
 import { Icon } from '../Icon';
+import { ValueNode, asValueNode } from '../../repl/valueTree';
+import { ValueTree } from './ValueTree';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion;
@@ -15,6 +17,7 @@ interface Entry {
   status: 'running' | 'ok' | 'err' | 'help';
   text: string;
   stack?: string;
+  tree?: ValueNode; // the result as an expandable tree, when it has parts
 }
 
 interface Choice { name: string; kind: string; }
@@ -108,7 +111,7 @@ export function ReplPanel() {
       writeTerminal('STATUS', 'frida> ' + src);
       const r = await api().evaluate(src);
       if (r && r.ok) {
-        finish(id, { status: 'ok', text: String(r.text) });
+        finish(id, { status: 'ok', text: String(r.text), tree: asValueNode(r.tree) ?? undefined });
         writeTerminal('LOG', String(r.text));
       } else if (r && r.cancelled) {
         // The user stopped it: shown in the transcript, but not an error in Output.
@@ -235,7 +238,9 @@ export function ReplPanel() {
         {entries.map((e) => (
           <div className="repl-entry" data-testid="repl-entry" key={e.id}>
             <div className="repl-in"><span className="prompt">frida&gt;</span><pre>{e.code}</pre></div>
-            <pre className={'repl-out ' + (e.status === 'running' ? 'run' : e.status)} data-testid="repl-result" title={e.stack || undefined}>{e.text}</pre>
+            {e.tree
+              ? <div className="repl-out ok vtree" data-testid="repl-result"><ValueTree node={e.tree} open /></div>
+              : <pre className={'repl-out ' + (e.status === 'running' ? 'run' : e.status)} data-testid="repl-result" title={e.stack || undefined}>{e.text}</pre>}
           </div>
         ))}
       </div>

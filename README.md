@@ -153,6 +153,8 @@ A `frida>` prompt that evaluates JavaScript in the attached process.
 ![The REPL: a result, help for a function, and Tab completion](Images/fermion-repl.png)
 
 - `Enter` runs the entry; `Shift+Enter` adds a line. `↑` / `↓` recall earlier entries.
+- A result that is an object or an array is shown as a tree. The top level is open; each object or array inside it is one line (`Object {name: "ntdll.dll", base: 0x7ff…, …}`) that opens when clicked. A container lists its first 100 entries and says how many more there are. Output still gets the whole result as printed text.
+- A pointer in a result is an address: click it (or right-click) for the [address menu](#inspector), to open it in Memory or Disassembly or to hook it.
 - `Tab` completes the name at the cursor: a global (`Proc` → `Process`) or a member (`Process.enumerateMod` → `Process.enumerateModules`). When several names fit, the part they share is filled in and the choices are listed: keep typing, click one, or move through them with `↑` / `↓` and accept with `Enter` or `Tab`.
 - `help` explains the prompt and lists the Frida APIs available in the target. `help Process` shows Frida's documentation for it and the members that exist in this process; `help Process.enumerateModules` shows the full signature and description. `?Process` works too. The text is Frida's own, taken from its type definitions at build time.
 - Results are printed as JSON where that makes sense, and Frida values such as `NativePointer` print as themselves. Entries and results are also copied to Output; help text is not.
