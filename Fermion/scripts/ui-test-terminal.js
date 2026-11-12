@@ -32,6 +32,22 @@ const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fermion-term-'));
       return rows && rows.textContent.includes('probe-123');
     }, { timeout: 15000 });
 
+    // Output text must not touch the pane's edges, and the padded terminal must
+    // still fit inside the pane (no rows or columns pushed out of view).
+    await win.evaluate(() => { for (let i = 0; i < 80; i++) window.__fermion.terminal.write('LOG', 'fill-' + i); });
+    await new Promise((r) => setTimeout(r, 500));
+    const g = await win.evaluate(() => {
+      const pane = document.querySelector('.obody').getBoundingClientRect();
+      const rows = document.querySelector('.xterm-rows').getBoundingClientRect();
+      const screen = document.querySelector('.xterm-screen').getBoundingClientRect();
+      return {
+        left: rows.left - pane.left, top: rows.top - pane.top,
+        right: pane.right - screen.right, bottom: pane.bottom - screen.bottom,
+      };
+    });
+    if (g.left < 8 || g.top < 6) throw new Error('output text touches the pane edge: ' + JSON.stringify(g));
+    if (g.right < 0 || g.bottom < 0) throw new Error('padded terminal overflows the pane: ' + JSON.stringify(g));
+
     console.log('TERM_OK terminal mounted and write() rendered');
     await app.close();
     process.exit(0);

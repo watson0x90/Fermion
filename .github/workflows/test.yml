@@ -58,8 +58,8 @@ jobs:
           sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 \
             libgtk-3-0 libgbm1 libasound2 libxshmfence1 libdrm2
 
-      - name: Output model unit tests
-        run: node --test src/output-model.test.js
+      - name: Unit tests (node:test)
+        run: node --test src/*.test.js
 
       # smoke-frida.js is an Electron main script, so it must be launched by the
       # electron binary (running it with plain `node` makes require('electron')
@@ -81,6 +81,9 @@ jobs:
 
       - name: Child windows open isolated
         run: xvfb-run -a node scripts/ui-test-child-windows.js
+
+      - name: Output pane detaches and docks
+        run: xvfb-run -a node scripts/ui-test-detach-output.js
 
       # End-to-end: attach to a real process and confirm the agent's console.log
       # reaches the terminal. Skips gracefully where the runner can't attach

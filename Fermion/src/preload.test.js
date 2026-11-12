@@ -69,3 +69,27 @@ test('subscribe returns an unsubscribe that stops delivery', () => {
   handler({}, 'message', 2);
   assert.deepEqual(got, [1]);
 });
+
+test('output detach/dock invoke fermion:output; relay sends and subscribes on its own channels', async () => {
+  const invoked = []; const sent = []; const subs = {};
+  const fake = {
+    invoke: (...a) => { invoked.push(a); return Promise.resolve(true); },
+    send: (...a) => sent.push(a),
+    on: (c, f) => { subs[c] = f; },
+    removeListener: () => {},
+  };
+  const api = buildApi(fake);
+  await api.output.detach();
+  await api.output.dock();
+  api.output.send({ t: 'ready' });
+  assert.deepEqual(invoked, [['fermion:output', 'detach'], ['fermion:output', 'dock']]);
+  assert.deepEqual(sent, [['fermion:output-relay', { t: 'ready' }]]);
+
+  const relayed = []; const states = [];
+  api.output.onRelay((m) => relayed.push(m));
+  api.output.onState((s) => states.push(s));
+  subs['fermion:output-relay']({}, { t: 'line', kind: 'LOG', text: 'x' });
+  subs['fermion:output-state']({}, true);
+  assert.deepEqual(relayed, [{ t: 'line', kind: 'LOG', text: 'x' }]);
+  assert.deepEqual(states, [true]);
+});

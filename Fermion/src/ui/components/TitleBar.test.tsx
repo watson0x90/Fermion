@@ -45,3 +45,10 @@ test('the bar is the drag region, controls are excluded, and the wordmark is not
   // grabbing the logo must move the window, not start an HTML image-drag
   expect(screen.getByAltText('Fermion')).toHaveAttribute('draggable', 'false');
 });
+
+test('the subtitle names the window (main = Frida IDE; the detached window = Output)', () => {
+  setup();
+  expect(screen.getByText('Frida IDE')).toBeInTheDocument();
+  render(<TitleBar subtitle="Output" />);
+  expect(screen.getByText('Output')).toBeInTheDocument();
+});

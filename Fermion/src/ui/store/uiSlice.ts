@@ -8,6 +8,7 @@ export interface UiState {
   theme: string;       // active Monaco/app theme (drives the whole shell)
   railOpen: boolean;   // activity rail expanded (icons + labels)
   settingsOpen: boolean;
+  outputDetached: boolean; // Output pane lives in its own window
 }
 
 const initialState: UiState = {
@@ -15,6 +16,7 @@ const initialState: UiState = {
   theme: loadSavedTheme(),
   railOpen: false,
   settingsOpen: false,
+  outputDetached: false,
 };
 
 const uiSlice = createSlice({
@@ -32,6 +34,9 @@ const uiSlice = createSlice({
     },
     toggleSettings(state, action: PayloadAction<boolean | undefined>) {
       state.settingsOpen = action.payload ?? !state.settingsOpen;
+    },
+    setOutputDetached(state, action: PayloadAction<boolean>) {
+      state.outputDetached = action.payload;
     },
   },
 });

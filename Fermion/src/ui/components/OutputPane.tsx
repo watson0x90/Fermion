@@ -10,12 +10,17 @@ import '@xterm/xterm/css/xterm.css';
 
 // Output pane — the fixed primary surface. xterm is mounted imperatively (never
 // React children) so streaming output never re-renders the tree.
-export function OutputPane() {
+//
+// `standalone` = running in the detached Output window. In the main window the
+// pane stays mounted while Output is detached (only hidden), so its terminal
+// keeps the full history and is simply shown again when docked.
+export function OutputPane({ standalone = false }: { standalone?: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const ctrlRef = useRef<any>(null);
   const filters = useAppSelector((s) => s.output.filters);
   const follow = useAppSelector((s) => s.output.follow);
+  const hidden = useAppSelector((s) => s.ui.outputDetached) && !standalone;
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -51,9 +56,20 @@ export function OutputPane() {
 
   useEffect(() => { ctrlRef.current?.setFollow(follow); }, [follow]);
 
+  // Coming back from detached: the terminal was laid out at zero size while
+  // hidden, so refit it (and re-pin the tail) once it is visible again.
+  useEffect(() => {
+    if (hidden) return;
+    const id = requestAnimationFrame(() => {
+      ctrlRef.current?.fit();
+      if (follow) ctrlRef.current?.setFollow(true);
+    });
+    return () => cancelAnimationFrame(id);
+  }, [hidden]);
+
   return (
-    <div className="output" data-testid="output-pane">
-      <OutputToolbar ctrlRef={ctrlRef} />
+    <div className="output" data-testid="output-pane" hidden={hidden}>
+      <OutputToolbar ctrlRef={ctrlRef} standalone={standalone} />
       <div className="obody" ref={hostRef} />
     </div>
   );
