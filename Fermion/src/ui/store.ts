@@ -3,9 +3,10 @@ import { useDispatch, useSelector } from 'react-redux';
 import session from './store/sessionSlice';
 import output from './store/outputSlice';
 import ui from './store/uiSlice';
+import hooks from './store/hooksSlice';
 
 export const store = configureStore({
-  reducer: { session, output, ui },
+  reducer: { session, output, ui, hooks },
 });
 
 export type RootState = ReturnType<typeof store.getState>;

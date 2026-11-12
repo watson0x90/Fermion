@@ -36,6 +36,15 @@ const INVOKE_METHODS = new Set([
 	// Roadmap — follow one thread with Stalker and count its calls.
 	'inspectFollow',
 	'inspectUnfollow',
+	// Hooks tab — find functions and hook them from the UI. A hook's handler
+	// is operator-written JavaScript run in the target (as with evaluate);
+	// ids, kinds, sizes and addresses are validated in the service.
+	'hookSearch',
+	'hookAdd',
+	'hookUpdate',
+	'hookRemove',
+	'hookEnable',
+	'hookSymbolicate',
 ]);
 
 function createDispatch(service) {

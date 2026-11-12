@@ -94,6 +94,9 @@ jobs:
       - name: REPL evaluates in the attached process
         run: xvfb-run -a node scripts/ui-test-repl.js
 
+      - name: Hooks tab finds, hooks and lists calls
+        run: xvfb-run -a node scripts/ui-test-hooks.js
+
       - name: Inspector reads modules, memory and threads
         run: xvfb-run -a node scripts/ui-test-inspector.js
 

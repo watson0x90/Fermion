@@ -1,7 +1,7 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { loadSavedTheme } from '../theme/themeEngine';
 
-export type ToolboxTab = 'editor' | 'repl' | 'graph' | 'tree' | 'inspector';
+export type ToolboxTab = 'editor' | 'repl' | 'hooks' | 'graph' | 'tree' | 'inspector';
 
 export interface UiState {
   activeTab: ToolboxTab;

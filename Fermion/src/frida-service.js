@@ -22,6 +22,7 @@ const path = require('path');
 const AGENT_PATHS = {
 	repl: path.join(__dirname, 'tools', 'repl-agent.js'),
 	inspector: path.join(__dirname, 'tools', 'inspector-agent.js'),
+	hooks: path.join(__dirname, 'tools', 'hooks-agent.js'),
 };
 const MAX_EVAL_CHARS = 200000;
 const EVAL_TIMEOUT_MS = 20000;
@@ -40,6 +41,59 @@ function checkThreadId(id) {
 	if (!Number.isSafeInteger(id) || id < 0) throw new Error('invalid thread id');
 	return id;
 }
+// ---- Hooks tab arguments ----
+const HOOK_KINDS = ['exports', 'imports', 'symbols'];
+const MAX_HOOK_QUERY = 256;
+const MAX_HOOK_CODE = 65536;
+const MAX_SYMBOLICATE = 64;
+function checkHookId(id) {
+	if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new Error('invalid hook id');
+	return id;
+}
+function checkHookKind(kind) {
+	if (typeof kind !== 'string' || !HOOK_KINDS.includes(kind)) throw new Error('invalid search kind (expected exports, imports or symbols)');
+	return kind;
+}
+function checkHookQuery(query) {
+	if (typeof query !== 'string') throw new Error('search query must be a string');
+	const q = query.trim();
+	if (!q) throw new Error('search query is empty');
+	if (q.length > MAX_HOOK_QUERY) throw new Error('search query is too long');
+	return q;
+}
+function checkHookCode(code) {
+	if (typeof code !== 'string' || !code.trim()) throw new Error('hook handler is empty');
+	if (code.length > MAX_HOOK_CODE) throw new Error('hook handler is too long');
+	return code;
+}
+// Where a hook goes: module + offset when it is inside a module (so it is
+// found again after a restart), else an absolute address. Returns a fresh
+// object holding only the known fields.
+function checkHookSpec(spec) {
+	if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new Error('invalid hook');
+	const out = { id: checkHookId(spec.id), module: '', offset: null, address: '', code: checkHookCode(spec.code), enabled: spec.enabled !== false, backtrace: spec.backtrace !== false };
+	if (spec.module !== '' && spec.module !== undefined && spec.module !== null) {
+		out.module = checkModuleName(spec.module);
+		if (!Number.isSafeInteger(spec.offset) || spec.offset < 0) throw new Error('invalid hook offset');
+		out.offset = spec.offset;
+	}
+	if (!out.module || (spec.address !== undefined && spec.address !== '' && spec.address !== null)) out.address = checkAddress(spec.address);
+	return out;
+}
+function checkHookPatch(patch) {
+	const out = {};
+	if (patch && typeof patch === 'object' && !Array.isArray(patch)) {
+		if (patch.code !== undefined) out.code = checkHookCode(patch.code);
+		if (patch.backtrace !== undefined) out.backtrace = !!patch.backtrace;
+	}
+	if (!Object.keys(out).length) throw new Error('nothing to change in the hook');
+	return out;
+}
+function checkAddresses(addresses) {
+	if (!Array.isArray(addresses) || !addresses.length || addresses.length > MAX_SYMBOLICATE) throw new Error('addresses must be a list of 1..' + MAX_SYMBOLICATE);
+	return addresses.map(checkAddress);
+}
+
 // What a follow covers: everything, everything but system libraries, or one
 // module. Returns a fresh object holding only the two known fields.
 const FOLLOW_MODES = ['all', 'app', 'module'];
@@ -398,6 +452,24 @@ class FridaService extends EventEmitter {
 		}
 	}
 	async inspectUnfollow() { return this._inspect('unfollow'); }
+
+	// ---- Hooks tab ----
+	// Hooks live in their own agent script, so they survive reloads of the
+	// user's script. A handler is JavaScript the operator wrote and runs in
+	// the target, like a REPL entry; everything else is validated here.
+	async _hooks(method, ...args) {
+		const script = await this._getAgent('hooks');
+		return toPlain(await script.exports[method](...args));
+	}
+	async hookSearch(kind, query) { return this._hooks('search', checkHookKind(kind), checkHookQuery(query)); }
+	async hookAdd(spec) { return this._hooks('add', checkHookSpec(spec)); }
+	async hookUpdate(id, patch) { return this._hooks('update', checkHookId(id), checkHookPatch(patch)); }
+	async hookEnable(id, on) {
+		if (typeof on !== 'boolean') throw new Error('enable must be true or false');
+		return this._hooks('enable', checkHookId(id), on);
+	}
+	async hookRemove(id) { return this._hooks('remove', checkHookId(id)); }
+	async hookSymbolicate(addresses) { return this._hooks('symbolicate', checkAddresses(addresses)); }
 
 	// Unload the user's script (the helper agents stay). A no-op when none is loaded.
 	async unload() {

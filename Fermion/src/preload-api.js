@@ -108,6 +108,15 @@ function buildApi(ipcRenderer) {
 			follow: (threadId, scope) => invoke('inspectFollow', threadId, scope),
 			unfollow: () => invoke('inspectUnfollow'),
 		},
+		// Hooks tab: find functions and hook them without writing a script.
+		hooks: {
+			search: (kind, query) => invoke('hookSearch', kind, query),
+			add: (spec) => invoke('hookAdd', spec),
+			update: (id, patch) => invoke('hookUpdate', id, patch),
+			enable: (id, on) => invoke('hookEnable', id, on),
+			remove: (id) => invoke('hookRemove', id),
+			symbolicate: (addresses) => invoke('hookSymbolicate', addresses),
+		},
 		onMessage: (cb) => on('message', cb),
 		onLog: (cb) => on('log', cb),
 		onDetached: (cb) => on('detached', cb),

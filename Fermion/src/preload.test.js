@@ -141,3 +141,18 @@ test('cancelEvaluate and thread follow use the invoke channel', async () => {
   await api.inspect.unfollow();
   assert.deepEqual(sent, [['cancelEvaluate'], ['inspectFollow', 7, { mode: 'app', module: '' }], ['inspectUnfollow']]);
 });
+
+test('the Hooks tab operations use the invoke channel', async () => {
+  const sent = [];
+  const api = buildApi({ invoke: (...a) => { sent.push(a.slice(1)); return Promise.resolve({}); }, on: () => {} });
+  await api.hooks.search('exports', 'open');
+  await api.hooks.add({ id: 'h' });
+  await api.hooks.update('h', { code: 'x' });
+  await api.hooks.enable('h', false);
+  await api.hooks.remove('h');
+  await api.hooks.symbolicate(['0x1']);
+  assert.deepEqual(sent, [
+    ['hookSearch', 'exports', 'open'], ['hookAdd', { id: 'h' }], ['hookUpdate', 'h', { code: 'x' }],
+    ['hookEnable', 'h', false], ['hookRemove', 'h'], ['hookSymbolicate', ['0x1']],
+  ]);
+});

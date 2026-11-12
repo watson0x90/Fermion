@@ -461,3 +461,93 @@ test('an inspector error is not retried when the agent was not replaced', async 
   await assert.rejects(() => svc.inspectThreads(), /boom/);
   assert.equal(agents.length, 1);
 });
+
+// ---- Hooks tab ----
+function hooksService() {
+  const { FridaService } = require('./frida-service.js');
+  const svc = new FridaService();
+  const calls = [];
+  const session = fakeSession();
+  const create = session.createScript;
+  session.createScript = async (src) => {
+    const s = await create(src);
+    if (/Fermion Hooks agent/.test(src)) {
+      const rec = (name) => async (...args) => { calls.push([name, ...args]); return { ok: name }; };
+      s.exports = { search: rec('search'), add: rec('add'), update: rec('update'), enable: rec('enable'), remove: rec('remove'), symbolicate: rec('symbolicate') };
+    }
+    return s;
+  };
+  svc._frida = { getDevice: async () => ({ attach: async () => session }) };
+  return { svc, session, calls };
+}
+const HOOK = { id: 'hk-1', module: 'kernel32.dll', offset: 4096, address: '0x7FF010', code: '({ onEnter(log) { log(1); } })', enabled: true, backtrace: false };
+
+test('hook*: every operation refuses when not attached', async () => {
+  const { FridaService } = require('./frida-service.js');
+  const svc = new FridaService();
+  for (const call of [() => svc.hookSearch('exports', 'open'), () => svc.hookAdd(HOOK), () => svc.hookUpdate('hk-1', { code: 'x' }), () => svc.hookEnable('hk-1', true), () => svc.hookRemove('hk-1'), () => svc.hookSymbolicate(['0x10'])]) {
+    await assert.rejects(call, /not attached/i);
+  }
+});
+
+test('hook operations reach the hooks agent with checked, rebuilt arguments', async () => {
+  const { svc, calls, session } = hooksService();
+  await svc.attach(1);
+  await svc.hookSearch('symbols', '  kernel32!Create*  ');
+  await svc.hookAdd({ ...HOOK, extra: 'dropped' });
+  await svc.hookAdd({ id: 'hk-2', module: '', offset: null, address: '0x9000', code: 'function () {}' });
+  await svc.hookUpdate('hk-1', { code: '({})', backtrace: true, other: 1 });
+  await svc.hookUpdate('hk-1', { backtrace: false });
+  await svc.hookEnable('hk-1', false);
+  await svc.hookRemove('hk-1');
+  await svc.hookSymbolicate(['0x7FF010', '0x1']);
+  assert.deepEqual(calls, [
+    ['search', 'symbols', 'kernel32!Create*'],
+    ['add', { id: 'hk-1', module: 'kernel32.dll', offset: 4096, address: '0x7ff010', code: HOOK.code, enabled: true, backtrace: false }],
+    ['add', { id: 'hk-2', module: '', offset: null, address: '0x9000', code: 'function () {}', enabled: true, backtrace: true }],
+    ['update', 'hk-1', { code: '({})', backtrace: true }],
+    ['update', 'hk-1', { backtrace: false }],
+    ['enable', 'hk-1', false],
+    ['remove', 'hk-1'],
+    ['symbolicate', ['0x7ff010', '0x1']],
+  ]);
+  // One hooks agent for the session, separate from the user's script.
+  assert.equal(session.scripts.filter((s) => /Fermion Hooks agent/.test(s.src)).length, 1);
+});
+
+test('hook arguments are validated before anything reaches the target', async () => {
+  const { svc, calls } = hooksService();
+  await svc.attach(1);
+  const bad = [
+    [() => svc.hookSearch('everything', 'x'), /kind/],
+    [() => svc.hookSearch('exports', ''), /query/],
+    [() => svc.hookSearch('exports', '   '), /query/],
+    [() => svc.hookSearch('exports', 'x'.repeat(300)), /query/],
+    [() => svc.hookSearch('exports', 7), /query/],
+    [() => svc.hookAdd(null), /hook/],
+    [() => svc.hookAdd('x'), /hook/],
+    [() => svc.hookAdd({ ...HOOK, id: '' }), /hook id/],
+    [() => svc.hookAdd({ ...HOOK, id: '../x' }), /hook id/],
+    [() => svc.hookAdd({ ...HOOK, id: 'a'.repeat(80) }), /hook id/],
+    [() => svc.hookAdd({ ...HOOK, code: '' }), /handler/],
+    [() => svc.hookAdd({ ...HOOK, code: 5 }), /handler/],
+    [() => svc.hookAdd({ ...HOOK, code: 'x'.repeat(70000) }), /handler/],
+    [() => svc.hookAdd({ ...HOOK, offset: -1 }), /offset/],
+    [() => svc.hookAdd({ ...HOOK, offset: 1.5 }), /offset/],
+    [() => svc.hookAdd({ ...HOOK, offset: null }), /offset/],
+    [() => svc.hookAdd({ ...HOOK, module: 9 }), /module/],
+    [() => svc.hookAdd({ ...HOOK, module: '', offset: null, address: 'nope' }), /address/],
+    [() => svc.hookUpdate('hk-1', null), /nothing to change/],
+    [() => svc.hookUpdate('hk-1', {}), /nothing to change/],
+    [() => svc.hookUpdate('hk-1', { code: '' }), /handler/],
+    [() => svc.hookUpdate('bad id', { code: 'x' }), /hook id/],
+    [() => svc.hookEnable('hk-1', 'yes'), /true or false/],
+    [() => svc.hookRemove(5), /hook id/],
+    [() => svc.hookSymbolicate('0x10'), /addresses/],
+    [() => svc.hookSymbolicate([]), /addresses/],
+    [() => svc.hookSymbolicate(Array(65).fill('0x10')), /addresses/],
+    [() => svc.hookSymbolicate(['0x10', 'zz']), /address/],
+  ];
+  for (const [call, re] of bad) await assert.rejects(call, re, String(call));
+  assert.equal(calls.length, 0);
+});

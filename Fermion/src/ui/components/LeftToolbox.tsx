@@ -3,6 +3,7 @@ import { uiActions, ToolboxTab } from '../store/uiSlice';
 import { EditorPane } from './EditorPane';
 import { GraphPanel } from './GraphPanel';
 import { ReplPanel } from './panels/ReplPanel';
+import { HooksPanel } from './panels/HooksPanel';
 import { InspectorPanel } from './panels/InspectorPanel';
 import { ProcessTreePanel } from './panels/ProcessTreePanel';
 import { Icon, IconName } from './Icon';
@@ -10,6 +11,7 @@ import { Icon, IconName } from './Icon';
 const TABS: { id: ToolboxTab; label: string; icon: IconName }[] = [
   { id: 'editor', label: 'Editor', icon: 'session' },
   { id: 'repl', label: 'REPL', icon: 'play' },
+  { id: 'hooks', label: 'Hooks', icon: 'hook' },
   { id: 'graph', label: 'Graph', icon: 'graph' },
   { id: 'tree', label: 'Process tree', icon: 'tree' },
   { id: 'inspector', label: 'Inspector', icon: 'inspect' },
@@ -23,6 +25,7 @@ const TABS: { id: ToolboxTab; label: string; icon: IconName }[] = [
 const PANELS: { id: ToolboxTab; el: JSX.Element }[] = [
   { id: 'editor', el: <EditorPane /> },
   { id: 'repl', el: <ReplPanel /> },
+  { id: 'hooks', el: <HooksPanel /> },
   { id: 'graph', el: <GraphPanel /> },
   { id: 'tree', el: <ProcessTreePanel /> },
   { id: 'inspector', el: <InspectorPanel /> },

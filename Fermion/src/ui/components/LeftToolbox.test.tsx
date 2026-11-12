@@ -4,10 +4,11 @@ import { configureStore } from '@reduxjs/toolkit';
 import session from '../store/sessionSlice';
 import output from '../store/outputSlice';
 import ui from '../store/uiSlice';
+import hooks from '../store/hooksSlice';
 import { LeftToolbox } from './LeftToolbox';
 
 function renderToolbox() {
-  const store = configureStore({ reducer: { session, output, ui } });
+  const store = configureStore({ reducer: { session, output, ui, hooks } });
   render(
     <Provider store={store}>
       <LeftToolbox />
@@ -23,7 +24,7 @@ function renderToolbox() {
 test('all toolbox panels stay mounted regardless of the active tab', () => {
   renderToolbox();
   // Default active tab is Editor, yet every panel slot is present in the DOM.
-  for (const id of ['editor', 'repl', 'graph', 'tree', 'inspector']) {
+  for (const id of ['editor', 'repl', 'hooks', 'graph', 'tree', 'inspector']) {
     expect(screen.getByTestId(`panel-${id}`)).toBeInTheDocument();
   }
 });

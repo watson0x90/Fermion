@@ -18,6 +18,7 @@ Fermion is a desktop IDE for [Frida](https://frida.re). It wraps [frida-node](ht
 - [Editor](#editor)
 - [Output](#output)
 - [REPL](#repl)
+- [Hooks](#hooks)
 - [Process tree](#process-tree)
 - [Inspector](#inspector)
 - [Graph](#graph)
@@ -94,7 +95,7 @@ To start a program under Frida instead of attaching to a running one, fill in **
 | **Title bar** | Drag to move the window; minimize, maximize and close on the right. |
 | **Rail** (far left) | Switches the toolbox tab, and opens the Frida API reference, About and Settings. The top button expands it to show labels. |
 | **Session sidebar** | Device and process pickers, Attach / Reload / Detach, and Spawn new. |
-| **Toolbox** (centre) | Tabs: **Editor**, **REPL**, **Graph**, **Process tree**, **Inspector**. |
+| **Toolbox** (centre) | Tabs: **Editor**, **REPL**, **Hooks**, **Graph**, **Process tree**, **Inspector**. |
 | **Output** (right) | Everything the script prints, with filters and search. Can be detached into its own window. |
 | **Status bar** | Device, attached PID, whether a script is loaded, trace on/off, message count. |
 
@@ -152,6 +153,49 @@ Things to know:
 - Only `var` declarations (and assignments to undeclared names) persist between entries. `let` and `const` do not.
 - A running entry can be stopped with **Cancel** (or `Esc`), and one that has not finished after **20 seconds** is abandoned automatically. Either way the REPL is restarted, which clears its variables. A busy loop may keep running in the target until you detach.
 - Completion only follows plain dotted names. It will not complete after a call or an index (`foo().ba`, `arr[0].x`), because that would mean running your code just to make suggestions.
+
+## Hooks
+
+Hook functions in the attached process without writing a script.
+
+1. Type part of a function name and press **Find**. `module!function` narrows it to one module, and `*` matches anything (`kernel32!CreateFile*`). An address (`0x7ff…`) or `module!0x1a2b` names one exact place.
+2. Choose where to look:
+
+   | Search in | Finds |
+   | --- | --- |
+   | **Exports** | Functions that modules export. |
+   | **Imports** | Functions a module imports. Here the module in `module!function` is the one doing the importing, so `app.exe!*` lists everything `app.exe` calls in other modules. |
+   | **Debug symbols** | Functions named in debug symbols, exported or not. |
+
+3. Press **Hook** on a result, or **Add all** for every result listed (50 at a time).
+
+Each hook is a row with a switch, its state, and how many times the function has been called. Select a hook to see two views:
+
+- **Calls** lists what the hook logged: the time, the thread, `→` on entry and `←` on return, indented by call depth. Click a line to see where the call came from. Callers inside a module are named; addresses that belong to no module (JIT code, or values the unwinder mistook for return addresses) are counted on one line. **All hooks** shows every hook's lines together, and **Output** chooses whether the lines are also printed in the Output pane as `[hook] name -> …`.
+- **Handler** is the JavaScript that runs for that hook. Change it and press **Apply** (`Ctrl-Enter`); the new handler is used from the next call, and one that does not compile is rejected while the hook carries on with the old one.
+
+A new hook starts with a handler that prints the first four arguments and the return value:
+
+```js
+({
+  onEnter(log, args) {
+    log('(' + args[0] + ', ' + args[1] + ', ' + args[2] + ', ' + args[3] + ')');
+  },
+  onLeave(log, retval) {
+    log('=> ' + retval);
+  }
+})
+```
+
+`log(…)` adds a line to Calls. `args[n]` and `retval` are pointers, so read what they point at (`args[0].readUtf16String()`, `retval.toInt32()`), and `retval.replace(x)` changes what the function returns. `this` is shared between `onEnter` and `onLeave`, so a value saved on entry is there on return. Everything in the [Frida API](https://frida.re/docs/javascript-api/) is available.
+
+Things to know:
+
+- Hooks live in their own helper script, so reloading or changing the script in the Editor does not remove them.
+- Hooks are remembered by module and offset. After a detach they wait, and are placed again when you attach, including to a new run of the program where the module sits at a different address. They are not yet saved when Fermion closes.
+- A hook on a very busy function cannot flood Fermion: lines are delivered in batches of at most 200 every 100 ms, and the rest are counted as *dropped*. The call count stays exact. Switching **Callers** off in the Handler view makes a busy hook much cheaper.
+- A handler that throws is reported as a red line, and the target carries on.
+- There can be up to 200 hooks.
 
 ## Process tree
 
@@ -297,7 +341,7 @@ Fermion is an Electron app with a strict split between its two halves:
 
 The renderer shows text produced by the process being instrumented, so it is treated as untrusted: arguments are validated in the main process, and target-supplied strings are never inserted as HTML.
 
-Fermion's own helper scripts, which run inside the target, live in `Fermion/src/tools`: `repl-agent.js` (REPL), `inspector-agent.js` (Inspector) and `trace.js` (Graph).
+Fermion's own helper scripts, which run inside the target, live in `Fermion/src/tools`: `repl-agent.js` (REPL), `hooks-agent.js` (Hooks), `inspector-agent.js` (Inspector) and `trace.js` (Graph).
 
 From the `Fermion` folder:
 
@@ -311,7 +355,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, detach, process tree, REPL, inspector, graph, attach) |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, detach, process tree, REPL, hooks, inspector, graph, attach) |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.

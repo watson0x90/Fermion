@@ -5,6 +5,7 @@ import { vi } from 'vitest';
 import session from '../store/sessionSlice';
 import output from '../store/outputSlice';
 import ui, { uiActions } from '../store/uiSlice';
+import hooks from '../store/hooksSlice';
 
 // xterm can't mount in jsdom; the Output pane's controller is faked here.
 vi.mock('../../terminal.js', () => ({
@@ -18,17 +19,17 @@ vi.mock('../../terminal.js', () => ({
 import { Layout } from './Layout';
 
 function makeStore() {
-  return configureStore({ reducer: { session, output, ui } });
+  return configureStore({ reducer: { session, output, ui, hooks } });
 }
 
-test('Layout renders the 5 toolbox tabs, Output, and status bar; clicking a tab switches activeTab', () => {
+test('Layout renders the 6 toolbox tabs, Output, and status bar; clicking a tab switches activeTab', () => {
   const store = makeStore();
   render(
     <Provider store={store}>
       <Layout />
     </Provider>,
   );
-  for (const label of ['Editor', 'REPL', 'Graph', 'Process tree', 'Inspector']) {
+  for (const label of ['Editor', 'REPL', 'Hooks', 'Graph', 'Process tree', 'Inspector']) {
     expect(screen.getByRole('tab', { name: label })).toBeInTheDocument();
   }
   expect(screen.getByTestId('output-pane')).toBeInTheDocument();
