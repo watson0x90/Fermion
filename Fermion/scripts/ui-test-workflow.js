@@ -164,7 +164,13 @@ const kill = (pid) => { try { process.kill(Number(pid)); } catch (_) { /* gone *
     step = 'catch the child';
     fs.writeFileSync(goFile, '');
     await win.waitForSelector('[data-testid="child-caught"]', T);
-    if (!(await win.textContent('[data-testid="child-caught"]')).includes('child.js')) throw new Error('caught note: ' + await win.textContent('[data-testid="child-caught"]'));
+    // Windows reports the new process with its command line. Linux and macOS
+    // report a fork first (a copy of the parent, no program yet), which then
+    // execs: the session is expected to follow it there by itself.
+    const caughtNote = await win.textContent('[data-testid="child-caught"]');
+    const forked = caughtNote.includes('copy of this process (fork)');
+    if (!forked && !caughtNote.includes('child.js')) throw new Error('caught note: ' + caughtNote);
+    if (forked) notes.push('child arrived as fork, then exec');
     await sleep(700);
     if (fs.existsSync(childMarker)) throw new Error('the caught child ran before a decision');
     const childPid = /pid (\d+)/.exec(await win.textContent('[data-testid="child-caught"] .cmd'))[1];
@@ -177,6 +183,12 @@ const kill = (pid) => { try { process.kill(Number(pid)); } catch (_) { /* gone *
     if (fs.readFileSync(childMarker, 'utf8') !== childPid) throw new Error('session on ' + childPid + ' but the child is ' + fs.readFileSync(childMarker, 'utf8'));
     await inOutput('FLOW_SCRIPT ' + childPid + (withPackage ? ' true' : ' plain')); // the script, compiled again, in the child
     await inOutput('Now on child process ' + childPid);
+    if (forked) {
+      await inOutput('Process ' + childPid + ' started a new program: ');
+      if (!/started a new program: \S+ .*child\.js/.test(await output())) throw new Error('the new program was not named: ' + (await output()).slice(-300));
+      await inOutput(' (pid ' + childPid + ')');
+      await win.waitForFunction((p) => window.__fermion.service.currentPid === p && window.__fermion.service.hasScript, childPid, T);
+    }
     // The hook moved with the session and counts the child's calls.
     await win.click('role=tab[name="Hooks"]');
     await win.waitForFunction(() => document.querySelector('[data-testid="hook-status"]')?.textContent === 'hooked', undefined, T);
@@ -238,7 +250,12 @@ const kill = (pid) => { try { process.kill(Number(pid)); } catch (_) { /* gone *
   } catch (e) {
     console.log('WORKFLOW_FAIL [' + step + '] ' + (e && e.message ? e.message : e));
     try { if (app && shot) await (await app.firstWindow()).screenshot({ path: shot + '-fail.png' }); } catch (_) {}
-    try { if (app) await app.close(); } catch (_) {}
+    // A program the app spawned holds the app's output handles: closing the
+    // app waits on them for as long as it lives. End it first, and never wait
+    // on the close for long.
+    pids.forEach(kill);
+    try { kill(fs.readFileSync(childMarker, 'utf8')); } catch (_) { /* never ran */ }
+    try { if (app) await Promise.race([app.close(), sleep(15000)]); } catch (_) {}
     done(1);
   } finally {
     try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch (_) {}

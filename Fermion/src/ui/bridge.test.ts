@@ -180,6 +180,38 @@ test('a store without the Hooks slice still prints such a message instead of fai
   expect(writes.length).toBe(1);
 });
 
+test('a process that replaced itself is followed without asking: script in, catching on, then resumed', async () => {
+  const store = makeStore();
+  const f = fakeFermion() as ReturnType<typeof fakeFermion> & { onChild: (cb: (...a: unknown[]) => void) => void };
+  let onChild: (...a: unknown[]) => void = () => {};
+  f.onChild = (cb) => { onChild = cb; };
+  const calls: unknown[][] = [];
+  const w = window as unknown as { fermion?: unknown; MonacoCodeEditor?: unknown };
+  w.MonacoCodeEditor = { getValue: () => 'SCRIPT' };
+  w.fermion = {
+    resolveChild: async (pid: number, action: string) => { calls.push(['resolveChild', pid, action]); return { pid, action }; },
+    loadScript: async (src: string) => { calls.push(['loadScript', src]); return { compiled: false }; },
+    setChildGating: async (on: boolean) => { calls.push(['setChildGating', on]); return on; },
+    resume: async (pid: number) => { calls.push(['resume', pid]); },
+    getState: async () => ({ deviceId: 'local', isAttached: true, hasScript: false, currentPid: '300' }),
+  };
+  const writes: unknown[][] = [];
+  setTerminalSink({ write: (k: string, t: string) => writes.push([k, t]) });
+  try {
+    initBridge(store, f);
+    onChild({ pid: 300, parentPid: 300, path: '/usr/bin/tool', argv: ['/usr/bin/tool', '-v'], replaced: true });
+    await vi.waitFor(() => expect(calls[calls.length - 1]).toEqual(['resume', 300]));
+    expect(calls).toEqual([['resolveChild', 300, 'attach'], ['loadScript', 'SCRIPT'], ['setChildGating', true], ['resume', 300]]);
+    expect(store.getState().session.children).toEqual([]); // nothing to choose
+    expect(store.getState().session.target).toEqual({ kind: 'attach', pid: 300, name: 'tool' });
+    expect(store.getState().session.ended).toBeNull();
+    expect(writes).toEqual([
+      ['STATUS', '[+] Process 300 started a new program: tool -v. Following it.'],
+      ['STATUS', '[+] Now on tool -v (pid 300)'],
+    ]);
+  } finally { delete w.fermion; delete w.MonacoCodeEditor; }
+});
+
 test('a caught child process is put in the store and announced in Output; a malformed announcement is ignored', () => {
   const store = makeStore();
   const f = fakeFermion() as ReturnType<typeof fakeFermion> & { onChild: (cb: (...a: unknown[]) => void) => void };

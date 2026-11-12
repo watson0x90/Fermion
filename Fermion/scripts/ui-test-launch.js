@@ -138,7 +138,7 @@ const kill = (pid) => { try { process.kill(Number(pid)); } catch (_) { /* gone *
   } catch (e) {
     console.log('LAUNCH_FAIL [' + step + '] ' + (e && e.message ? e.message : e));
     try { if (app && shot) await (await app.firstWindow()).screenshot({ path: shot + '-fail.png' }); } catch (_) {}
-    try { if (app) await app.close(); } catch (_) {}
+    try { if (app) await Promise.race([app.close(), sleep(15000)]); } catch (_) {} // a spawned program still alive must not hold the test open
     done(1);
   } finally {
     try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch (_) {}

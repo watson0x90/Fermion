@@ -7,6 +7,7 @@ import { outputActions } from './store/outputSlice';
 import { hooksActions } from './store/hooksSlice';
 import { asHitBatch, hitLine, Hook } from './hooking/model';
 import { asChildInfo, childCommand } from './session/launch';
+import { followReplacement } from './sessionOps';
 
 // Pure: a SEND/MSG payload goes to the trace graph only while trace mode is on.
 export function routeMessage(kind: string, traceMode: boolean): 'trace' | 'terminal' {
@@ -95,6 +96,10 @@ export function initBridge(store: AnyStore, injected?: Fermion): void {
   fermion.onChild?.((raw: unknown) => {
     const child = asChildInfo(raw);
     if (!child) return;
+    if (child.replaced) {
+      void followReplacement(store.dispatch, child, store.getState().hooks?.hooks ?? []);
+      return;
+    }
     store.dispatch(sessionActions.childCaught(child));
     writeTerminal('STATUS', `[+] Caught child process ${child.pid}: ${childCommand(child)} (suspended; choose in the Session sidebar)`);
   });

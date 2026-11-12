@@ -21,6 +21,8 @@ jobs:
   smoke:
     name: Smoke & regression (ubuntu)
     runs-on: ubuntu-latest
+    # The whole run takes a few minutes; a test that hangs must not hold a runner for hours.
+    timeout-minutes: 20
     # GitHub runners aren't configured for Electron's SUID sandbox (chrome-sandbox
     # is not root-owned), so disable it for the headless smoke launches.
     env:

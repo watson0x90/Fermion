@@ -879,3 +879,124 @@ test('reloadScript without a session says so before compiling anything', async (
   await assert.rejects(() => svc.reloadScript('import a from "a";'), /not attached/i);
   assert.equal(compiled, 0);
 });
+
+// ---- a process that replaces itself (exec) ----
+// On Linux and macOS a new program starts as a fork (a copy of its parent)
+// that then execs: the pid stays, the session on it ends with
+// 'process-replaced', and with catching on Frida holds the new program and
+// reports it as a child whose pid is its own parent's.
+const execOf = (t, pid) => t.child(pid, { parentPid: pid, origin: 'exec', path: '/bin/cat', argv: ['/bin/cat', '/etc/hosts'] });
+const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
+
+test('with catching on, a process that replaces itself is announced as its replacement and stays suspended', async () => {
+  const t = childService();
+  const ended = [];
+  t.svc.on('detached', (r) => ended.push(r));
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.sessions[0].ended('process-replaced');
+  assert.deepEqual(ended, ['process-replaced']);
+  assert.equal(t.svc.getState().isAttached, false);
+  assert.equal(t.handlers.size, 1); // still listening, for the replacement
+  t.report(execOf(t, 100));
+  await tick();
+  assert.deepEqual(t.events, [{ pid: 100, parentPid: 100, path: '/bin/cat', argv: ['/bin/cat', '/etc/hosts'], replaced: true }]);
+  assert.ok(!t.log.some((l) => l[0] === 'resume'), 'the new program was let run');
+});
+
+test('the replacement is announced the same when Frida reports it before the session ends', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.report(execOf(t, 100));
+  assert.deepEqual(t.events, []);
+  t.sessions[0].ended('process-replaced');
+  await tick();
+  assert.deepEqual(t.events.map((e) => [e.pid, e.replaced]), [[100, true]]);
+  assert.ok(!t.log.some((l) => l[0] === 'resume'));
+});
+
+test('resolveChild attach on a replacement starts a session on it with nothing held; catching can be switched on again', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.sessions[0].ended('process-replaced');
+  t.report(execOf(t, 100));
+  assert.deepEqual(await t.svc.resolveChild(100, 'attach'), { pid: 100, action: 'attach' });
+  assert.equal(t.svc.getState().currentPid, '100');
+  assert.equal(t.svc.getState().isAttached, true);
+  assert.equal(t.handlers.size, 0);
+  assert.ok(!t.log.some((l) => l[0] === 'resume'), 'it ran before its script was in');
+  assert.equal(await t.svc.setChildGating(true), true);
+  assert.equal(t.handlers.size, 1);
+  await t.svc.resume(100);
+  assert.deepEqual(t.log.slice(-1), [['resume', 100]]);
+  await assert.rejects(() => t.svc.resolveChild(100, 'attach'), /no caught child/i);
+});
+
+test('a replacement can be let run instead, and one that cannot be attached is let run', async () => {
+  for (const how of ['resume', 'attach-fails']) {
+    const t = childService();
+    await t.svc.attach(100);
+    await t.svc.setChildGating(true);
+    t.sessions[0].ended('process-replaced');
+    t.report(execOf(t, 100));
+    if (how === 'resume') await t.svc.resolveChild(100, 'resume');
+    else { t.device.attachFails = true; await assert.rejects(() => t.svc.resolveChild(100, 'attach'), /unable to attach/); }
+    assert.ok(t.log.some((l) => l[0] === 'resume' && l[1] === 100), how);
+    assert.equal(t.handlers.size, 0, how);
+    assert.equal(t.svc.getState().isAttached, false, how);
+  }
+});
+
+test('without catching, a process that replaces itself just ends the session', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  t.sessions[0].ended('process-replaced');
+  assert.equal(t.handlers.size, 0);
+  await assert.rejects(() => t.svc.resolveChild(100, 'attach'), /not attached/i);
+});
+
+test('waiting for a replacement gives up: after a while nothing is listened for', async () => {
+  const t = childService();
+  t.svc._replacedWaitMs = 10;
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.sessions[0].ended('process-replaced');
+  assert.equal(t.handlers.size, 1);
+  await tick(40);
+  assert.equal(t.handlers.size, 0);
+});
+
+test('a replacement nobody acted on is let run when another session starts', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.sessions[0].ended('process-replaced');
+  t.report(execOf(t, 100));
+  await t.svc.attach(500);
+  await tick();
+  assert.ok(t.log.some((l) => l[0] === 'resume' && l[1] === 100));
+  assert.equal(t.handlers.size, 0);
+});
+
+test('an exec that is not the attached process is let run, not announced', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.report(execOf(t, 777));
+  await tick();
+  assert.deepEqual(t.events, []);
+  assert.deepEqual(t.log.slice(-1), [['resume', 777]]);
+});
+
+test('any other end of the session lets a replacement that was reported early run', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.report(execOf(t, 100));
+  await t.svc.detach();
+  await tick();
+  assert.ok(t.log.some((l) => l[0] === 'resume' && l[1] === 100));
+  assert.deepEqual(t.events, []);
+});

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
 import { sessionActions } from '../store/sessionSlice';
 import { attachAndLoad, reloadFromEditor, spawnAndLoad, resumeSpawned, reconnect, setChildGating, releaseChild, switchToChild } from '../sessionOps';
-import { endedText, envCount, parseEnv, targetLabel, childCommand, ChildInfo } from '../session/launch';
+import { endedText, envCount, parseEnv, targetLabel, childCommand, isFork, ChildInfo } from '../session/launch';
 import { writeTerminal } from '../bridge';
 import { Icon } from './Icon';
 
@@ -162,7 +162,7 @@ export function SessionControls() {
         </label>
         {isAttached && children.map((child) => (
           <div className="session-note" data-testid="child-caught" key={child.pid}>
-            <span><strong>A child process is waiting.</strong> It is suspended and has not run yet.</span>
+            <span><strong>A child process is waiting.</strong> It is suspended and has not run yet.{isFork(child) ? ' If it goes on to start another program, the session follows it there while catching is on.' : ''}</span>
             <span className="mono cmd" title={child.path + ' ' + child.argv.slice(1).join(' ')}>{childCommand(child)} · pid {child.pid}</span>
             <label className="chk" title="After moving to it, leave it suspended until you press Resume">
               <input type="checkbox" data-testid="child-suspended" checked={childSuspended} onChange={(e) => setChildSuspended(e.target.checked)} />Keep it suspended
