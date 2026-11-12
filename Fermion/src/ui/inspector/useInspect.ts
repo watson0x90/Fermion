@@ -18,8 +18,8 @@ export interface InspectState<T> {
 // each time it is shown), whenever `key` changes, and on reload(). A response
 // that arrives after a newer request was started is dropped. When the key
 // changes, the previous result is cleared at once so it is never shown under
-// the new selection.
-export function useInspect<T>(call: () => Promise<T>, key: string, enabled: boolean): InspectState<T> {
+// the new selection. With `autoMs`, the call repeats that long after each answer.
+export function useInspect<T>(call: () => Promise<T>, key: string, enabled: boolean, autoMs = 0): InspectState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -42,5 +42,13 @@ export function useInspect<T>(call: () => Promise<T>, key: string, enabled: bool
   }, [enabled, key, nonce]);
 
   const reload = useCallback(() => setNonce((n) => n + 1), []);
+
+  // Auto-refresh: ask again `autoMs` after the previous answer arrived. Waiting
+  // for the answer first means a slow target is never piled up on.
+  useEffect(() => {
+    if (!enabled || !autoMs || loading) return;
+    const t = setTimeout(reload, autoMs);
+    return () => clearTimeout(t);
+  }, [enabled, autoMs, loading, nonce, key, reload]);
   return { data, error, loading, reload };
 }

@@ -10,6 +10,7 @@ interface Match { address: string; size: number; where: string; }
 interface ScanResult extends Listing<Match> { stopped: string; rangesScanned: number; rangesTotal: number; }
 interface ReadResult { address: string; size: number; requested: number; hex: string; }
 
+const AUTO_MS = 2000;
 const PAGE = 256;          // bytes per hex-view page
 const WIDE_HEX_PX = 590;   // pane width that fits 16 bytes per row
 const PROTECTIONS = [
@@ -40,7 +41,8 @@ export function MemoryTab({ active, goto }: { active: boolean; goto: Goto | null
   const [scanning, setScanning] = useState(false);
 
   const ranges = useInspect<Listing<Range>>(() => inspectApi().ranges(protection), 'ranges|' + protection, active);
-  const view = useInspect<ReadResult>(() => inspectApi().read(address, PAGE), 'read|' + address, active && address != null);
+  const [auto, setAuto] = useState(false);
+  const view = useInspect<ReadResult>(() => inspectApi().read(address, PAGE), 'read|' + address, active && address != null, auto ? AUTO_MS : 0);
 
   // Show `target` in the hex view, optionally marking `length` bytes from it.
   const show = (target: string, length = 0) => {
@@ -120,6 +122,7 @@ export function MemoryTab({ active, goto }: { active: boolean; goto: Goto | null
         <button className="pill" data-testid="mem-go" onClick={go}>Go</button>
         <button className="pill" data-testid="mem-prev" title="Previous 256 bytes" disabled={!address} onClick={() => page(-PAGE)}>◀</button>
         <button className="pill" data-testid="mem-next" title="Next 256 bytes" disabled={!address} onClick={() => page(PAGE)}>▶</button>
+        <button className={'pill' + (auto ? ' on' : '')} data-testid="mem-auto" aria-pressed={auto} title="Re-read these bytes every 2 seconds, to watch memory change" onClick={() => setAuto(!auto)}>Auto</button>
         <span className="grow" />
         <span className="count">{view.loading ? 'reading…' : view.data ? `${view.data.size} bytes` : ''}</span>
       </div>

@@ -311,3 +311,66 @@ test('re-attaching to the same pid does not replay the previous session address 
   await new Promise((r) => setTimeout(r, 20));
   expect(inspect.read).not.toHaveBeenCalled();
 });
+
+test('Threads: Auto re-reads the list every couple of seconds while the view is open, and stops when turned off', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    setup();
+    open('threads');
+    await waitFor(() => expect(inspect.threads).toHaveBeenCalledTimes(1));
+    await act(async () => { vi.advanceTimersByTime(6000); });
+    expect(inspect.threads).toHaveBeenCalledTimes(1); // not automatic by default
+
+    fireEvent.click(screen.getByTestId('thr-auto'));
+    expect(screen.getByTestId('thr-auto')).toHaveAttribute('aria-pressed', 'true');
+    await act(async () => { vi.advanceTimersByTime(2100); });
+    await waitFor(() => expect(inspect.threads.mock.calls.length).toBeGreaterThanOrEqual(2));
+    await act(async () => { vi.advanceTimersByTime(2100); });
+    await waitFor(() => expect(inspect.threads.mock.calls.length).toBeGreaterThanOrEqual(3)); // and it keeps going
+
+    // Leaving the view pauses it; coming back resumes.
+    open('modules');
+    const n = inspect.threads.mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(6000); });
+    expect(inspect.threads).toHaveBeenCalledTimes(n);
+
+    open('threads');
+    // Coming back re-reads once straight away; let that land before counting.
+    await waitFor(() => expect(inspect.threads.mock.calls.length).toBeGreaterThan(n));
+    fireEvent.click(screen.getByTestId('thr-auto')); // Auto off
+    await act(async () => { vi.advanceTimersByTime(50); });
+    const m = inspect.threads.mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(6000); });
+    expect(inspect.threads).toHaveBeenCalledTimes(m);
+  } finally { vi.useRealTimers(); }
+});
+
+test('Threads: a slow listing is not piled up on by Auto', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    setup();
+    open('threads');
+    await waitFor(() => expect(inspect.threads).toHaveBeenCalledTimes(1));
+    inspect.threads.mockImplementation(() => new Promise(() => {})); // never answers
+    fireEvent.click(screen.getByTestId('thr-auto'));
+    await act(async () => { vi.advanceTimersByTime(2100); });
+    await waitFor(() => expect(inspect.threads).toHaveBeenCalledTimes(2));
+    await act(async () => { vi.advanceTimersByTime(10000); });
+    expect(inspect.threads).toHaveBeenCalledTimes(2); // still waiting on the first
+  } finally { vi.useRealTimers(); }
+});
+
+test('Memory: Auto keeps re-reading the bytes on screen', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    setup();
+    open('memory');
+    fireEvent.change(screen.getByTestId('mem-addr'), { target: { value: '0x2000' } });
+    fireEvent.click(screen.getByTestId('mem-go'));
+    await waitFor(() => expect(inspect.read).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByTestId('mem-auto'));
+    await act(async () => { vi.advanceTimersByTime(2100); });
+    await waitFor(() => expect(inspect.read).toHaveBeenCalledTimes(2));
+    expect(inspect.read).toHaveBeenLastCalledWith('0x2000', 256);
+  } finally { vi.useRealTimers(); }
+});
