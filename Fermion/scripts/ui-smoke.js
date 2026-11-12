@@ -100,6 +100,25 @@ function launch(pageErrors) {
     if (!tb.bar || !tb.wordmark || !tb.controls) throw new Error('title bar incomplete: ' + JSON.stringify(tb));
     console.log('SMOKE_TITLEBAR_OK wordmark + window controls present');
 
+    // Regression: after growing then shrinking the window, the status bar must
+    // still be the topmost element at its own position. (Panels once ratcheted
+    // taller than the body and painted over it — its rect stayed "in view".)
+    const resize = async (wd, ht) => {
+      await app.evaluate(({ BrowserWindow }, [a, b]) => BrowserWindow.getAllWindows()[0].setSize(a, b), [wd, ht]);
+      await new Promise((r) => setTimeout(r, 600));
+    };
+    await resize(1280, 1000);
+    await resize(1100, 640);
+    const covered = await win.evaluate(() => {
+      const sb = document.querySelector('[data-testid="status-bar"]');
+      const r = sb.getBoundingClientRect();
+      const y = r.top + r.height / 2;
+      return [150, innerWidth * 0.45, innerWidth - 100]
+        .filter((x) => !sb.contains(document.elementFromPoint(x, y))).length;
+    });
+    if (covered) throw new Error('status bar is painted over after resize (' + covered + '/3 points covered)');
+    console.log('SMOKE_RESIZE_OK status bar stays on top after grow + shrink');
+
     // Seed a non-default (dark) theme, relaunch, and prove the whole app is
     // restored to it: dark chrome tokens AND a dark Monaco editor.
     await win.evaluate(() => { try { localStorage.setItem('fermion.theme', 'Monokai'); } catch (e) { /* ignore */ } });

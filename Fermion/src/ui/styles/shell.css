@@ -39,7 +39,12 @@ button, input, select { font-family: inherit; }
 .winctl button.close:hover { background: #e5484d; color: #fff; }
 
 /* ---- body grid ---- */
-.body { display: grid; grid-template-columns: 48px 244px minmax(0,1fr) minmax(0,1.05fr); min-height: 0; transition: grid-template-columns .16s ease; position: relative; }
+/* The row MUST be minmax(0,1fr): an implicit `auto` row sizes to the tallest
+   panel, and Monaco/xterm set explicit pixel heights from their container, so
+   the panels ratchet taller, never shrink, and paint over the status bar. */
+.body > * { min-height: 0; }
+.toolbox, .output { overflow: hidden; }
+.body { display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; grid-template-columns: 48px 244px minmax(0,1fr) minmax(0,1.05fr); min-height: 0; transition: grid-template-columns .16s ease; position: relative; }
 .app.rail-open .body { grid-template-columns: 176px 244px minmax(0,1fr) minmax(0,1.05fr); }
 
 /* ---- activity rail ---- */
