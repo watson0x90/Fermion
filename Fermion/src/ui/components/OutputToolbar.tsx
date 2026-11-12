@@ -1,4 +1,4 @@
-import { useState, MutableRefObject } from 'react';
+import { useRef, useState, KeyboardEvent, MutableRefObject } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
 import { outputActions, KINDS } from '../store/outputSlice';
 import { clearTerminal } from '../bridge';
@@ -7,6 +7,8 @@ import { Icon } from './Icon';
 // The SEND kind is displayed as "MSG" (output is color-only, so the chip is the
 // only place the kind is named — the internal kind stays SEND).
 const LABEL: Record<string, string> = { LOG: 'LOG', WARN: 'WARN', ERR: 'ERR', SEND: 'MSG', STATUS: 'STATUS' };
+
+const HISTORY_MAX = 50;
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const outputApi = () => (window as any).fermion?.output;
@@ -28,10 +30,53 @@ export function OutputToolbar({ ctrlRef, standalone = false }: { ctrlRef: Mutabl
     await window.fermion.saveFile(text, { title: 'Save Frida Output', defaultPath: 'frida-output.txt' });
   };
 
-  const search = (back: boolean) => {
-    if (!q) return;
-    if (back) ctrlRef.current?.searchPrev?.(q, { regex });
-    else ctrlRef.current?.searchNext(q, { regex });
+  // ---- search: live as you type, with a session history on Up/Down ----
+  const inputRef = useRef<HTMLInputElement>(null);
+  const history = useRef<string[]>([]); // oldest first
+  const cursor = useRef(-1);            // -1 = not browsing; else steps back from newest
+  const draft = useRef('');             // what was typed before browsing history
+
+  // Show `value` in the box and search for it without moving off the current
+  // match (incremental); an empty value clears the search instead.
+  const live = (value: string, useRegex = regex) => {
+    setQ(value);
+    if (value) ctrlRef.current?.searchNext(value, { regex: useRegex, incremental: true });
+    else ctrlRef.current?.clearSearch?.();
+  };
+  const remember = (value: string) => {
+    const h = history.current;
+    if (!value || h[h.length - 1] === value) return;
+    h.push(value);
+    if (h.length > HISTORY_MAX) h.shift();
+  };
+  const clearSearch = () => {
+    remember(q);
+    cursor.current = -1;
+    live('');
+    inputRef.current?.focus();
+  };
+  const onSearchKey = (e: KeyboardEvent<HTMLInputElement>) => {
+    const h = history.current;
+    if (e.key === 'Enter') {
+      if (!q) return;
+      remember(q);
+      cursor.current = -1;
+      if (e.shiftKey) ctrlRef.current?.searchPrev?.(q, { regex });
+      else ctrlRef.current?.searchNext(q, { regex });
+    } else if (e.key === 'Escape') {
+      if (q) clearSearch();
+    } else if (e.key === 'ArrowUp') {
+      if (!h.length) return;
+      e.preventDefault();
+      if (cursor.current === -1) draft.current = q;
+      cursor.current = Math.min(cursor.current + 1, h.length - 1);
+      live(h[h.length - 1 - cursor.current]);
+    } else if (e.key === 'ArrowDown') {
+      if (cursor.current === -1) return;
+      e.preventDefault();
+      cursor.current -= 1;
+      live(cursor.current === -1 ? draft.current : h[h.length - 1 - cursor.current]);
+    }
   };
 
   // Two rows: kind filters on the left with the action icons pinned top-right
@@ -67,17 +112,24 @@ export function OutputToolbar({ ctrlRef, standalone = false }: { ctrlRef: Mutabl
           <Icon name="search" size={13} />
           <input
             data-testid="output-search"
-            placeholder={regex ? 'Search output (regex)' : 'Search output'}
+            placeholder={regex ? 'Search output (regex) — ↑↓ history' : 'Search output — ↑↓ history'}
+            ref={inputRef}
             value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') search(e.shiftKey); }}
+            onChange={(e) => { cursor.current = -1; live(e.target.value); }}
+            onKeyDown={onSearchKey}
+            onBlur={() => remember(q)}
           />
+          {q && (
+            <button className="x" data-testid="search-clear" title="Clear search (Esc)" onMouseDown={(e) => e.preventDefault()} onClick={clearSearch}>
+              <Icon name="close" size={13} />
+            </button>
+          )}
           <button
             className={'rx' + (regex ? ' on' : '')}
             data-testid="search-regex"
             aria-pressed={regex}
             title={regex ? 'Regex search is on — click for plain text' : 'Plain-text search — click for regex'}
-            onClick={() => setRegex(!regex)}
+            onClick={() => { setRegex(!regex); if (q) live(q, !regex); }}
           >
             .*
           </button>

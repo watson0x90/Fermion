@@ -74,7 +74,8 @@ function createTerminal(container) {
   const RIS = 'c';
 
   function searchOptions(opts) {
-    return { regex: !(opts && opts.regex === false), caseSensitive: false };
+    // incremental: keep the current match while the query is still being typed.
+    return { regex: !(opts && opts.regex === false), caseSensitive: false, incremental: !!(opts && opts.incremental) };
   }
 
   function renderFiltered() {
@@ -136,7 +137,8 @@ function createTerminal(container) {
       try { return searchAddon.findPrevious(query, searchOptions(opts)); }
       catch (_) { return false; }
     },
-    clearSearch() { try { searchAddon.clearDecorations(); } catch (_) {} },
+    // Drop the search highlight (the match is shown as the selection).
+    clearSearch() { try { searchAddon.clearDecorations(); term.clearSelection(); } catch (_) {} },
     copySelectionOrAll() {
       const sel = term.getSelection();
       return sel && sel.length ? sel : controller.getText();

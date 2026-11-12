@@ -141,6 +141,8 @@ button, input, select { font-family: inherit; }
 .otool .search input::placeholder { color: var(--faint); }
 .otool .search .rx { flex: 0 0 auto; height: 22px; min-width: 28px; padding: 0 6px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--faint); font: 500 11.5px/1 "IBM Plex Mono", ui-monospace, monospace; cursor: pointer; }
 .otool .search .rx:hover { color: var(--fg); }
+.otool .search .x { flex: 0 0 auto; width: 22px; height: 22px; border: 0; border-radius: 5px; background: transparent; color: var(--faint); display: grid; place-items: center; cursor: pointer; padding: 0; }
+.otool .search .x:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 9%, transparent); }
 .otool .search .rx.on { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .obody { flex: 1; min-height: 0; overflow: hidden; background: var(--term-bg); }
 /* Breathing room so output never touches the pane's edges. The padding goes on

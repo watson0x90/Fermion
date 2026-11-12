@@ -170,3 +170,80 @@ test('the terminal refits when its pane changes size, not only when the window d
     delete (globalThis as any).ResizeObserver;
   }
 });
+
+function searchSetup() {
+  fakeOutput();
+  fakeCtrl.searchNext.mockClear();
+  (fakeCtrl as any).searchPrev = vi.fn();
+  (fakeCtrl as any).clearSearch = vi.fn();
+  render(<Provider store={makeStore()}><OutputPane /></Provider>);
+  const input = screen.getByTestId('output-search') as HTMLInputElement;
+  const type = (v: string) => fireEvent.change(input, { target: { value: v } });
+  const key = (k: string, extra = {}) => fireEvent.keyDown(input, { key: k, ...extra });
+  return { input, type, key };
+}
+
+test('search runs as you type (incrementally) and clears when the field is emptied', () => {
+  const { type } = searchSetup();
+  type('op');
+  expect(fakeCtrl.searchNext).toHaveBeenLastCalledWith('op', { regex: true, incremental: true });
+  type('open');
+  expect(fakeCtrl.searchNext).toHaveBeenLastCalledWith('open', { regex: true, incremental: true });
+  expect((fakeCtrl as any).clearSearch).not.toHaveBeenCalled();
+  type('');
+  expect((fakeCtrl as any).clearSearch).toHaveBeenCalledTimes(1);
+  expect(fakeCtrl.searchNext).toHaveBeenCalledTimes(2); // nothing searched for ''
+});
+
+test('a clear button appears only while there is a query, and clears the field + the search', () => {
+  const { input, type } = searchSetup();
+  expect(screen.queryByTestId('search-clear')).toBeNull();
+  type('open');
+  fireEvent.click(screen.getByTestId('search-clear'));
+  expect(input.value).toBe('');
+  expect((fakeCtrl as any).clearSearch).toHaveBeenCalled();
+  expect(screen.queryByTestId('search-clear')).toBeNull();
+  expect(document.activeElement).toBe(input); // ready to type the next query
+});
+
+test('Escape clears the search too', () => {
+  const { input, type, key } = searchSetup();
+  type('open');
+  key('Escape');
+  expect(input.value).toBe('');
+  expect((fakeCtrl as any).clearSearch).toHaveBeenCalled();
+});
+
+test('Up/Down walk the search history; Down past the newest restores what was being typed', () => {
+  const { input, type, key } = searchSetup();
+  key('ArrowUp');                 // no history yet: nothing happens
+  expect(input.value).toBe('');
+
+  type('first'); key('Enter');
+  type('second'); key('Enter');
+  type('second'); key('Enter');   // repeating the last query does not add a duplicate
+  type('dra');                    // an unsubmitted draft
+
+  key('ArrowUp'); expect(input.value).toBe('second');
+  expect(fakeCtrl.searchNext).toHaveBeenLastCalledWith('second', { regex: true, incremental: true });
+  key('ArrowUp'); expect(input.value).toBe('first');
+  key('ArrowUp'); expect(input.value).toBe('first');   // stops at the oldest
+  key('ArrowDown'); expect(input.value).toBe('second');
+  key('ArrowDown'); expect(input.value).toBe('dra');   // back to the draft
+  key('ArrowDown'); expect(input.value).toBe('dra');   // stops at the newest
+});
+
+test('a query cleared with the clear button is remembered in history', () => {
+  const { input, type, key } = searchSetup();
+  type('typed-not-entered');
+  fireEvent.click(screen.getByTestId('search-clear'));
+  key('ArrowUp');
+  expect(input.value).toBe('typed-not-entered');
+});
+
+test('toggling regex re-runs the current query in the new mode', () => {
+  const { type } = searchSetup();
+  type('a.c');
+  fireEvent.click(screen.getByTestId('search-regex'));
+  expect(fakeCtrl.searchNext).toHaveBeenLastCalledWith('a.c', { regex: false, incremental: true });
+});
