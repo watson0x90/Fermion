@@ -3,7 +3,7 @@
 //--------------------//
 
 // Native function pointer
-var pAmsiScanBuff = Module.findExportByName('amsi.dll', 'AmsiScanBuffer')
+var pAmsiScanBuff = Process.getModuleByName('amsi.dll').findExportByName('AmsiScanBuffer')
 
 // Enum
 var AMSI_RESULT = {

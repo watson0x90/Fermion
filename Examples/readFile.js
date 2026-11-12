@@ -1,7 +1,7 @@
 // Native function ptr's
 //=====
-var pReadFile = Module.findExportByName("kernel32.dll", "ReadFile");
-var pGetFileInformationByHandleEx = Module.findExportByName("kernel32.dll", "GetFileInformationByHandleEx");
+var pReadFile = Process.getModuleByName("kernel32.dll").findExportByName("ReadFile");
+var pGetFileInformationByHandleEx = Process.getModuleByName("kernel32.dll").findExportByName("GetFileInformationByHandleEx");
 
 // Function defs
 //=====

@@ -4,7 +4,7 @@
 
 // Functions
 //----------------------------------------------
-var pEtwEventWrite = Module.findExportByName('ntdll.dll', 'EtwEventWrite')
+var pEtwEventWrite = Process.getModuleByName('ntdll.dll').findExportByName('EtwEventWrite')
 
 // Helpers
 //----------------------------------------------

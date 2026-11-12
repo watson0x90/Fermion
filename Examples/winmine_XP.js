@@ -7,13 +7,13 @@
 
 // Native pointers
 //-----------------------
-var pWinminBase = Module.getBaseAddress("Winmine_9c45d38b74634c9ded60bec640c5c3ca.exe");
+var pWinminBase = Process.getModuleByName("Winmine_9c45d38b74634c9ded60bec640c5c3ca.exe").base;
 var pMineStruct = pWinminBase.add(0x5330);
-var pFindWindowA = Module.findExportByName("User32.dll","FindWindowA");
-var pGetWindowRect = Module.findExportByName("User32.dll","GetWindowRect");
-var pSetCursorPos = Module.findExportByName("User32.dll","SetCursorPos");
-var pMouseEvent = Module.findExportByName("User32.dll","mouse_event");
-var pSetForegroundWindow = Module.findExportByName("User32.dll","SetForegroundWindow");
+var pFindWindowA = Process.getModuleByName("User32.dll").findExportByName("FindWindowA");
+var pGetWindowRect = Process.getModuleByName("User32.dll").findExportByName("GetWindowRect");
+var pSetCursorPos = Process.getModuleByName("User32.dll").findExportByName("SetCursorPos");
+var pMouseEvent = Process.getModuleByName("User32.dll").findExportByName("mouse_event");
+var pSetForegroundWindow = Process.getModuleByName("User32.dll").findExportByName("SetForegroundWindow");
 
 // Function prototypes
 //-----------------------

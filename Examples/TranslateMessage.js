@@ -4,8 +4,8 @@
 
 // Native function pointers
 //-----------------------
-var pTranslateMessage = Module.findExportByName('user32.dll', 'TranslateMessage');
-var pGetClassNameW = Module.findExportByName('user32.dll', 'GetClassNameW');
+var pTranslateMessage = Process.getModuleByName('user32.dll').findExportByName('TranslateMessage');
+var pGetClassNameW = Process.getModuleByName('user32.dll').findExportByName('GetClassNameW');
 
 // Function prototypes
 //-----------------------

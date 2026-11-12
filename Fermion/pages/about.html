@@ -25,7 +25,7 @@
             <!--Window Content-->
             <div class="row" style="margin-left:0px;">
                 <img src="../src/images/fermion-alt.png">
-                <img style="padding-bottom: 15px; padding-left: 20px;" src="../src/images/version.png" style="margin-left:20px;margin-top:40px">
+                <span id="FermionVersion" style="display:inline-block; padding: 0 0 22px 18px; vertical-align: bottom; font: 600 15px/1 system-ui, sans-serif; color: #4a4b48;"></span>
             </div>
             <div class="row" style="margin-left:0px;text-align:center;display:block">
                 <br />
@@ -48,9 +48,14 @@
 	    	window.close();
 	    }
 
+        // Show the versions actually running (the old picture said "v1.9").
+        window.fermion.versions().then(function (v) {
+            document.getElementById("FermionVersion").textContent = "v" + v.fermion + "  ·  Frida " + v.frida;
+        }).catch(function () {});
+
         // Visit GitHub (opened in the user's browser by the main process)
         document.getElementById("OpenGitHub").onclick = function () {
-	    	window.fermion.openExternal("https://github.com/FuzzySecurity/Fermion");
+	    	window.fermion.openExternal("https://github.com/watson0x90/Fermion");
 	    }
 	</script>
 </html>

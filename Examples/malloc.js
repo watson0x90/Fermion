@@ -2,7 +2,7 @@
 // Malloc //
 //--------//
 
-var pMalloc = Module.findExportByName(null, "malloc");
+var pMalloc = Module.findGlobalExportByName("malloc");
 
 Interceptor.attach(pMalloc, {
     onEnter: function (args) {

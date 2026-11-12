@@ -19,7 +19,7 @@
 //----------------------------------------------
 // More details related to Send & Recv can be found here:
 // => https://doxygen.reactos.org/de/d28/sndrcv_8c.html
-var pNtDeviceIoControlFile = Module.findExportByName("ntdll.dll", "NtDeviceIoControlFile")
+var pNtDeviceIoControlFile = Process.getModuleByName("ntdll.dll").findExportByName("NtDeviceIoControlFile")
 
 // Global
 //----------------------------------------------

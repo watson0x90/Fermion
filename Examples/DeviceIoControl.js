@@ -4,7 +4,7 @@
 
 // Native function pointers
 //-----------------------
-var pDeviceIoControl = Module.findExportByName('Kernel32.dll', 'DeviceIoControl')
+var pDeviceIoControl = Process.getModuleByName('Kernel32.dll').findExportByName('DeviceIoControl')
 
 // Hooks
 //-----------------------

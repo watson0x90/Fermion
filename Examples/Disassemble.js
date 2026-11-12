@@ -3,7 +3,7 @@
 //---------------------------------------//
 
 // Native function pointer
-var pNtQuerySection = Module.findExportByName('ntdll.dll', 'NtQuerySection');
+var pNtQuerySection = Process.getModuleByName('ntdll.dll').findExportByName('NtQuerySection');
 
 // Disassemble x instructions at NativePointer
 //--------

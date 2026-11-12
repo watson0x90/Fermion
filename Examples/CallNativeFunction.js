@@ -3,7 +3,7 @@
 //--------------------------//
 
 // Native function pointer
-var pMessageBoxA = Module.findExportByName("User32.dll","MessageBoxA");
+var pMessageBoxA = Process.getModuleByName("User32.dll").findExportByName("MessageBoxA");
 
 // Function prototype
 var fMessageBox = new NativeFunction(

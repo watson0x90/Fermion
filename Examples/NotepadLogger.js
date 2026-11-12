@@ -4,11 +4,11 @@
 
 // Native function pointers
 //-----------------------
-var pFindWindowA = Module.findExportByName("User32.dll","FindWindowA");
-var pFindWindowExA = Module.findExportByName("User32.dll","FindWindowExA");
-var pSendMessageA = Module.findExportByName("User32.dll","SendMessageA");
-var pCloseHandle = Module.findExportByName("Kernel32.dll","CloseHandle");
-var pAmsiScanBuff = Module.findExportByName('amsi.dll', 'AmsiScanBuffer')
+var pFindWindowA = Process.getModuleByName("User32.dll").findExportByName("FindWindowA");
+var pFindWindowExA = Process.getModuleByName("User32.dll").findExportByName("FindWindowExA");
+var pSendMessageA = Process.getModuleByName("User32.dll").findExportByName("SendMessageA");
+var pCloseHandle = Process.getModuleByName("Kernel32.dll").findExportByName("CloseHandle");
+var pAmsiScanBuff = Process.getModuleByName('amsi.dll').findExportByName('AmsiScanBuffer')
 
 // Function prototypes
 //-----------------------

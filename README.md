@@ -2,28 +2,55 @@
 
 # Fermion
 
-Fermion is an electron application that wraps [frida-node](https://github.com/frida/frida-node) and [monaco-editor](https://microsoft.github.io/monaco-editor/). It offers a fully integrated environment to prototype, test and refine Frida scripts through a single UI. With the integration of Monaco come all the features you would expect from Visual Studio Code: Linting, IntelliSense, keybindings, etc. In addition, Fermion has a TypeScript language definition for the Frida API so it is easy to write Frida scripts.
+Fermion is a desktop IDE for [Frida](https://frida.re). It wraps [frida-node](https://github.com/frida/frida-node) and the [Monaco editor](https://microsoft.github.io/monaco-editor/) in an Electron app, so you can write a Frida script, inject it into a process, and watch its output in one window. Around the editor it adds a live REPL, a process tree, a read-only inspector for the target's modules, memory and threads, and a call-graph tracer.
 
-> **Maintained fork.** This is [@watson0x90](https://github.com/watson0x90)'s maintained continuation of the original [FuzzySecurity/Fermion](https://github.com/FuzzySecurity/Fermion) by [Ruben Boonen (@FuzzySec)](https://twitter.com/FuzzySec), with full credit to the original author. It modernizes the stack (Electron 45, Frida 17, Monaco 0.57) and ships releases via a tag-triggered GitHub Actions workflow.
+![Fermion: a script hooking CreateFileW, with its output on the right](Images/fermion-overview.png)
+
+> **Maintained fork.** This is [@watson0x90](https://github.com/watson0x90)'s maintained continuation of the original [FuzzySecurity/Fermion](https://github.com/FuzzySecurity/Fermion) by [Ruben Boonen (@FuzzySec)](https://twitter.com/FuzzySec), with full credit to the original author. Version 2 rebuilds the app on a secured main/renderer split with a React interface (Electron 45, Frida 17, Monaco 0.57).
 
 `What's in a name`: A fermion can be an elementary particle, such as the electron, or it can be a composite particle, such as the proton. Fermions include all quarks and leptons, as well as all composite particles made of an odd number of these, such as all baryons and many atoms and nuclei.
 
-## How to get Fermion?
+## Contents
 
-### Run Fermion from source
+- [Get Fermion](#get-fermion)
+- [A first session](#a-first-session)
+- [The window](#the-window)
+- [Editor](#editor)
+- [Output](#output)
+- [REPL](#repl)
+- [Process tree](#process-tree)
+- [Inspector](#inspector)
+- [Graph](#graph)
+- [Remote and USB devices](#remote-and-usb-devices)
+- [Keyboard shortcuts](#keyboard-shortcuts)
+- [Themes](#themes)
+- [Writing scripts for Frida 17](#writing-scripts-for-frida-17)
+- [FAQ](#faq)
+- [Development](#development)
+- [Notes](#notes)
 
-Download the repository and navigate to the `Fermion` folder in the terminal. Install the dependencies and start the app:
+## Get Fermion
+
+### Releases
+
+Pre-built packages for x64 Windows, x64 Linux and arm64 macOS are on the [releases](https://github.com/watson0x90/Fermion/releases) page.
+
+### Run from source
+
+Clone the repository, then from the `Fermion` folder:
 
 ```
 npm install
 npm start
 ```
 
-> Frida 17's Node bindings ship **N-API prebuilds** (runtime-agnostic), so a plain `npm install` fetches a binding that works inside Electron — the old `npm_config_runtime=electron` / `npm_config_target=...` environment variables are **no longer required**. A recent Node.js (used only to drive `npm`/tooling) is recommended.
+`npm start` builds the interface first (`npm run build`) and then launches the app.
 
-### Compile a release package
+> Frida 17's Node bindings ship **N-API prebuilds**, so a plain `npm install` fetches a binding that works inside Electron. The old `npm_config_runtime=electron` / `npm_config_target=...` environment variables are no longer needed. A recent Node.js is recommended; it is only used to drive `npm` and the build.
 
-Complete the steps above and then build a standalone package with [`@electron/packager`](https://github.com/electron/packager):
+### Build a package
+
+After the steps above, build a standalone package with [`@electron/packager`](https://github.com/electron/packager):
 
 ```
 # Windows
@@ -38,9 +65,239 @@ npx @electron/packager . --platform=darwin --arch=arm64 --icon ./src/images/ferm
 
 On Apple Silicon an unsigned app is blocked from launching, so ad-hoc sign the bundle before running it: `codesign --force --deep --sign - Fermion-darwin-arm64/Fermion.app`.
 
+## A first session
+
+1. In the **Session** sidebar, leave **Device** on `local`, open the **Process** list and pick a process. (Or find it in the [Process tree](#process-tree).)
+2. Write a script in the **Editor**, for example:
+
+   ```js
+   // Log every file the process opens.
+   const CreateFileW = Process.getModuleByName('kernel32.dll').getExportByName('CreateFileW');
+
+   Interceptor.attach(CreateFileW, {
+     onEnter(args) {
+       console.log('CreateFileW  ' + args[0].readUtf16String());
+     },
+   });
+   ```
+
+3. Press **Attach**. Fermion attaches to the process and loads the script; what it prints appears in **Output**.
+4. Edit the script and press **Reload** (in the Editor toolbar or the sidebar, or `Ctrl-T`) to load the new version without detaching.
+5. Press **Detach** when you are done.
+
+To start a program under Frida instead of attaching to a running one, fill in **Spawn new** in the sidebar (executable path and optional arguments). The process is started suspended, the script is loaded, and then it is resumed, so hooks are in place before its first instruction runs.
+
+## The window
+
+| Area | What it is for |
+|---|---|
+| **Title bar** | Drag to move the window; minimize, maximize and close on the right. |
+| **Rail** (far left) | Switches the toolbox tab, and opens the Frida API docs, About and Settings. The top button expands it to show labels. |
+| **Session sidebar** | Device and process pickers, Attach / Reload / Detach, and Spawn new. |
+| **Toolbox** (centre) | Tabs: **Editor**, **REPL**, **Graph**, **Process tree**, **Inspector**. |
+| **Output** (right) | Everything the script prints, with filters and search. Can be detached into its own window. |
+| **Status bar** | Device, attached PID, whether a script is loaded, trace on/off, message count. |
+
+## Editor
+
+The Monaco editor with Frida's type definitions loaded, so you get completion, signatures and inline documentation for the Frida API as you type.
+
+- **Reload** loads the editor's current text into the attached process. A script that fails to load (a syntax error, say) is reported in Output.
+- **Wrap** toggles line wrapping.
+- `Ctrl-S` saves the script and `Ctrl-O` opens one. After the first save, `Ctrl-S` writes back to the same file.
+
+## Output
+
+Output shows what your script produces, coloured by kind:
+
+| Chip | Comes from |
+|---|---|
+| **LOG** | `console.log` / `console.info` / `console.debug` |
+| **WARN** | `console.warn` |
+| **ERR** | `console.error`, and errors thrown by the script |
+| **MSG** | `send(...)` payloads (objects are pretty-printed) |
+| **STATUS** | Fermion's own lines: attach, reload, detach reason |
+
+- Click a chip to hide or show that kind. Hidden lines are kept and come back when you turn the chip on again.
+- **Search** starts as you type and highlights the first match. `Enter` goes to the next match and `Shift+Enter` to the previous one; `Esc` or the × clears it. The `.*` button switches between regex and plain-text search. `↑` / `↓` in the search box recall earlier searches.
+- The four buttons at the top right are **detach**, **follow tail** (keep the newest line in view), **clear** (`Alt-C`) and **save** (write the output to a text file).
+- The last 5,000 lines are kept.
+
+### Detaching Output
+
+The detach button moves Output into its own window, which is useful on a second monitor; the toolbox then takes the full width of the main window. Dock it again with the dock button in that window, by closing that window, or with the "Output detached · dock" link in the main window's status bar. History, filters, the follow setting and the colour theme carry over both ways.
+
+![The Output pane detached into its own window](Images/fermion-output-window.png)
+
+## REPL
+
+A `frida>` prompt that evaluates JavaScript in the attached process.
+
+![The REPL: a result, help for a function, and Tab completion](Images/fermion-repl.png)
+
+- `Enter` runs the entry; `Shift+Enter` adds a line. `↑` / `↓` recall earlier entries.
+- `Tab` completes the name at the cursor: a global (`Proc` → `Process`) or a member (`Process.enumerateMod` → `Process.enumerateModules`). When several names fit, the part they share is filled in and the choices are listed; click one or keep typing.
+- `help` explains the prompt and lists the Frida APIs available in the target. `help Process` shows Frida's documentation for it and the members that exist in this process; `help Process.enumerateModules` shows the full signature and description. `?Process` works too. The text is Frida's own, taken from its type definitions at build time.
+- Results are printed as JSON where that makes sense, and Frida values such as `NativePointer` print as themselves. Entries and results are also copied to Output; help text is not.
+
+Things to know:
+
+- The REPL runs in **its own scope**, separate from the script in the Editor. It cannot see that script's variables, and it keeps its own across script reloads.
+- Only `var` declarations (and assignments to undeclared names) persist between entries. `let` and `const` do not.
+- An entry that has not finished after **20 seconds** is abandoned and the REPL is restarted, which clears its variables. A busy loop may keep running in the target until you detach.
+- Completion only follows plain dotted names. It will not complete after a call or an index (`foo().ba`, `arr[0].x`), because that would mean running your code just to make suggestions.
+
+## Process tree
+
+The processes on the selected device as a parent → child tree, so you can tell which `chrome.exe` is which.
+
+- **Filter** by name or PID. Parents of a match stay visible for context.
+- Click the arrow on a row to collapse or expand its children.
+- **Attach** from a row with its button (shown on hover) or by double-clicking it. This does the same as Attach in the sidebar.
+- The attached process is highlighted. **Only ancestry** narrows the tree to that process, its parents and its children.
+- **Refresh** re-reads the list. A device that does not report parent PIDs gets a flat list and a note saying so.
+
+## Inspector
+
+Read-only views of the attached process. Nothing in the Inspector writes to the target. Each view loads when you open it and again when you press **Refresh** or come back to it.
+
+![Inspector: a thread's registers and backtrace](Images/fermion-inspector.png)
+
+**Modules** lists every loaded module with its base address and size. Select one to list its **exports** or **imports**, with a filter. Click any address to open it in Memory.
+
+**Memory** has three parts:
+
+- A **hex view** of 256 bytes. Type an address and press Go, or page with ◀ ▶.
+- **Ranges**: the mapped memory ranges with at least the chosen protection (`r--`, `rw-`, `r-x`, `rwx`). Click one to view it.
+- **Scan**: search those ranges for hex bytes (`4d 5a ?? 00`, where `??` matches any byte) or for text. Click a result to see it in the hex view with the match marked. A pattern needs at least two concrete bytes. A scan stops after 500 matches or 8 seconds and says so.
+
+![Inspector: a text scan and its match in the hex view](Images/fermion-memory.png)
+
+**Threads** lists each thread with its state and where it is. Select one for its register values and a backtrace with symbol names. Click a register value or a frame to open that address in Memory. Register values are a snapshot from the last refresh.
+
+An address outside every readable range is refused rather than read. That includes stack guard pages, which must not be touched.
+
+## Graph
+
+Traces one exported function and draws what it calls.
+
+![Graph: the calls made inside CreateFileW](Images/fermion-graph.png)
+
+1. Enter a **module** and one of its **exported functions**. Both boxes suggest names from the attached process. The module can be left empty to look the function up across all modules.
+2. Press **Trace**. Each time the function runs, the calls made inside it are drawn as a graph: a node is a function (`module!symbol`), an arrow is a call, and `×3` on an arrow means it happened three times. The traced function is green and the last function called is red.
+3. Press **Stop** to end the trace.
+
+Things to know:
+
+- **Tracing replaces your script.** While a trace runs, the script from the Editor is unloaded and Fermion's tracer is loaded in its place. Stop reloads the Editor's script.
+- A trace follows the thread that entered the function until it returns. Work the function hands to another thread is not shown, and two runs of the same function can produce different graphs.
+- A function that is called very often is sampled (at most one graph every 0.75 seconds) rather than traced on every call, and a graph is cut off at 400 distinct calls and says so.
+- Zoom with − and +, or press **Fit** to shrink the whole graph into the pane. **Save** writes the graph as an SVG file.
+- Tracing uses Frida's Stalker, which is heavy. It can slow the target noticeably and, as with any tracing, can destabilise it.
+
+## Remote and USB devices
+
+The **Device** list shows the devices Frida can see: `local`, and USB devices or emulators running `frida-server`.
+
+To reach a `frida-server` over the network, type its address in **Remote host:port** under the device list (for example `192.168.1.20:27042`, or just the host for the default port) and press the + button or `Enter`. It is added to the device list and selected. Selecting another device removes it again.
+
+## Keyboard shortcuts
+
+| Keys | Action |
+|---|---|
+| `Ctrl-S` | Save the script |
+| `Ctrl-O` | Open a script |
+| `Ctrl-T` | Reload the script into the attached process |
+| `Alt-C` | Clear Output |
+| `Tab` (REPL) | Complete the name at the cursor |
+| `Enter` / `Shift+Enter` (REPL) | Run the entry / new line |
+| `↑` / `↓` (REPL, Output search) | Earlier / later entries |
+| `Esc` (Output search, REPL completions) | Clear / dismiss |
+
+On macOS use `Cmd` in place of `Ctrl`. `F5` and `Ctrl-R` are disabled on purpose: reloading the window would drop the session.
+
+## Themes
+
+Open **Settings** (the gear at the bottom of the rail) to choose a colour theme. There are 16, light and dark, and each one restyles the whole app: editor, Output, panels and window frame. The default, Kuroir, is the original Fermion look. The choice is remembered.
+
+![The theme list, with a dark theme applied](Images/fermion-themes.png)
+
+## Writing scripts for Frida 17
+
+Fermion ships Frida 17, which removed some long-standing APIs. Scripts written for older versions need small changes:
+
+| Older scripts | Frida 17 |
+|---|---|
+| `Module.findExportByName('kernel32.dll', 'CreateFileW')` | `Process.getModuleByName('kernel32.dll').findExportByName('CreateFileW')` |
+| `Module.getExportByName(mod, sym)` | `Process.getModuleByName(mod).getExportByName(sym)` |
+| `Module.findExportByName(null, 'malloc')` | `Module.findGlobalExportByName('malloc')` |
+| `Module.findBaseAddress(mod)` / `Module.getBaseAddress(mod)` | `Process.findModuleByName(mod).base` / `Process.getModuleByName(mod).base` |
+| `Memory.readUtf16String(p)`, `Memory.writeU32(p, v)`, … | `p.readUtf16String()`, `p.writeU32(v)`, … |
+
+The `Java`, `ObjC` and `Swift` bridges are also no longer built into the Frida runtime, so `Java.perform(...)` is not available to a plain script loaded here. A script that needs a bridge has to be bundled with it first (see `frida-compile` in the Frida documentation) and the bundle loaded into Fermion.
+
+The scripts in [`Examples`](Examples) have been updated to the Frida 17 export-lookup API. Several of them depend on a specific Windows build or target program, as their headers say.
+
+## FAQ
+
+### Windows
+
+  * **Q**: I need to inject a SYSTEM level process, how can I do that?
+    * **A**: Fermion needs to run as Administrator with `SeDebugPrivilege`. Launch PowerShell as Administrator and start Fermion from there. Running Fermion itself as SYSTEM (for example through psexec) has caused Electron to freeze since Electron 8.
+
+### Linux
+
+  * **Q**: I can't attach to a running process?
+    * **A**: The kernel's ptrace restrictions usually block it; the error appears in Output. Run Fermion or the Frida server as `root`, or relax the restriction with `sudo sysctl kernel.yama.ptrace_scope=0`.
+
+### General
+
+  * **Q**: My old script fails with `TypeError: not a function`.
+    * **A**: It most likely uses an API that Frida 17 removed. See [Writing scripts for Frida 17](#writing-scripts-for-frida-17).
+
+  * **Q**: Why can't the REPL see the variables in my script?
+    * **A**: Every Frida script has its own JavaScript scope, and the REPL is a separate script from the one in the Editor. Define what you want to explore at the prompt, or have your script `send()` or `console.log` it.
+
+  * **Q**: I want to build Fermion against a newer Electron or Frida. Do I need to match a specific Electron prebuild?
+    * **A**: No. Frida 17's Node bindings ship runtime-agnostic N-API prebuilds, so bump the versions in `Fermion/package.json` and reinstall.
+
+  * **Q**: Where do the editor's type definitions and the REPL's `help` text come from?
+    * **A**: Both come from `node_modules/@types/frida-gum/index.d.ts`. The REPL's help index is generated from it during `npm run build`.
+
+  * **Q**: Tracing made the target slow or unstable.
+    * **A**: Call tracing is resource intensive. Fermion samples hot functions and caps the size of a graph, but tracing a function that does a great deal of work can still stall or crash a process. Prefer narrower functions.
+
+## Development
+
+Fermion is an Electron app with a strict split between its two halves:
+
+- **Main process** (`Fermion/core.js`, `Fermion/src/frida-service.js`): owns Frida and every privileged operation.
+- **Renderer** (`Fermion/src/ui`, React + TypeScript + Redux Toolkit): the interface. It runs with `contextIsolation` on and `nodeIntegration` off, and reaches the main process only through the `window.fermion` bridge defined in `Fermion/src/preload-api.js`. Frida operations go through one allow-list in `Fermion/src/frida-ipc.js`.
+
+The renderer shows text produced by the process being instrumented, so it is treated as untrusted: arguments are validated in the main process, and target-supplied strings are never inserted as HTML.
+
+Fermion's own helper scripts, which run inside the target, live in `Fermion/src/tools`: `repl-agent.js` (REPL), `inspector-agent.js` (Inspector) and `trace.js` (Graph).
+
+From the `Fermion` folder:
+
+| Command | What it does |
+|---|---|
+| `npm run build` | Bundles the interface and generates the REPL help index |
+| `npm run watch` | Rebuilds the interface on change |
+| `npm start` | Builds, then launches the app |
+| `npm run typecheck` | TypeScript check |
+| `npm run lint` | ESLint |
+| `npm run test:unit` | Component tests (Vitest) |
+| `node --test src/*.test.js` | Main-process and agent unit tests |
+| `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, detach, process tree, REPL, inspector, graph, attach) |
+| `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
+
+The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.
+
 ### Cutting a release (maintainers)
 
-Releases are intentional and maintainer-driven — there is no auto-update cron. Pushing a version tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds Windows / Linux / macOS (arm64) packages, **smoke-launches each one** (it must actually start and render, verified with Playwright) and then publishes a GitHub release with the zipped artifacts:
+Releases are intentional and maintainer-driven. Pushing a version tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds Windows, Linux and macOS (arm64) packages, launches each one to check that it starts and renders, and publishes a GitHub release with the zipped artifacts:
 
 ```
 # bump "version" in Fermion/package.json, commit, then:
@@ -48,82 +305,27 @@ git tag v2.0.0
 git push origin v2.0.0
 ```
 
-### Releases
-
-You can get the latest pre-built Fermion for x64 Windows, x64 Linux and arm64 macOS from [releases](https://github.com/watson0x90/Fermion/releases).
-
-## FAQ notes
-
-### Windows
-
-  * **Q**: I need to inject a SYSTEM level process, how can I do that?
-    * **A**: You used to be able to utilize tools like psexec to run Fermion as SYSTEM however since Electron v8 this causes Fermion to freeze. What you really need is for Fermion to run as Administrator and have SeDebugPrivilege privileges. As a workaround you can launch PowerShell as Administrator and use that to launch Fermion.
-
-### Linux
-
-  * **Q**: I can't attach to a running process?
-    * **A**: System restrictions may prevent you from attaching, normally you will see a message in `Fermion` to tell you what the problem is and how you can solve it. However, generally, you can run `Fermion` or the `Frida Server` as `root` or alternatively run the following command `sudo sysctl kernel.yama.ptrace_scope=0`.
-
-### General
-
-  * **Q**: I want to build Fermion against a newer Electron or Frida. Do I need to match a specific Electron prebuild?
-    * **A**: Not anymore. Frida 17's Node bindings ship runtime-agnostic **N-API prebuilds**, so a plain `npm install` produces a binding that loads in any recent Electron — there is no need to pin `npm_config_target` to a Frida-supported Electron ABI the way older versions required. Just bump the versions in `Fermion/package.json` and reinstall.
-
-  * **Q**: I want to review/change/update the type definitions used in the Monaco editor, how can I do that?
-    * **A**: This is now handled as part of the build process so your language definitions should always be up-to-date. If you want to edit the app language definitions manually, you can find them here `node_modules/@types/frida-gum/index.d.ts`.
-
-  * **Q**: Why you no stable `trace` man (╯°□°)╯︵ ┻━┻
-    * **A**: Call tracing is resource intensive. In most cases it will work fine but if you are tracing a `hot pointer` and/or the trace is generating graphs with thousands of nodes then you will likely find that the `trace window` will lag out while it is receiving data. Also, as with any kind of tracing, it can cause process instability / crashing / freezing.
-
-## About
-
-You can see an example of `Fermion` at work below, in this case instrumenting `kernel32!ReadFile`.
-
-![Fermion](Images/Fermion-1.png)
-
-Fermion has auto-complete, linting and Frida API symbol support.
-
-![Help](Images/Fermion-2.png)
-
-Fermion can connect to a Frida server to debug remote applications using the `device` context menu. In many cases such as with `USB` debugging or when attaching to mobile applications through emulators like `genymotion` Fermion will automatically pick up the server as available. However, it is also possible to specify a remote server using an `IP` and `Port` combination.
-
-![Server](Images/Fermion-3.png)
-
-Fermion has built-in support for thread `CALL tracing`.
-
-![Trace](Images/Fermion-4.png)
-
-This may not do exactly what you expect it to. When you define either a `pointer` or `module`/`Symbol` combination the tracer will `attach` to that location and any time a `thread` executes at that place it will start tracing all `CALL` instructions that thread performs till it returns. This means that different executions can generate different graphs, it also means that you may not see everything a function is doing (e.g. if, inside the function, a different thread gets spawned).
-
-![SVG](Images/Fermion-5.png)
-
-Fermion converts these traces into a `Graphviz SVG` format using `dot` which you can then explore. This is a feature which I find useful on occasion when performing exploratory work (What does a function do? How complex is that execution?). That being said, this is a `prototype` feature which I built on top of Fermion and probably needs some more loving to be more production ready.
-
-Fermion also has built-in documentation for Frida's `JavaScript API`. Like everyone else I don't always remember how everything works and having the docs in the app obviates the need to have a browser window open.
-
-![Docs](Images/Fermion-6.png)
-
 ## Notes
 
 ### ChangeLog
 
-For more details on version specific changes consult the [changelog](https://github.com/FuzzySecurity/Fermion/blob/master/CHANGELOG.txt).
+Version-by-version changes are in the [changelog](CHANGELOG.txt).
 
 ### Call to action
 
-If you integrate Fermion into your work-flow and find it useful I encourage you to make pull requests, submit bug reports and ask for features to improve the application. I'm not exactly a Node developer so I am sure people will find ways optimize and rework some of the components.
+If Fermion is useful in your work, pull requests, bug reports and feature requests are welcome.
 
 ### Roadmap
 
 * ~~Implement a more complete device manager interface.~~
 * ~~UI re-design.~~
-* Gauge the appetite for more native tools built on top of Fermion and add these.
-* Extend the device manager to take advantage of the new features integrated into `Frida v15.0+`.
+* ~~More native tools built on top of Fermion~~ (REPL, Process tree, Inspector).
+* Follow a thread with Stalker from the Inspector.
+* Cancel a running REPL entry.
 
 ### Special thanks
 
-I just want to give a few special thanks!
-
-* A huge thanks to [Ole André V. Ravnås](https://twitter.com/oleavr) for all his work on Frida and having a lot of patience answering my pedestrian questions about Frida, NodeJS and Monaco!
-* A shout-out also to [mattahan](https://www.deviantart.com/mattahan). I'm using a Buuf icon for the Windows package of Fermion. I'm sure we have all used some of his icons on NIX over the years.
-* Thanks to @MiscMisty, @lez0sec, @berkayyildi for contributing time/code to Fermion!
+* [Ruben Boonen (@FuzzySec)](https://twitter.com/FuzzySec), who created Fermion.
+* [Ole André V. Ravnås](https://twitter.com/oleavr) for Frida, and for his patience answering questions about Frida, NodeJS and Monaco.
+* [mattahan](https://www.deviantart.com/mattahan), whose Buuf icon is used for the Windows package.
+* @MiscMisty, @lez0sec and @berkayyildi for contributing time and code to Fermion.

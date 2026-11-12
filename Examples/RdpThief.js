@@ -4,8 +4,8 @@
 //--------------------------------------------------------------------------------------------------------------//
 
 // Native function pointer
-var pSspiPrepareForCredRead = Module.findExportByName("SspiCli.dll", 'SspiPrepareForCredRead')
-var pCredUnPackAuthenticationBufferW = Module.findExportByName("Credui.dll", 'CredUnPackAuthenticationBufferW')
+var pSspiPrepareForCredRead = Process.getModuleByName("SspiCli.dll").findExportByName('SspiPrepareForCredRead')
+var pCredUnPackAuthenticationBufferW = Process.getModuleByName("Credui.dll").findExportByName('CredUnPackAuthenticationBufferW')
 
 // Globals
 var sTargetHost;
