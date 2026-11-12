@@ -25,6 +25,7 @@ const AGENT_PATHS = {
 	hooks: path.join(__dirname, 'tools', 'hooks-agent.js'),
 };
 const MAX_EVAL_CHARS = 200000;
+const REPLACED_WAIT_MS = 5000; // how long to wait for the program a process replaced itself with
 const MAX_CAUGHT_CHILDREN = 32; // children held suspended at once; more are let go
 const EVAL_TIMEOUT_MS = 20000;
 
@@ -263,6 +264,15 @@ class FridaService extends EventEmitter {
 		// or its catching is switched off, and the child must stay suspended
 		// until its script and hooks are in. { session, pid, childPid }.
 		this._heldParent = null;
+		// A process that replaces itself (exec: the usual way a new program
+		// starts on Linux and macOS) keeps its pid, ends the session on it
+		// with 'process-replaced' and, with catching on, is held and reported
+		// as a child of itself. _replaced is the pid we are waiting to see
+		// again { pid, timer }; _execEarly is such a report that arrived
+		// before the session ended.
+		this._replaced = null;
+		this._execEarly = null;
+		this._replacedWaitMs = REPLACED_WAIT_MS;
 		// Turns the script as written into what is loaded (compiling it when
 		// it imports packages). Set by main; absent, scripts load as written.
 		this._prepareScript = null;
@@ -372,8 +382,14 @@ class FridaService extends EventEmitter {
 			// A parent we were holding went away by itself: nothing left to hold.
 			if (this._heldParent && this._heldParent.session === session) { this._dropHeldParent(false); return; }
 			if (this._session !== session) return;
+			const device = this._gatedDevice;
+			const follow = reason === 'process-replaced' && this._childGating && !!device;
+			const pid = Number(this._sessionPID);
+			const early = follow ? this._execEarly : null;
+			if (follow) this._execEarly = null;
 			this._clearSession();
 			this.emit('detached', reason);
+			if (follow) this._awaitReplacement(device, pid, early);
 		});
 	}
 
@@ -624,18 +640,63 @@ class FridaService extends EventEmitter {
 		const pid = child.pid;
 		if (!Number.isSafeInteger(pid) || pid <= 0) return;
 		const letGo = () => { Promise.resolve().then(() => device.resume(pid)).catch(() => {}); };
+		if (child.origin === 'exec') {
+			const info = this._childInfo(child);
+			if (this._replaced && this._replaced.pid === pid) this._replacementArrived(info);
+			else if (this._childGating && String(pid) === this._sessionPID) this._execEarly = info; // the session is about to end
+			else letGo();
+			return;
+		}
 		// A parent we are only holding on to during a move: its new children
 		// are not ours any more, and must not be left suspended.
 		if (this._heldParent && String(child.parentPid) === String(this._heldParent.pid)) { letGo(); return; }
 		// Only children of the process this session is on are ours to hold.
 		if (!this._childGating || String(child.parentPid) !== this._sessionPID) return;
 		if (this._caughtChildren.size >= MAX_CAUGHT_CHILDREN) { letGo(); return; }
+		const info = this._childInfo(child);
+		this._caughtChildren.set(pid, info);
+		this.emit('child', info);
+	}
+
+	_childInfo(child) {
 		const argv = Array.isArray(child.argv)
 			? child.argv.slice(0, 64).map((a) => String(a).slice(0, 1024))
 			: [];
-		const info = { pid, parentPid: child.parentPid, path: typeof child.path === 'string' ? child.path.slice(0, 4096) : '', argv };
-		this._caughtChildren.set(pid, info);
-		this.emit('child', info);
+		return { pid: child.pid, parentPid: child.parentPid, path: typeof child.path === 'string' ? child.path.slice(0, 4096) : '', argv };
+	}
+
+	// The session's process replaced itself while catching was on: keep
+	// listening, for a while, for the program it became.
+	_awaitReplacement(device, pid, early) {
+		this._listenForChildren(device);
+		const timer = setTimeout(() => {
+			this._replaced = null;
+			if (!this._childGating && !this._heldParent) this._stopListening();
+		}, this._replacedWaitMs);
+		if (typeof timer.unref === 'function') timer.unref();
+		this._replaced = { pid, timer };
+		if (early) this._replacementArrived(early);
+	}
+
+	// It is held before its first instruction, like a caught child, and is
+	// announced as one ('replaced'): resolveChild moves a new session to it.
+	_replacementArrived(info) {
+		clearTimeout(this._replaced.timer);
+		this._replaced = null;
+		const caught = { ...info, replaced: true };
+		this._caughtChildren.set(info.pid, caught);
+		this.emit('child', caught);
+	}
+
+	_forgetReplacement() {
+		if (this._replaced) clearTimeout(this._replaced.timer);
+		this._replaced = null;
+		const early = this._execEarly;
+		this._execEarly = null;
+		if (early && this._gatedDevice) {
+			const device = this._gatedDevice;
+			Promise.resolve().then(() => device.resume(early.pid)).catch(() => {});
+		}
 	}
 
 	// Let every caught child run. Returns the work, for callers that wait.
@@ -670,6 +731,7 @@ class FridaService extends EventEmitter {
 
 	// The session is over (or being replaced): nothing stays caught or held.
 	_releaseChildren(session) {
+		this._forgetReplacement();
 		const work = this._resumeCaught();
 		if (this._childGating && session) work.push(Promise.resolve().then(() => session.disableChildGating()).catch(() => {}));
 		this._childGating = false;
@@ -687,11 +749,16 @@ class FridaService extends EventEmitter {
 		if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('invalid child pid');
 		if (action !== 'attach' && action !== 'resume') throw new Error('the action must be attach or resume');
 		const old = this._session;
-		if (!old) throw new Error('Not attached to a process');
 		const device = this._gatedDevice;
-		if (!device || !this._caughtChildren.has(pid)) throw new Error('No caught child with pid ' + pid);
+		const caught = device ? this._caughtChildren.get(pid) : undefined;
+		// A replacement is what the session's process became: there is no
+		// session any more, and no parent to hold.
+		const replacement = !old && !!caught && caught.replaced === true;
+		if (!old && !replacement) throw new Error('Not attached to a process');
+		if (!caught) throw new Error('No caught child with pid ' + pid);
 		this._caughtChildren.delete(pid);
 		if (action === 'resume') {
+			if (replacement) this._stopListening();
 			await device.resume(pid);
 			return { pid, action };
 		}
@@ -699,8 +766,15 @@ class FridaService extends EventEmitter {
 		try {
 			childSession = await device.attach(pid);
 		} catch (e) {
+			if (replacement) this._stopListening();
 			await Promise.resolve().then(() => device.resume(pid)).catch(() => {});
 			throw e;
+		}
+		if (replacement) {
+			this._stopListening(); // catching is off until the caller switches it on again
+			this._setSession(childSession);
+			this._spawnDevice = device;
+			return { pid, action };
 		}
 		// The session moves: the parent's other caught children run, the parent
 		// is held (not detached) until the child is resumed, and no 'detached'

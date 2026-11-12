@@ -6,7 +6,7 @@ import { writeTerminal } from './bridge';
 import { installAll } from './hooking/ops';
 import { Hook } from './hooking/model';
 import { cleanIpcError } from './inspector/format';
-import { SessionTarget, SpawnConfig, Proc, ChildInfo, parseEnv, pickReattach, childName } from './session/launch';
+import { SessionTarget, SpawnConfig, Proc, ChildInfo, parseEnv, pickReattach, childName, childCommand } from './session/launch';
 import { hooksActions } from './store/hooksSlice';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -174,11 +174,11 @@ export async function switchToChild(dispatch: (a: any) => unknown, child: ChildI
       writeTerminal('STATUS', `[+] Now on child process ${child.pid}, suspended. Press Resume to let it run.`);
     } else {
       await f.resume(child.pid);
-      writeTerminal('STATUS', `[+] Now on child process ${child.pid}`);
+      writeTerminal('STATUS', child.replaced ? `[+] Now on ${childCommand(child)} (pid ${child.pid})` : `[+] Now on child process ${child.pid}`);
     }
     return true;
   } catch (e) {
-    writeTerminal('ERR', '[!] Could not switch to child ' + child.pid + ': ' + cleanIpcError(e));
+    writeTerminal('ERR', (child.replaced ? '[!] Could not follow process ' + child.pid + ' into its new program: ' : '[!] Could not switch to child ' + child.pid + ': ') + cleanIpcError(e));
     dispatch(sessionActions.childResolved(child.pid));
     // Never leave it frozen: if the session did move, resume it there.
     if (moved) {
@@ -187,4 +187,12 @@ export async function switchToChild(dispatch: (a: any) => unknown, child: ChildI
     }
     return false;
   }
+}
+
+// The attached process replaced its program (exec) while catching was on:
+// main holds the new program at its first instruction. Nothing to choose:
+// the session carries on in it, script and hooks in place before it runs.
+export async function followReplacement(dispatch: (a: any) => unknown, child: ChildInfo, hooks: Hook[]): Promise<boolean> {
+  writeTerminal('STATUS', `[+] Process ${child.pid} started a new program: ${childCommand(child)}. Following it.`);
+  return switchToChild(dispatch, child, hooks, { suspended: false, keepCatching: true });
 }

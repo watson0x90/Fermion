@@ -67,8 +67,9 @@ export function targetLabel(target: SessionTarget): string {
   return target.path.split(/[\\/]/).pop() || target.path;
 }
 
-// A child process of the attached process, caught before it ran.
-export interface ChildInfo { pid: number; parentPid: number; path: string; argv: string[]; }
+// A child process of the attached process, caught before it ran. `replaced`
+// marks the attached process itself, after it replaced its program (exec).
+export interface ChildInfo { pid: number; parentPid: number; path: string; argv: string[]; replaced?: boolean; }
 
 // The announcement comes through main from the target's device: keep only
 // what has the right shape.
@@ -82,7 +83,14 @@ export function asChildInfo(raw: unknown): ChildInfo | null {
     parentPid: typeof r.parentPid === 'number' && Number.isSafeInteger(r.parentPid) ? r.parentPid : 0,
     path: typeof r.path === 'string' ? r.path.slice(0, 4096) : '',
     argv,
+    ...(r.replaced === true ? { replaced: true } : {}),
   };
+}
+
+// On Linux and macOS a new process starts as a copy of its parent (fork) and
+// has no program of its own until it execs.
+export function isFork(child: ChildInfo): boolean {
+  return !child.path && child.argv.length === 0;
 }
 
 const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
@@ -94,6 +102,7 @@ export function childName(child: ChildInfo): string {
 // The command line as the operator would read it: the program's name, then
 // its arguments, shortened.
 export function childCommand(child: ChildInfo, max = 160): string {
+  if (isFork(child)) return 'copy of this process (fork)';
   const args = child.argv.slice(1).map((a) => (/\s/.test(a) ? '"' + a + '"' : a)).join(' ');
   const text = childName(child) + (args ? ' ' + args : '');
   return text.length > max ? text.slice(0, max - 1) + '…' : text;

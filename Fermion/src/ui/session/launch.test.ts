@@ -1,4 +1,4 @@
-import { parseEnv, envCount, pickReattach, endedText, targetLabel, asChildInfo, childName, childCommand } from './launch';
+import { parseEnv, envCount, pickReattach, endedText, targetLabel, asChildInfo, childName, childCommand, isFork } from './launch';
 
 test('parseEnv: NAME=value per line; blank lines and # comments are skipped; a value may contain =', () => {
   expect(parseEnv('DEBUG=1\n\n# a comment\r\n  PATH_EXTRA = C:\\x y \nQUERY=a=b=c\nEMPTY=')).toEqual({
@@ -55,6 +55,19 @@ test('asChildInfo keeps a well-formed announcement and drops anything else', () 
   for (const bad of [null, 'x', {}, { pid: '200' }, { pid: -1 }, { pid: 1.5 }]) expect(asChildInfo(bad)).toBeNull();
   expect(asChildInfo({ pid: 5, parentPid: 'x', path: 7, argv: ['ok', 3, null, 'y'.repeat(5000)] })).toEqual({ pid: 5, parentPid: 0, path: '', argv: ['ok', 'y'.repeat(1024)] });
   expect(asChildInfo({ pid: 5, argv: Array(500).fill('a') })!.argv.length).toBe(64);
+});
+
+test('asChildInfo keeps the mark of a process that replaced itself, and only a true one', () => {
+  expect(asChildInfo({ pid: 9, parentPid: 9, path: '/bin/cat', argv: ['/bin/cat'], replaced: true })).toEqual({ pid: 9, parentPid: 9, path: '/bin/cat', argv: ['/bin/cat'], replaced: true });
+  expect(asChildInfo({ pid: 9, parentPid: 9, path: '/bin/cat', argv: [], replaced: 'yes' })).toEqual({ pid: 9, parentPid: 9, path: '/bin/cat', argv: [] });
+});
+
+test('a child with no program of its own is a fork: a copy of its parent', () => {
+  const fork = { pid: 7, parentPid: 1, path: '', argv: [] };
+  expect(isFork(fork)).toBe(true);
+  expect(childCommand(fork)).toBe('copy of this process (fork)');
+  expect(isFork({ pid: 7, parentPid: 1, path: '/bin/cat', argv: [] })).toBe(false);
+  expect(isFork({ pid: 7, parentPid: 1, path: '', argv: ['cat'] })).toBe(false);
 });
 
 test('childName and childCommand describe a caught child', () => {
