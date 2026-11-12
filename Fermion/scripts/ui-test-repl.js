@@ -118,6 +118,30 @@ const shot = process.argv[2];
     await win.click('[data-testid="repl-choice"]:has-text("enumerateThreads")');
     if ((await win.inputValue(input)) !== 'Process.enumerateThreads') throw new Error('picking a choice gave ' + (await win.inputValue(input)));
     await win.fill(input, '');
+    // Typing after Tab must continue where the caret is. (Tab on an already
+    // complete name once left the caret jumping back on the next keystroke.)
+    await win.keyboard.type('Process.id');
+    await win.keyboard.press('Tab');
+    await new Promise((r) => setTimeout(r, 400));
+    await win.keyboard.type(' + 1');
+    if ((await win.inputValue(input)) !== 'Process.id + 1') throw new Error('typing after Tab on a complete name gave "' + (await win.inputValue(input)) + '"');
+    await win.fill(input, '');
+    await win.keyboard.type('Process.enum');
+    await win.keyboard.press('Tab');
+    await win.waitForFunction(() => document.querySelector('[data-testid="repl-input"]').value === 'Process.enumerate', undefined, { timeout: 15000 });
+    await win.keyboard.type('Mod');
+    await win.keyboard.press('Tab');
+    await win.waitForFunction(() => document.querySelector('[data-testid="repl-input"]').value === 'Process.enumerateModules', undefined, { timeout: 15000 });
+    await win.keyboard.type('().length');
+    if ((await win.inputValue(input)) !== 'Process.enumerateModules().length') throw new Error('typing after two completions gave "' + (await win.inputValue(input)) + '"');
+    // Completing in the middle of an entry, then typing on.
+    await win.fill(input, 'var n = Process.enumerateMod; n');
+    await win.evaluate(() => { const el = document.querySelector('[data-testid="repl-input"]'); const at = 'var n = Process.enumerateMod'.length; el.setSelectionRange(at, at); });
+    await win.keyboard.press('Tab');
+    await win.waitForFunction(() => document.querySelector('[data-testid="repl-input"]').value === 'var n = Process.enumerateModules; n', undefined, { timeout: 15000 });
+    await win.keyboard.type('()');
+    if ((await win.inputValue(input)) !== 'var n = Process.enumerateModules(); n') throw new Error('typing after a mid-entry completion gave "' + (await win.inputValue(input)) + '"');
+    await win.fill(input, '');
     // Completion left no trace in the transcript.
     const nBefore = await win.evaluate(() => document.querySelectorAll('[data-testid="repl-entry"]').length);
 
