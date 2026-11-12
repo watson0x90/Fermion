@@ -18,6 +18,9 @@ const INVOKE_METHODS = new Set([
 	'detach',
 	'unload',
 	'getState',
+	// Phase 3 — REPL: run one entry in the attached process (same capability
+	// as loadScript, which already runs arbitrary script there).
+	'evaluate',
 ]);
 
 function createDispatch(service) {
