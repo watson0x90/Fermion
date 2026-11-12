@@ -158,6 +158,10 @@ export function applyTheme(name: string): void {
   const root = document.documentElement;
   for (const [k, v] of Object.entries(tokens)) root.style.setProperty(k, v);
 
+  // Match the native window background to the theme so a live resize never
+  // flashes white in the area exposed before the renderer repaints.
+  try { (window as any).fermion?.win?.setBackground?.(tokens['--bg']); } catch { /* not in Electron */ }
+
   const monaco = (window as any).monaco;
   if (monaco?.editor) {
     try { monaco.editor.defineTheme(name, theme); monaco.editor.setTheme(name); } catch { /* monaco not ready for this theme */ }

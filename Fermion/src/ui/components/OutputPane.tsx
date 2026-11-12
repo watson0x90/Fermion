@@ -28,10 +28,15 @@ export function OutputPane() {
     // Theme the freshly-created terminal to match the active app theme.
     applyTheme(loadSavedTheme());
     ctrl.fit();
-    const onResize = () => ctrl.fit();
+    // Throttle fit() to one call per frame. xterm's fit is synchronous and
+    // reflows the terminal; running it on every resize event during a live drag
+    // starves the renderer and makes the chrome (status bar) stop repainting.
+    let raf = 0;
+    const onResize = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; ctrl.fit(); }); };
     window.addEventListener('resize', onResize);
     return () => {
       window.removeEventListener('resize', onResize);
+      if (raf) cancelAnimationFrame(raf);
       setTerminalSink(null);
       ctrl.dispose();
       ctrlRef.current = null;

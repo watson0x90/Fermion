@@ -105,7 +105,7 @@ ipcMain.handle('fermion:renderGraph', (_event, dot) => graphviz.dot(dot, 'svg'))
 
 // Custom-title-bar window controls for the frameless window. Additive only:
 // acts on the sender's own window; no change to the security model.
-ipcMain.handle('fermion:win', (event, action) => {
+ipcMain.handle('fermion:win', (event, action, arg) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win) return false;
   switch (action) {
@@ -113,6 +113,9 @@ ipcMain.handle('fermion:win', (event, action) => {
     case 'toggleMaximize': win.isMaximized() ? win.unmaximize() : win.maximize(); return win.isMaximized();
     case 'close': win.close(); return true;
     case 'isMaximized': return win.isMaximized();
+    // Match the native window background to the active theme so areas exposed
+    // during a live resize paint the theme color, not white.
+    case 'setBackground': if (typeof arg === 'string' && /^#[0-9a-fA-F]{3,8}$/.test(arg)) win.setBackgroundColor(arg); return true;
     default: return false;
   }
 });
@@ -127,6 +130,9 @@ function createWindow() {
     frame: false,
     show: false,
     transparent: false,
+    // Default to the Kuroir chrome; the renderer updates this per theme so a
+    // live resize never flashes white in the exposed area.
+    backgroundColor: '#e8e9e8',
     webPreferences: {
       // Secured renderer: no Node, isolated world. All host access is through
       // the preload bridge (window.fermion). sandbox:false lets the preload

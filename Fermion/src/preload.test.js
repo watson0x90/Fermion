@@ -37,11 +37,13 @@ test('win controls invoke fermion:win with the action', async () => {
   await api.win.toggleMaximize();
   await api.win.close();
   await api.win.isMaximized();
+  await api.win.setBackground('#112233');
   assert.deepEqual(sent, [
     ['fermion:win', 'minimize'],
     ['fermion:win', 'toggleMaximize'],
     ['fermion:win', 'close'],
     ['fermion:win', 'isMaximized'],
+    ['fermion:win', 'setBackground', '#112233'],
   ]);
 });
 
