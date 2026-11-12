@@ -239,6 +239,15 @@ function parseDeviceSpec(spec) {
 	return { kind: 'id', value: spec };
 }
 
+// What a script is written in. Returns whether it is TypeScript.
+function checkScriptOptions(options) {
+	if (options === undefined || options === null) return false;
+	if (typeof options !== 'object' || Array.isArray(options)) throw new Error('script options must be { typescript: true or false }');
+	if (options.typescript === undefined) return false;
+	if (typeof options.typescript !== 'boolean') throw new Error('script options must be { typescript: true or false }');
+	return options.typescript;
+}
+
 class FridaService extends EventEmitter {
 	constructor() {
 		super();
@@ -434,28 +443,36 @@ class FridaService extends EventEmitter {
 		this._prepareScript = typeof fn === 'function' ? fn : null;
 	}
 
-	async _prepared(src) {
+	// `options` says what the script is written in: { typescript: true } has
+	// it compiled to JavaScript first. Anything else is refused.
+	async _prepared(src, options) {
 		if (typeof src !== 'string') throw new Error('the script must be text');
-		if (!this._prepareScript) return { code: src, compiled: false };
-		return this._prepareScript(src);
+		const typescript = checkScriptOptions(options);
+		if (!this._prepareScript) {
+			if (typescript) throw new Error('TypeScript scripts cannot be compiled here');
+			return { code: src, compiled: false, typescript: false };
+		}
+		const r = await this._prepareScript(src, { typescript });
+		return { code: r.code, compiled: !!r.compiled, typescript: !!r.typescript };
 	}
 
-	// Returns { compiled }: whether the script was bundled with packages.
-	async loadScript(src) {
+	// Returns { compiled, typescript }: whether the script was bundled with
+	// packages, and whether it was compiled from TypeScript.
+	async loadScript(src, options) {
 		if (!this._session) throw new Error('Not attached to a process');
-		const { code, compiled } = await this._prepared(src);
+		const { code, compiled, typescript } = await this._prepared(src, options);
 		if (!this._session) throw new Error('Not attached to a process'); // it ended while compiling
 		this._script = await this._session.createScript(code);
 		this._wireScript(this._script);
 		await this._script.load();
-		return { compiled: !!compiled };
+		return { compiled, typescript };
 	}
 
-	async reloadScript(src) {
+	async reloadScript(src, options) {
 		if (!this._session) throw new Error('Not attached to a process');
 		// Compile first: a script that does not compile leaves the one that is
 		// running in place.
-		const { code, compiled } = await this._prepared(src);
+		const { code, compiled, typescript } = await this._prepared(src, options);
 		if (!this._session) throw new Error('Not attached to a process');
 		if (this._script) {
 			this._script.unload();
@@ -463,7 +480,7 @@ class FridaService extends EventEmitter {
 		this._script = await this._session.createScript(code);
 		this._wireScript(this._script);
 		await this._script.load();
-		return { compiled: !!compiled };
+		return { compiled, typescript };
 	}
 
 	// REPL: evaluate one entry in the attached process and return a printable

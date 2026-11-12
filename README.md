@@ -132,6 +132,24 @@ The toolbar shows the script's file name (hover for the full path), with a dot b
 
 Saving the Output log or a graph does not change which file the script is saved to.
 
+### TypeScript
+
+A script saved with the extension `.ts` is TypeScript. The Editor toolbar then shows **TypeScript** beside the file name.
+
+```ts
+interface Found { name: string; base: NativePointer }
+
+const first: Found = Process.enumerateModules().map((m): Found => ({ name: m.name, base: m.base }))[0];
+console.log(first.name + ' is loaded at ' + first.base);
+```
+
+Each time the script is loaded (attach, spawn, Reload) Fermion compiles it to JavaScript with Frida's built-in compiler and checks its types against Frida's own definitions. Output says `TypeScript compiled, types checked`. A script with a type error or a syntax error is not loaded: Output gives the line and the message, and on Reload the script that was running stays in place. Imports of [packages](#packages) work the same as in JavaScript.
+
+Things to know:
+
+- The language goes by the file name. A script that has not been saved, or is saved as `.js`, is loaded as JavaScript exactly as written, so save it as `.ts` first (**Save As**).
+- The REPL and hook handlers are JavaScript.
+
 ### Packages
 
 A script can import npm packages:
@@ -422,7 +440,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.

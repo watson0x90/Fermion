@@ -21,6 +21,7 @@ const MAX_SOURCE = 2 * 1024 * 1024;
 const SEARCH_LIMIT = 30;
 const INSTALL_TIMEOUT_MS = 180000;
 const ENTRY = 'script.js'; // what the compiled script is called in stack traces
+const ENTRY_TS = 'script.ts'; // the same, for a TypeScript script
 
 // "name" or "name@version" -> { name, version, spec }. Throws for anything else.
 function parseSpec(spec) {
@@ -201,13 +202,19 @@ function createPackages({ dir, getFrida, spawn, platform = process.platform }) {
 		return run;
 	};
 
-	// Bundle a script with the packages it imports. Throws with the compiler's
-	// messages when it does not compile.
-	async function compile(source) {
+	// Bundle a script with the packages it imports. A TypeScript script is
+	// turned into JavaScript on the way, and its types are checked against
+	// Frida's definitions. Throws with the compiler's messages when it does
+	// not compile.
+	async function compile(source, options) {
+		const typescript = !!(options && options.typescript);
 		if (typeof source !== 'string') throw new Error('the script must be text');
 		if (source.length > MAX_SOURCE) throw new Error('the script is too long to compile');
 		ensureProject();
-		const entry = path.join(dir, ENTRY);
+		const entry = path.join(dir, typescript ? ENTRY_TS : ENTRY);
+		// Only one of the two is the script: the other would be picked up by
+		// the type check, or resolved by an import of './script'.
+		try { fs.rmSync(path.join(dir, typescript ? ENTRY : ENTRY_TS), { force: true }); } catch { /* not there */ }
 		fs.writeFileSync(entry, source);
 		const frida = getFrida();
 		const compiler = new frida.Compiler();
@@ -215,7 +222,7 @@ function createPackages({ dir, getFrida, spawn, platform = process.platform }) {
 		const onDiagnostics = (d) => batches.push(d);
 		compiler.diagnostics.connect(onDiagnostics);
 		try {
-			return await compiler.build(entry, { projectRoot: dir, typeCheck: 'none', sourceMaps: 'included' });
+			return await compiler.build(entry, { projectRoot: dir, typeCheck: typescript ? 'full' : 'none', sourceMaps: 'included' });
 		} catch (e) {
 			const lines = formatDiagnostics(batches);
 			const missing = lines.map((l) => /Could not resolve "([^"]+)"/.exec(l)).filter(Boolean).map((m) => m[1]);
@@ -251,9 +258,12 @@ function createPackageHandlers({ packages, confirm }) {
 // What the service does to a script before loading it: compile it when it
 // imports something, otherwise leave it exactly as written.
 function createScriptPreparer(packages) {
-	return async (source) => (needsCompile(source)
-		? { code: await packages.compile(source), compiled: true }
-		: { code: source, compiled: false });
+	return async (source, options) => {
+		if (options && options.typescript) return { code: await packages.compile(source, { typescript: true }), compiled: true, typescript: true };
+		return needsCompile(source)
+			? { code: await packages.compile(source), compiled: true }
+			: { code: source, compiled: false };
+	};
 }
 
 module.exports = { createPackages, createPackageHandlers, createScriptPreparer, parseSpec, needsCompile, formatDiagnostics };

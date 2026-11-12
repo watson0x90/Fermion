@@ -12,6 +12,12 @@ type GetState = () => any;
 const api = () => (window as any).fermion;
 const editor = () => (window as any).MonacoCodeEditor;
 
+// A script saved as .ts is TypeScript: it is compiled, with its types
+// checked, before it is loaded. Anything else is loaded as JavaScript.
+export function isTypeScript(path: string | null | undefined): boolean {
+  return typeof path === 'string' && /\.ts$/i.test(path);
+}
+
 export function fileLabel(path: string | null): string {
   return path ? path.split(/[\\/]/).pop() || path : 'untitled.js';
 }

@@ -845,7 +845,7 @@ test('a caught child with strange data is announced in a bounded, plain form', a
 test('loadScript: without a preparer the script is loaded as written', async () => {
   const { svc, session } = attachedService();
   await svc.attach(1);
-  assert.deepEqual(await svc.loadScript('send(1);'), { compiled: false });
+  assert.deepEqual(await svc.loadScript('send(1);'), { compiled: false, typescript: false });
   assert.equal(session.scripts[0].src, 'send(1);');
 });
 
@@ -853,9 +853,9 @@ test('loadScript / reloadScript load what the preparer returns and say whether i
   const { svc, session } = attachedService();
   svc.setScriptPreparer(async (src) => (src.includes('import') ? { code: 'BUNDLE:' + src, compiled: true } : { code: src, compiled: false }));
   await svc.attach(1);
-  assert.deepEqual(await svc.loadScript('import a from "a";'), { compiled: true });
+  assert.deepEqual(await svc.loadScript('import a from "a";'), { compiled: true, typescript: false });
   assert.equal(session.scripts[0].src, 'BUNDLE:import a from "a";');
-  assert.deepEqual(await svc.reloadScript('send(2);'), { compiled: false });
+  assert.deepEqual(await svc.reloadScript('send(2);'), { compiled: false, typescript: false });
   assert.equal(session.scripts[1].src, 'send(2);');
   assert.equal(session.scripts[0].unloaded, true);
 });
@@ -999,4 +999,36 @@ test('any other end of the session lets a replacement that was reported early ru
   await tick();
   assert.ok(t.log.some((l) => l[0] === 'resume' && l[1] === 100));
   assert.deepEqual(t.events, []);
+});
+
+// ---- TypeScript scripts ----
+test('loadScript / reloadScript pass the script language to the preparer and report it back', async () => {
+  const { svc, session } = attachedService();
+  const seen = [];
+  svc.setScriptPreparer(async (src, options) => { seen.push(options); return options.typescript ? { code: 'JS:' + src, compiled: true, typescript: true } : { code: src, compiled: false }; });
+  await svc.attach(1);
+  assert.deepEqual(await svc.loadScript('const n: number = 1;', { typescript: true }), { compiled: true, typescript: true });
+  assert.equal(session.scripts[0].src, 'JS:const n: number = 1;');
+  assert.deepEqual(await svc.reloadScript('send(2);'), { compiled: false, typescript: false });
+  assert.deepEqual(await svc.reloadScript('let s: string;', { typescript: true }), { compiled: true, typescript: true });
+  assert.deepEqual(seen, [{ typescript: true }, { typescript: false }, { typescript: true }]);
+});
+
+test('script options are validated: only { typescript: true/false }', async () => {
+  const { svc } = attachedService();
+  svc.setScriptPreparer(async (src) => ({ code: src, compiled: false }));
+  await svc.attach(1);
+  for (const bad of ['ts', 5, [], { typescript: 'yes' }, { typescript: 1 }]) {
+    await assert.rejects(() => svc.loadScript('send(1);', bad), /script options/i);
+    await assert.rejects(() => svc.reloadScript('send(1);', bad), /script options/i);
+  }
+  assert.deepEqual(await svc.loadScript('send(1);', {}), { compiled: false, typescript: false });
+  assert.deepEqual(await svc.loadScript('send(1);', null), { compiled: false, typescript: false });
+});
+
+test('without a preparer a TypeScript script is refused, not loaded as it is', async () => {
+  const { svc, session } = attachedService();
+  await svc.attach(1);
+  await assert.rejects(() => svc.loadScript('let s: string;', { typescript: true }), /cannot be compiled/i);
+  assert.equal(session.scripts.length, 0);
 });

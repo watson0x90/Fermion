@@ -4,6 +4,7 @@ import { sessionActions } from '../store/sessionSlice';
 import { setTraceSink, writeTerminal } from '../bridge';
 import { asTraceMessage, buildTraceScript, svgToDataUrl, svgNaturalWidth } from '../graph/trace';
 import { cleanIpcError } from '../inspector/format';
+import { scriptOptions } from '../sessionOps';
 import { Icon } from './Icon';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -43,7 +44,8 @@ export function GraphPanel() {
     setStatus('');
     if (why) setError(why);
     try {
-      await api().reloadScript(scriptSrc());
+      const options = scriptOptions(dispatch);
+      if (options) await api().reloadScript(scriptSrc(), options); else await api().reloadScript(scriptSrc());
       dispatch(sessionActions.scriptLoaded());
     } catch (e) {
       writeTerminal('ERR', '[!] Error reloading script: ' + cleanIpcError(e));

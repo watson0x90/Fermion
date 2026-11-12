@@ -4,7 +4,7 @@ import { writeTerminal } from '../bridge';
 import { useAppDispatch, useAppSelector } from '../store';
 import { reloadFromEditor } from '../sessionOps';
 import { useStore } from 'react-redux';
-import { fileLabel, noteEdit, openScript, openRecentScript, saveScript, saveScriptAs } from '../fileOps';
+import { fileLabel, isTypeScript, noteEdit, openScript, openRecentScript, saveScript, saveScriptAs } from '../fileOps';
 import { Icon } from './Icon';
 import { PackagesPanel } from './PackagesPanel';
 
@@ -80,6 +80,7 @@ export function EditorPane() {
           {fileLabel(filePath)}
           {dirty && <span className="dot" data-testid="editor-dirty" title="Unsaved changes" aria-label="unsaved changes">●</span>}
         </span>
+        {isTypeScript(filePath) && <span className="lang" data-testid="editor-lang" title="Saved as .ts: compiled to JavaScript, with its types checked, each time it is loaded">TypeScript</span>}
         <button className="pill ico" data-testid="editor-open" title="Open a script (Ctrl-O)" onClick={() => openScript(dispatch, store.getState)}><Icon name="folder" size={13} /></button>
         <span className="menu-anchor">
           <button className={'pill ico' + (recent ? ' on' : '')} data-testid="editor-recent" title="Recent scripts" aria-expanded={!!recent} onClick={toggleRecent}><Icon name="clock" size={13} /></button>
