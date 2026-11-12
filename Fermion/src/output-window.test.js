@@ -67,10 +67,13 @@ test('open: only the main window may detach; creates one hardened window on the 
   assert.deepEqual(hardened, [created[0]]);
   assert.deepEqual(main.sent, [['fermion:output-state', true]]);
 
-  // A second detach focuses the existing window instead of opening another.
+  // A second detach focuses the existing window instead of opening another,
+  // and re-tells the main window (a reloaded main renderer has forgotten).
+  main.sent.length = 0;
   assert.equal(mgr.open(main.webContents), true);
   assert.equal(created.length, 1);
   assert.equal(created[0].focused, 1);
+  assert.deepEqual(main.sent, [['fermion:output-state', true]]);
 });
 
 test('closing the output window (dock, or its own close button) tells the main window', () => {
@@ -141,9 +144,26 @@ test('the output window reports its own maximize state to its title bar', () => 
   assert.deepEqual(out.sent, [['fermion:win-state', true]]);
 });
 
+test('a stale window closing late does not report "docked" while a newer window is open', () => {
+  const { mgr, main, created } = setup();
+  mgr.open(main.webContents);
+  const first = created[0];
+  // Real Electron fires `closed` asynchronously: close now, deliver it later.
+  const lateClosed = first.handlers.closed;
+  first.handlers.closed = null;
+  mgr.close(main.webContents);
+  mgr.open(main.webContents);
+  assert.equal(created.length, 2);
+  main.sent.length = 0;
+  lateClosed();
+  assert.deepEqual(main.sent, []);
+  assert.equal(mgr.isOpen(), true);
+});
+
 test('isRelayMessage accepts only plain objects with a known type for the direction', () => {
   assert.equal(isRelayMessage({ t: 'snapshot', entries: [] }, 'toOutput'), true);
   assert.equal(isRelayMessage({ t: 'theme', name: 'Monokai' }, 'toOutput'), true);
+  assert.equal(isRelayMessage({ t: 'clear' }, 'toOutput'), true);
   assert.equal(isRelayMessage({ t: 'filter', kind: 'LOG', on: false }, 'toMain'), true);
   assert.equal(isRelayMessage({ t: 'clear' }, 'toMain'), true);
   assert.equal(isRelayMessage({ t: 'follow', on: true }, 'toMain'), true);

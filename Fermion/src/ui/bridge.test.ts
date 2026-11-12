@@ -54,17 +54,24 @@ test('writeTerminal also feeds the output mirror; clear/entries/load reach the s
     entries: () => [{ kind: 'LOG', text: 'old' }],
     load: (e: unknown) => { loaded = e; },
   });
-  setOutputMirror((k, t) => mirrored.push([k, t]));
+  let mirrorCleared = 0;
+  setOutputMirror({ line: (k, t) => mirrored.push([k, t]), clear: () => { mirrorCleared++; } });
   writeTerminal('LOG', 'hello');
   expect(writes).toEqual([['LOG', 'hello']]);
   expect(mirrored).toEqual([['LOG', 'hello']]);
 
+  // A clear reaches the mirror too, so the detached window never shows output
+  // the main window has dropped.
+  clearTerminal();
+  expect(cleared).toBe(1);
+  expect(mirrorCleared).toBe(1);
+
   setOutputMirror(null);
   writeTerminal('LOG', 'again');
   expect(mirrored.length).toBe(1);
-
   clearTerminal();
-  expect(cleared).toBe(1);
+  expect(cleared).toBe(2);
+  expect(mirrorCleared).toBe(1);
   expect(terminalEntries()).toEqual([{ kind: 'LOG', text: 'old' }]);
   loadTerminal([{ kind: 'ERR', text: 'x' }]);
   expect(loaded).toEqual([{ kind: 'ERR', text: 'x' }]);
@@ -76,7 +83,7 @@ test('bridge events reach the mirror too (the detached window sees live Frida ou
   const mirrored: unknown[][] = [];
   setTerminalSink({ write: () => {} });
   setTraceSink(null);
-  setOutputMirror((k, t) => mirrored.push([k, t]));
+  setOutputMirror({ line: (k, t) => mirrored.push([k, t]), clear: () => {} });
   initBridge(store, f);
   f.emit('log', 'warning', 'careful');
   f.emit('detached', 'gone');

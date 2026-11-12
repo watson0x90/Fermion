@@ -2,7 +2,7 @@ import { configureStore } from '@reduxjs/toolkit';
 import session from './store/sessionSlice';
 import output from './store/outputSlice';
 import ui, { uiActions } from './store/uiSlice';
-import { setTerminalSink, writeTerminal, setOutputMirror } from './bridge';
+import { setTerminalSink, writeTerminal, clearTerminal, setOutputMirror } from './bridge';
 import { initOutputHost, initOutputClient } from './outputDetach';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -106,12 +106,33 @@ test('host: toolbar changes made in the detached window are applied to the main 
   expect(store.getState().output.filters.WARN).toBe(false);
   f.deliver({ t: 'follow', on: false });
   expect(store.getState().output.follow).toBe(false);
+  f.setState(true);
+  f.deliver({ t: 'ready' });
+  f.sent.length = 0;
   f.deliver({ t: 'clear' });
   expect(t.lines).toEqual([]);
   expect(store.getState().output.count).toBe(0);
+  // The main window clears and tells the detached window to clear at the same
+  // point in the line stream (the detached window does not clear on its own).
+  expect(f.sent).toEqual([{ t: 'clear' }]);
   // Junk from the relay is ignored, not thrown on.
   expect(() => { f.deliver(null); f.deliver({ t: 'filter', kind: 'NOPE', on: false }); }).not.toThrow();
   expect('NOPE' in store.getState().output.filters).toBe(false);
+});
+
+test('host: a clear made in the main window (Alt-C) while detached also clears the detached window', () => {
+  const store = makeStore();
+  const f = fakeOutputApi();
+  const t = fakeSink();
+  setTerminalSink(t.sink);
+  initOutputHost(store, f.api);
+  writeTerminal('LOG', 'x');
+  f.setState(true);
+  f.deliver({ t: 'ready' });
+  f.sent.length = 0;
+  clearTerminal();
+  expect(t.lines).toEqual([]);
+  expect(f.sent).toEqual([{ t: 'clear' }]);
 });
 
 test('host: a theme change is pushed to the detached window, only while detached', () => {
@@ -151,5 +172,8 @@ test('client: snapshot loads history + toolbar state + theme; lines append; them
 
   f.deliver({ t: 'theme', name: 'Cobalt' });
   expect(store.getState().ui.theme).toBe('Cobalt');
+
+  f.deliver({ t: 'clear' });
+  expect(t.lines).toEqual([]);
   expect(() => { f.deliver(undefined); f.deliver({ t: 'snapshot' }); }).not.toThrow();
 });

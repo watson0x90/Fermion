@@ -170,8 +170,10 @@ function createWindow() {
     bWin.on(ev, () => { if (bWin && !bWin.isDestroyed()) bWin.webContents.send('fermion:win-state', bWin.isMaximized()); });
   }
 
-  // The detached Output window must not outlive the main window.
+  // The detached Output window must not outlive the main window. A reloaded
+  // main renderer has lost its output history and mirror, so dock then too.
   bWin.on('closed', () => outputWindows.closeAll());
+  bWin.webContents.on('did-start-loading', () => outputWindows.closeAll());
 
   // and load the index.html of the app.
   bWin.loadFile(path.join(__dirname, '/pages/index.html'));

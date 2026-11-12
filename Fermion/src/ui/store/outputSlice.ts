@@ -28,7 +28,7 @@ const outputSlice = createSlice({
     // Set (not toggle) one kind — used when another window reports its change.
     setFilter(state, action: PayloadAction<{ kind: string; on: boolean }>) {
       const { kind, on } = action.payload;
-      if (kind in state.filters) state.filters[kind] = !!on;
+      if ((KINDS as readonly string[]).includes(kind)) state.filters[kind] = !!on;
     },
     // Adopt the toolbar state of another window (detached Output snapshot).
     hydrate(state, action: PayloadAction<{ filters?: Record<string, boolean>; follow?: boolean }>) {

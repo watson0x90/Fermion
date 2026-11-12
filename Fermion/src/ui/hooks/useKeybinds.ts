@@ -2,12 +2,11 @@ import { useEffect, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
 import { sessionActions } from '../store/sessionSlice';
 import { outputActions } from '../store/outputSlice';
-import { writeTerminal } from '../bridge';
+import { writeTerminal, clearTerminal } from '../bridge';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion;
 const editor = () => (window as any).MonacoCodeEditor;
-const terminal = () => (window as any).__fermion?.terminal;
 
 // Global editor/app keybindings, ported from the vanilla renderer so Phase 2
 // preserves them: Ctrl/Cmd-S save script, Ctrl/Cmd-O open file, Ctrl/Cmd-T
@@ -49,7 +48,7 @@ export function useKeybinds() {
       }
       if (e.altKey && (e.key === 'c' || e.key === 'C')) {
         e.preventDefault();
-        terminal()?.clear();
+        clearTerminal(); // also clears the detached Output window, if any
         dispatch(outputActions.clear());
       }
     };

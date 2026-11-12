@@ -133,6 +133,27 @@ const emit = (win, level, text) =>
     ]);
     await main.waitForFunction(() => !document.querySelector('[data-testid="app-root"]').classList.contains('output-detached'), { timeout: 15000 });
 
+    step = 'clear stays in step';
+    {
+      const [o] = await Promise.all([
+        app.waitForEvent('window', { timeout: 30000 }),
+        main.click('[data-testid="detach-output"]'),
+      ]);
+      await o.waitForSelector('[data-testid="output-window"] .xterm', { timeout: 30000 });
+      await o.waitForFunction(() => window.__fermion.terminal.getText().includes('after-dock-line'), { timeout: 15000 });
+      // Alt-C in the main window clears the detached window too.
+      await main.evaluate(() => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', altKey: true, bubbles: true })));
+      await o.waitForFunction(() => window.__fermion.terminal.getText() === '', { timeout: 15000 });
+      // Clear in the detached window clears the main window's history too.
+      await emit(main, 'info', 'clear-me-line');
+      await o.waitForFunction(() => window.__fermion.terminal.getText().includes('clear-me-line'), { timeout: 15000 });
+      await o.click('[data-testid="clear-output"]');
+      await o.waitForFunction(() => window.__fermion.terminal.getText() === '', { timeout: 15000 });
+      await main.waitForFunction(() => window.__fermion.terminal.getText() === '', { timeout: 15000 });
+      await Promise.all([o.waitForEvent('close', { timeout: 15000 }), o.click('[data-testid="dock-output"]')]);
+      await main.waitForFunction(() => !document.querySelector('[data-testid="app-root"]').classList.contains('output-detached'), { timeout: 15000 });
+    }
+
     step = 'main close takes output window';
     const [out3] = await Promise.all([
       app.waitForEvent('window', { timeout: 30000 }),

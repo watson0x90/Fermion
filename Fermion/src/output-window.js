@@ -9,7 +9,7 @@
 
 // Message types each side may send. Anything else is dropped at the boundary.
 const RELAY_TYPES = {
-	toOutput: new Set(['snapshot', 'line', 'theme']),
+	toOutput: new Set(['snapshot', 'line', 'clear', 'theme']),
 	toMain: new Set(['ready', 'clear', 'filter', 'follow']),
 };
 
@@ -59,6 +59,9 @@ function createOutputWindowManager({ BrowserWindow, getMainWindow, preload, page
 			if (alive(win)) {
 				if (win.isMinimized()) win.restore();
 				win.focus();
+				// Re-tell the main window: a reloaded main renderer starts out
+				// believing Output is docked.
+				tellMain('fermion:output-state', true);
 				return true;
 			}
 			const w = new BrowserWindow(buildOutputWindowOptions(preload));
@@ -68,7 +71,10 @@ function createOutputWindowManager({ BrowserWindow, getMainWindow, preload, page
 				w.on(ev, () => { if (alive(w)) w.webContents.send('fermion:win-state', w.isMaximized()); });
 			}
 			w.on('closed', () => {
-				if (win === w) win = null;
+				// A stale window closing late must not report "docked" while a
+				// newer output window is open.
+				if (win !== w) return;
+				win = null;
 				tellMain('fermion:output-state', false);
 			});
 			w.once('ready-to-show', () => { if (alive(w)) { w.show(); w.focus(); } });
@@ -103,8 +109,8 @@ function createOutputWindowManager({ BrowserWindow, getMainWindow, preload, page
 
 		// The output window must not outlive the main window.
 		closeAll() {
+			// The window's `closed` handler clears the reference and tells main.
 			if (alive(win)) win.destroy();
-			win = null;
 		},
 	};
 }

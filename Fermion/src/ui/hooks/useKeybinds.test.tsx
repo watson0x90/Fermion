@@ -6,6 +6,7 @@ import session from '../store/sessionSlice';
 import output from '../store/outputSlice';
 import ui from '../store/uiSlice';
 import { sessionActions } from '../store/sessionSlice';
+import { setTerminalSink, setOutputMirror } from '../bridge';
 import { useKeybinds } from './useKeybinds';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -61,10 +62,17 @@ test('Ctrl-T is a no-op when not attached', async () => {
   expect(fermion.reloadScript).not.toHaveBeenCalled();
 });
 
-test('Alt-C clears the output terminal', () => {
+test('Alt-C clears the output terminal, and the detached window with it', () => {
   setup();
+  const clear = vi.fn();
+  const mirrorClear = vi.fn();
+  setTerminalSink({ write: () => {}, clear });
+  setOutputMirror({ line: () => {}, clear: mirrorClear });
   fireEvent.keyDown(document, { key: 'c', altKey: true });
-  expect((window as any).__fermion.terminal.clear).toHaveBeenCalled();
+  setOutputMirror(null);
+  setTerminalSink(null);
+  expect(clear).toHaveBeenCalled();
+  expect(mirrorClear).toHaveBeenCalled();
 });
 
 test('F5 and Ctrl-R are prevented (no page refresh)', () => {

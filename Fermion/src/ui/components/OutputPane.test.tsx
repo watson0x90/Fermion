@@ -81,8 +81,10 @@ test('standalone (detached window): dock button + toolbar changes are relayed to
   expect(out.send).toHaveBeenCalledWith({ t: 'filter', kind: 'WARN', on: false });
   fireEvent.click(screen.getByTitle('Follow tail'));
   expect(out.send).toHaveBeenCalledWith({ t: 'follow', on: false });
+  // Clear is only requested here; the main window clears and echoes it back,
+  // so both windows drop the same lines.
   fireEvent.click(screen.getByTestId('clear-output'));
-  expect(fakeCtrl.clear).toHaveBeenCalled();
+  expect(fakeCtrl.clear).not.toHaveBeenCalled();
   expect(out.send).toHaveBeenCalledWith({ t: 'clear' });
 
   fireEvent.click(screen.getByTestId('dock-output'));

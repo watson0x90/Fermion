@@ -20,17 +20,22 @@ export interface TerminalSink {
 let sink: TerminalSink | null = null;
 export function setTerminalSink(s: TerminalSink | null) { sink = s; }
 
-// While the Output pane is detached, every line written here is also handed to
-// the mirror, which relays it to the detached window (see outputDetach.ts).
-let mirror: ((kind: string, text: string) => void) | null = null;
-export function setOutputMirror(fn: ((kind: string, text: string) => void) | null) { mirror = fn; }
+// While the Output pane is detached, every line written here — and every clear —
+// is also handed to the mirror, which relays it to the detached window (see
+// outputDetach.ts). Going through one place keeps both windows in step.
+export interface OutputMirror {
+  line(kind: string, text: string): void;
+  clear(): void;
+}
+let mirror: OutputMirror | null = null;
+export function setOutputMirror(m: OutputMirror | null) { mirror = m; }
 
 // Write a line to the terminal (Frida output, status/meta lines).
 export function writeTerminal(kind: string, text: string) {
   sink?.write(kind, text);
-  mirror?.(kind, text);
+  mirror?.line(kind, text);
 }
-export function clearTerminal() { sink?.clear?.(); }
+export function clearTerminal() { sink?.clear?.(); mirror?.clear(); }
 export function terminalEntries(): OutputEntry[] { return sink?.entries?.() ?? []; }
 export function loadTerminal(entries: OutputEntry[]) { sink?.load?.(entries); }
 

@@ -46,6 +46,8 @@ test('outputSlice: setFilter sets one kind; hydrate adopts filters + follow from
   expect(s.filters.WARN).toBe(false); // idempotent, unlike toggle
   s = outputReducer(s, outputActions.setFilter({ kind: 'NOPE', on: false }));
   expect('NOPE' in s.filters).toBe(false); // unknown kinds are ignored
+  s = outputReducer(s, outputActions.setFilter({ kind: 'toString', on: false }));
+  expect(typeof s.filters.toString).toBe('function'); // inherited keys are not kinds
   s = outputReducer(s, outputActions.hydrate({ filters: { LOG: false, WARN: true, BOGUS: true }, follow: false }));
   expect(s.filters.LOG).toBe(false);
   expect(s.filters.WARN).toBe(true);

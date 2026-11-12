@@ -4,8 +4,8 @@
 // Frida messages and keeps the full history in its own (hidden) terminal. The
 // detached window is a mirror. When it reports `ready`, the main window sends
 // one snapshot (history + toolbar state + theme) and from then on relays every
-// new line. Toolbar changes made in the detached window are relayed back, so
-// docking returns the pane exactly as the user left it.
+// new line and every clear. Toolbar changes made in the detached window are
+// relayed back, so docking returns the pane exactly as the user left it.
 import { uiActions } from './store/uiSlice';
 import { outputActions, KINDS } from './store/outputSlice';
 import {
@@ -42,7 +42,10 @@ export function initOutputHost(store: AnyStore, injected?: any): void {
           follow: s.output.follow,
           theme: s.ui.theme,
         });
-        setOutputMirror((kind, text) => out.send({ t: 'line', kind, text }));
+        setOutputMirror({
+          line: (kind, text) => out.send({ t: 'line', kind, text }),
+          clear: () => out.send({ t: 'clear' }),
+        });
         break;
       }
       case 'filter':
@@ -52,6 +55,8 @@ export function initOutputHost(store: AnyStore, injected?: any): void {
         store.dispatch(outputActions.setFollow(!!msg.on));
         break;
       case 'clear':
+        // The detached window only asks; clearing here (which echoes a clear
+        // back through the mirror) makes both windows drop the same lines.
         clearTerminal();
         store.dispatch(outputActions.clear());
         break;
@@ -89,6 +94,10 @@ export function initOutputClient(store: AnyStore, injected?: any): void {
         break;
       case 'theme':
         if (typeof msg.name === 'string') store.dispatch(uiActions.setTheme(msg.name));
+        break;
+      case 'clear':
+        clearTerminal();
+        store.dispatch(outputActions.clear());
         break;
       default:
     }
