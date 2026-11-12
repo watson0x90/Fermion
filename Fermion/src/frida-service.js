@@ -263,6 +263,9 @@ class FridaService extends EventEmitter {
 		// or its catching is switched off, and the child must stay suspended
 		// until its script and hooks are in. { session, pid, childPid }.
 		this._heldParent = null;
+		// Turns the script as written into what is loaded (compiling it when
+		// it imports packages). Set by main; absent, scripts load as written.
+		this._prepareScript = null;
 		// Unload the active script on process termination (the old inject/start
 		// registered these per call; once is equivalent and avoids leaking a
 		// listener per attach).
@@ -411,18 +414,40 @@ class FridaService extends EventEmitter {
 		return result;
 	}
 
+	setScriptPreparer(fn) {
+		this._prepareScript = typeof fn === 'function' ? fn : null;
+	}
+
+	async _prepared(src) {
+		if (typeof src !== 'string') throw new Error('the script must be text');
+		if (!this._prepareScript) return { code: src, compiled: false };
+		return this._prepareScript(src);
+	}
+
+	// Returns { compiled }: whether the script was bundled with packages.
 	async loadScript(src) {
 		if (!this._session) throw new Error('Not attached to a process');
-		this._script = await this._session.createScript(src);
+		const { code, compiled } = await this._prepared(src);
+		if (!this._session) throw new Error('Not attached to a process'); // it ended while compiling
+		this._script = await this._session.createScript(code);
 		this._wireScript(this._script);
 		await this._script.load();
+		return { compiled: !!compiled };
 	}
 
 	async reloadScript(src) {
+		if (!this._session) throw new Error('Not attached to a process');
+		// Compile first: a script that does not compile leaves the one that is
+		// running in place.
+		const { code, compiled } = await this._prepared(src);
+		if (!this._session) throw new Error('Not attached to a process');
 		if (this._script) {
 			this._script.unload();
 		}
-		await this.loadScript(src);
+		this._script = await this._session.createScript(code);
+		this._wireScript(this._script);
+		await this._script.load();
+		return { compiled: !!compiled };
 	}
 
 	// REPL: evaluate one entry in the attached process and return a printable

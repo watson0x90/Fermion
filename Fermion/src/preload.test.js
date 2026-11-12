@@ -192,3 +192,13 @@ test('workspace load/save use their own channels', async () => {
   await api.workspace.save({ hooks: [] });
   assert.deepEqual(sent, [['fermion:workspaceLoad'], ['fermion:workspaceSave', { hooks: [] }]]);
 });
+
+test('package operations use their own channels', async () => {
+  const sent = [];
+  const api = buildApi({ invoke: (...a) => { sent.push(a); return Promise.resolve({}); }, on: () => {} });
+  await api.packages.search('frida');
+  await api.packages.list();
+  await api.packages.install('frida-fs');
+  await api.packages.remove('frida-fs');
+  assert.deepEqual(sent, [['fermion:pkgSearch', 'frida'], ['fermion:pkgList'], ['fermion:pkgInstall', 'frida-fs'], ['fermion:pkgRemove', 'frida-fs']]);
+});

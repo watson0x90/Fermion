@@ -53,6 +53,13 @@ function buildApi(ipcRenderer) {
 			load: () => ipcRenderer.invoke('fermion:workspaceLoad'),
 			save: (data) => ipcRenderer.invoke('fermion:workspaceSave', data),
 		},
+		// npm packages for scripts (the folder, and the install prompt, are main's).
+		packages: {
+			search: (query) => ipcRenderer.invoke('fermion:pkgSearch', query),
+			list: () => ipcRenderer.invoke('fermion:pkgList'),
+			install: (spec) => ipcRenderer.invoke('fermion:pkgInstall', spec),
+			remove: (name) => ipcRenderer.invoke('fermion:pkgRemove', name),
+		},
 		messageBox: (options) => ipcRenderer.invoke('fermion:messageBox', options),
 		openExternal: (url) => ipcRenderer.invoke('fermion:openExternal', url),
 		openWindow: (page, dims) => ipcRenderer.invoke('fermion:openWindow', page, dims),

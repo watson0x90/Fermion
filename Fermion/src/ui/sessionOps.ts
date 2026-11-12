@@ -13,6 +13,13 @@ import { hooksActions } from './store/hooksSlice';
 const api = () => (window as any).fermion;
 const scriptSrc = (): string => (window as any).MonacoCodeEditor?.getValue?.() ?? '';
 
+// Load (or reload) the editor's script, and say so when it had to be compiled
+// because it imports packages.
+async function loadEditorScript(f: any, reload = false): Promise<void> {
+  const r = reload ? await f.reloadScript(scriptSrc()) : await f.loadScript(scriptSrc());
+  if (r && r.compiled) writeTerminal('STATUS', '[+] Script compiled with the packages it imports');
+}
+
 // Returns true when attached and the script is loaded. A failure (access
 // denied, process gone, script error) is reported in Output rather than thrown.
 export async function attachAndLoad(dispatch: (a: any) => unknown, pid: number, name = ''): Promise<boolean> {
@@ -22,7 +29,7 @@ export async function attachAndLoad(dispatch: (a: any) => unknown, pid: number, 
     await f.attach(pid);
     dispatch(sessionActions.sessionStarted({ kind: 'attach', pid, name }));
     dispatch(sessionActions.syncState(await f.getState()));
-    await f.loadScript(scriptSrc());
+    await loadEditorScript(f);
     dispatch(sessionActions.scriptLoaded());
     return true;
   } catch (e) {
@@ -39,7 +46,7 @@ export async function reloadFromEditor(dispatch: (a: any) => unknown): Promise<b
   const f = api();
   if (!f) return false;
   try {
-    await f.reloadScript(scriptSrc());
+    await loadEditorScript(f, true);
     dispatch(sessionActions.scriptLoaded());
     writeTerminal('STATUS', '[+] Script reloaded..');
     return true;
@@ -71,7 +78,7 @@ export async function spawnAndLoad(dispatch: (a: any) => unknown, config: SpawnC
     await installAll(dispatch, hooks);
     dispatch(sessionActions.sessionStarted({ kind: 'spawn', ...config }));
     dispatch(sessionActions.syncState(await f.getState()));
-    await f.loadScript(scriptSrc());
+    await loadEditorScript(f);
     dispatch(sessionActions.scriptLoaded());
     if (config.suspended) {
       dispatch(sessionActions.suspendedSet(pid));
@@ -157,7 +164,7 @@ export async function switchToChild(dispatch: (a: any) => unknown, child: ChildI
     await installAll(dispatch, hooks.map((h) => ({ ...h, status: h.enabled ? 'waiting' as const : 'off' as const })));
     dispatch(sessionActions.sessionStarted({ kind: 'attach', pid: child.pid, name: childName(child) }));
     dispatch(sessionActions.syncState(await f.getState()));
-    await f.loadScript(scriptSrc());
+    await loadEditorScript(f);
     dispatch(sessionActions.scriptLoaded());
     if (opts.keepCatching) {
       try { await f.setChildGating(true); } catch (e) { writeTerminal('ERR', '[!] Child processes of the new process are not being caught: ' + cleanIpcError(e)); dispatch(sessionActions.childGatingSet(false)); }

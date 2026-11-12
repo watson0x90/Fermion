@@ -6,6 +6,7 @@ import { reloadFromEditor } from '../sessionOps';
 import { useStore } from 'react-redux';
 import { fileLabel, noteEdit, openScript, openRecentScript, saveScript, saveScriptAs } from '../fileOps';
 import { Icon } from './Icon';
+import { PackagesPanel } from './PackagesPanel';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const api = () => (window as any).fermion;
@@ -68,6 +69,8 @@ export function EditorPane() {
     return () => { cancelled = true; };
   }, []);
 
+  const [packagesOpen, setPackagesOpen] = useState(false);
+
   if (value == null) return <div className="stub">loading editor…</div>;
 
   return (
@@ -106,8 +109,10 @@ export function EditorPane() {
         >
           <Icon name="reload" size={12} />{reloading ? 'Reloading…' : 'Reload'}
         </button>
+        <button className={'pill' + (packagesOpen ? ' on' : '')} data-testid="editor-packages" aria-expanded={packagesOpen} title="npm packages your script can import" onClick={() => setPackagesOpen(!packagesOpen)}><Icon name="box" size={12} />Packages</button>
         <button className="pill" onClick={toggleWrap}><Icon name="wrap" size={12} />Wrap</button>
       </div>
+      {packagesOpen && <PackagesPanel onClose={() => setPackagesOpen(false)} />}
       <MonacoHost value={value} />
     </div>
   );
