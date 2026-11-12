@@ -118,7 +118,13 @@ button, input, select { font-family: inherit; }
 
 /* ---- output ---- */
 .output { display: flex; flex-direction: column; min-width: 0; background: var(--term-bg); }
-.otool { display: flex; align-items: center; gap: 7px; padding: 7px 10px; border-bottom: 1px solid var(--border); background: var(--chrome); flex-wrap: wrap; }
+.otool { display: flex; flex-direction: column; gap: 7px; padding: 7px 10px 8px; border-bottom: 1px solid var(--border); background: var(--chrome); }
+/* Row 1: filters (wrap under themselves when narrow) + action icons pinned to
+   the top-right so they never drop to another line. Row 2: search. */
+.otool-main { display: flex; align-items: flex-start; gap: 10px; }
+.otool-filters { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; flex: 1 1 auto; min-width: 0; min-height: 28px; }
+.otool-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.otool-search { display: flex; }
 .otool .ttl { font-size: 12px; font-weight: 600; color: var(--fg); margin-right: 2px; }
 .otool .sp { flex: 1; }
 .otool .ic, .otool .iconbtn { width: 28px; height: 28px; border: 1px solid var(--border); background: var(--elev); color: var(--muted); border-radius: 7px; display: grid; place-items: center; cursor: pointer; }
@@ -129,8 +135,13 @@ button, input, select { font-family: inherit; }
 .chip .d { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
 .chip:not(.on) { opacity: .45; }
 .chip.log .d { background: var(--log); } .chip.warn .d { background: var(--warn); } .chip.err .d { background: var(--err); } .chip.send .d, .chip.msg .d { background: var(--msg); } .chip.status .d { background: var(--status); }
-.otool .search { display: flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--elev); border-radius: 7px; padding: 4px 8px; color: var(--faint); }
-.otool .search input { border: 0; outline: 0; background: transparent; font-size: 11.5px; color: var(--fg); width: 90px; }
+.otool .search { display: flex; align-items: center; gap: 7px; flex: 1 1 auto; max-width: 460px; min-width: 0; border: 1px solid var(--border); background: var(--elev); border-radius: 7px; padding: 3px 4px 3px 9px; color: var(--faint); }
+.otool .search:focus-within { border-color: var(--accent); }
+.otool .search input { flex: 1 1 auto; min-width: 0; border: 0; outline: 0; background: transparent; font-size: 12px; color: var(--fg); height: 22px; }
+.otool .search input::placeholder { color: var(--faint); }
+.otool .search .rx { flex: 0 0 auto; height: 22px; min-width: 28px; padding: 0 6px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--faint); font: 500 11.5px/1 "IBM Plex Mono", ui-monospace, monospace; cursor: pointer; }
+.otool .search .rx:hover { color: var(--fg); }
+.otool .search .rx.on { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .obody { flex: 1; min-height: 0; overflow: hidden; background: var(--term-bg); }
 /* Breathing room so output never touches the pane's edges. The padding goes on
    the .xterm element (not .obody): xterm's fit addon subtracts the terminal

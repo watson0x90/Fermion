@@ -4,7 +4,7 @@
 
 export type IconName =
   | 'mark' | 'session' | 'graph' | 'tree' | 'inspect' | 'docs' | 'info' | 'gear'
-  | 'refresh' | 'play' | 'reload' | 'stop' | 'follow' | 'clear' | 'save'
+  | 'refresh' | 'play' | 'reload' | 'stop' | 'follow' | 'clear' | 'save' | 'floppy'
   | 'search' | 'wrap' | 'expand' | 'popout' | 'dock' | 'tick' | 'min' | 'max' | 'unmax' | 'close';
 
 const P: Record<IconName, React.ReactNode> = {
@@ -23,6 +23,7 @@ const P: Record<IconName, React.ReactNode> = {
   follow: (<path d="M12 4v12M7 11l5 5 5-5M5 20h14" />),
   clear: (<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" />),
   save: (<path d="M12 3v11M8 10l4 4 4-4M5 20h14" />),
+  floppy: (<><path d="M5 4h11l3 3v12a1 1 0 01-1 1H6a1 1 0 01-1-1z" /><path d="M8 4v5h7V4M8 20v-6h8v6" /></>),
   search: (<><circle cx="11" cy="11" r="7" /><path d="M16.5 16.5L21 21" /></>),
   wrap: (<path d="M4 6h16M4 12h12a3 3 0 110 6h-3m0 0l2-2m-2 2l2 2M4 18h5" />),
   expand: (<path d="M4 6h16M4 12h16M4 18h16" />),

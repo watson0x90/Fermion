@@ -63,6 +63,31 @@ const rowsText = () => {
     const found = await win.evaluate(() => window.__fermion.terminal.searchNext('alpha'));
     if (!found) throw new Error('searchNext did not find a present term');
 
+    // Plain-text search (regex off) finds text that is not a valid regex, and
+    // does not treat "." as a wildcard.
+    await win.evaluate(() => window.__fermion.terminal.write('LOG', 'call open(fd) a.c'));
+    await win.waitForFunction(() => document.querySelector('.xterm-rows').textContent.includes('call open(fd)'), undefined, { timeout: 15000 });
+    const plain = await win.evaluate(() => ({
+      paren: window.__fermion.terminal.searchNext('open(', { regex: false }),
+      dotLiteral: window.__fermion.terminal.searchNext('a.c', { regex: false }),
+      dotNotWild: window.__fermion.terminal.searchNext('al.ha', { regex: false }),
+      dotWildInRegex: window.__fermion.terminal.searchNext('al.ha', { regex: true }),
+    }));
+    if (!plain.paren || !plain.dotLiteral || plain.dotNotWild || !plain.dotWildInRegex) {
+      throw new Error('plain/regex search modes wrong: ' + JSON.stringify(plain));
+    }
+
+    // The search box is on its own row under the action icons, and is wider.
+    const lay = await win.evaluate(() => {
+      const b = (id) => document.querySelector('[data-testid="' + id + '"]').getBoundingClientRect();
+      const ids = ['detach-output', 'follow-output', 'clear-output', 'save-output'];
+      const tops = ids.map((i) => Math.round(b(i).top));
+      return { sameRow: tops.every((t) => t === tops[0]), iconsBottom: b('save-output').bottom, searchTop: b('output-search').top, searchWidth: b('output-search').width };
+    });
+    if (!lay.sameRow) throw new Error('action icons are not on one row');
+    if (!(lay.searchTop >= lay.iconsBottom)) throw new Error('search is not underneath the icons: ' + JSON.stringify(lay));
+    if (!(lay.searchWidth >= 180)) throw new Error('search box too narrow: ' + lay.searchWidth);
+
     // An invalid regex must fail gracefully, not throw out of the handler.
     const threw = await win.evaluate(() => {
       try { window.__fermion.terminal.searchNext('['); return false; } catch (e) { return true; }
