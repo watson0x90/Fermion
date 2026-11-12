@@ -58,17 +58,19 @@ export function ReplPanel() {
   const draft = useRef('');
   const codeRef = useRef(code);
   codeRef.current = code;
-  const caretAfterRender = useRef<number | null>(null);
+  // A caret position to apply once `value` has rendered — and only for that
+  // exact text, so it can never land on something typed afterwards.
+  const caretAfterRender = useRef<{ at: number; value: string } | null>(null);
 
   // Keep the newest entry in view, and put the caret back once a run finishes.
   useEffect(() => { const el = logRef.current; if (el) el.scrollTop = el.scrollHeight; }, [entries]);
   useEffect(() => { if (!busy && active && isAttached) inputRef.current?.focus(); }, [busy, active, isAttached]);
   // After a completion is inserted, the caret goes right after it.
   useLayoutEffect(() => {
-    const at = caretAfterRender.current;
-    if (at == null) return;
+    const pending = caretAfterRender.current;
+    if (!pending) return;
     caretAfterRender.current = null;
-    inputRef.current?.setSelectionRange(at, at);
+    if (pending.value === code) inputRef.current?.setSelectionRange(pending.at, pending.at);
   }, [code]);
 
   const finish = (id: number, patch: Partial<Entry>) =>
@@ -123,9 +125,17 @@ export function ReplPanel() {
   // Replace code[from, end) with `text` and leave the caret after it.
   const insert = (from: number, end: number, text: string) => {
     const current = codeRef.current;
-    caretAfterRender.current = from + text.length;
-    setCode(current.slice(0, from) + text + current.slice(end));
-    return from + text.length;
+    const next = current.slice(0, from) + text + current.slice(end);
+    const at = from + text.length;
+    if (next === current) {
+      // Nothing to insert (the name was already complete): no render will
+      // follow, so place the caret now rather than leaving a request pending.
+      inputRef.current?.setSelectionRange(at, at);
+    } else {
+      caretAfterRender.current = { at, value: next };
+      setCode(next);
+    }
+    return at;
   };
 
   const complete = async () => {

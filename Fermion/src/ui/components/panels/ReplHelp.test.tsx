@@ -186,3 +186,41 @@ test('help still works from the live value when the documentation index is missi
   await waitFor(() => expect(res).toHaveTextContent('Process — object'));
   expect(res).toHaveTextContent('enumerateModules()');
 });
+
+// Regression: Tab on an already-complete name inserted nothing, but left a
+// "move the caret here" request pending; the NEXT keystroke then yanked the
+// caret back into the middle of the entry and scrambled the typing.
+test('Tab on an already-complete name does not move the caret on later typing', async () => {
+  const { input, type, tab } = setup();
+  type('Process.id');
+  tab();
+  await waitFor(() => expect(evaluate).toHaveBeenCalled());
+  await new Promise((r) => setTimeout(r, 20));
+  expect(input.value).toBe('Process.id');
+  // The user keeps typing; the browser puts the caret at the end.
+  fireEvent.change(input, { target: { value: 'Process.id + 1' } });
+  expect(input.selectionStart).toBe('Process.id + 1'.length);
+});
+
+test('a listed completion whose shared prefix is already typed does not move the caret later either', async () => {
+  const { input, type, tab } = setup();
+  type('Process.enumerate'); // exactly the shared prefix of both matches
+  tab();
+  await waitFor(() => expect(choiceNames().length).toBe(2));
+  fireEvent.change(input, { target: { value: 'Process.enumerateM' } });
+  expect(input.selectionStart).toBe('Process.enumerateM'.length);
+});
+
+test('picking a choice that is already fully typed leaves the caret alone afterwards', async () => {
+  const { input, type, tab } = setup();
+  MEMBERS.Process.push({ name: 'idle', kind: 'property' });
+  try {
+    type('Process.id');
+    tab(); // matches: id, idle
+    await waitFor(() => expect(choiceNames()).toEqual(['id', 'idle']));
+    fireEvent.click(screen.getAllByTestId('repl-choice')[0]); // "id": nothing to insert
+    expect(input.value).toBe('Process.id');
+    fireEvent.change(input, { target: { value: 'Process.id.toString' } });
+    expect(input.selectionStart).toBe('Process.id.toString'.length);
+  } finally { MEMBERS.Process.pop(); }
+});
