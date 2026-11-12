@@ -132,3 +132,12 @@ test('file bridge: exports are flagged, and recent files use their own channels'
     ['fermion:openRecent', 'C:/scripts/a.js'],
   ]);
 });
+
+test('cancelEvaluate and thread follow use the invoke channel', async () => {
+  const sent = [];
+  const api = buildApi({ invoke: (...a) => { sent.push(a.slice(1)); return Promise.resolve({}); }, on: () => {} });
+  await api.cancelEvaluate();
+  await api.inspect.follow(7);
+  await api.inspect.unfollow();
+  assert.deepEqual(sent, [['cancelEvaluate'], ['inspectFollow', 7], ['inspectUnfollow']]);
+});

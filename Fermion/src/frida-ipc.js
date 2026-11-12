@@ -21,6 +21,8 @@ const INVOKE_METHODS = new Set([
 	// Phase 3 — REPL: run one entry in the attached process (same capability
 	// as loadScript, which already runs arbitrary script there).
 	'evaluate',
+	// Roadmap — stop waiting for a running REPL entry (restarts the REPL agent).
+	'cancelEvaluate',
 	// Phase 3 — Inspector: read-only views of the attached process. Arguments
 	// are validated in the service before they reach the target.
 	'inspectModules',
@@ -31,6 +33,9 @@ const INVOKE_METHODS = new Set([
 	'inspectRanges',
 	'inspectRead',
 	'inspectScan',
+	// Roadmap — follow one thread with Stalker and count its calls.
+	'inspectFollow',
+	'inspectUnfollow',
 ]);
 
 function createDispatch(service) {

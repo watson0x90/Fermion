@@ -41,7 +41,7 @@ test('evaluate (REPL) is allow-listed and forwards its code argument', async () 
 });
 
 test('the Inspector read-only operations are allow-listed', async () => {
-  const names = ['inspectModules', 'inspectExports', 'inspectImports', 'inspectThreads', 'inspectBacktrace', 'inspectRanges', 'inspectRead', 'inspectScan'];
+  const names = ['inspectModules', 'inspectExports', 'inspectImports', 'inspectThreads', 'inspectBacktrace', 'inspectRanges', 'inspectRead', 'inspectScan', 'inspectFollow', 'inspectUnfollow'];
   const svc = {};
   for (const n of names) svc[n] = async (...a) => [n, ...a];
   const dispatch = createDispatch(svc);
@@ -49,4 +49,9 @@ test('the Inspector read-only operations are allow-listed', async () => {
   // Nothing that writes to the target is exposed under an inspect* name.
   const { INVOKE_METHODS } = require('./frida-ipc.js');
   assert.deepEqual([...INVOKE_METHODS].filter((m) => m.startsWith('inspect')).sort(), names.slice().sort());
+});
+
+test('cancelEvaluate is allow-listed', async () => {
+  const dispatch = createDispatch({ cancelEvaluate: async () => true });
+  assert.equal(await dispatch('cancelEvaluate'), true);
 });

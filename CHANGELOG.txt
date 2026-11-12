@@ -184,3 +184,15 @@
 * Examples updated to the Frida 17 export-lookup API
 * Bundled API docs page marked as predating Frida 17
 * Tests: Vitest component tests, node:test unit tests for the main process and the in-target helper scripts, and Playwright end-to-end tests that drive the real app (smoke, terminal, toolbar, detach, process tree, REPL, inspector, graph, attach). CI runs them on every push
+
+-= Unreleased (after v2.0.0) =-
+
+* Graph: tracing works again on Frida 17 (see the v2.0.0 notes; this landed just before the release)
+* Editor: the toolbar shows the script's file name and marks unsaved changes; Open, Save, Save As and a Recent files menu. Opening over unsaved changes asks first
+* Fix: saving the Output log or a graph became "the current file", so the next Ctrl-S wrote the script over it
+* REPL: a running entry can be cancelled (button or Esc); listed completions can be walked with the arrow keys and accepted with Enter or Tab
+* Inspector: follow a thread with Stalker and list the functions it called, most-called first; Auto-refresh on the Threads list and the Memory hex view
+* Output: search history is remembered between sessions; output is relayed to the detached window in batches instead of one message per line
+* About and Docs windows follow the colour theme. Docs is now a searchable reference generated from the installed Frida's type definitions, replacing the hand-copied pre-17 documentation. jQuery and Semantic UI are no longer loaded
+* Housekeeping: ESLint warnings 75 -> 0; GitHub Actions checkout/setup-node v4 -> v5; the release archive stores symlinks instead of following them (the macOS package was inflated); package.json points at this repository
+* Tests: end-to-end tests for the Editor's file handling and the dialogs; every test script now runs in a temporary profile

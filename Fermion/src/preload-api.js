@@ -94,6 +94,7 @@ function buildApi(ipcRenderer) {
 		getState: () => invoke('getState'),
 		// REPL: evaluate one entry in the attached process.
 		evaluate: (code) => invoke('evaluate', code),
+		cancelEvaluate: () => invoke('cancelEvaluate'),
 		// Inspector: read-only views of the attached process.
 		inspect: {
 			modules: () => invoke('inspectModules'),
@@ -104,6 +105,8 @@ function buildApi(ipcRenderer) {
 			ranges: (protection) => invoke('inspectRanges', protection),
 			read: (address, size) => invoke('inspectRead', address, size),
 			scan: (pattern, protection) => invoke('inspectScan', pattern, protection),
+			follow: (threadId) => invoke('inspectFollow', threadId),
+			unfollow: () => invoke('inspectUnfollow'),
 		},
 		onMessage: (cb) => on('message', cb),
 		onLog: (cb) => on('log', cb),

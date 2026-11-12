@@ -1,7 +1,8 @@
 // Fermion Inspector agent. Loaded as its own Frida script inside the attached
 // process (like the REPL agent) and called over rpc by the Inspector panel.
-// Everything here only READS the target: modules, exports/imports, threads,
-// memory ranges, memory bytes, and pattern scans. Results are plain JSON —
+// Everything here only observes the target: modules, exports/imports, threads,
+// memory ranges, memory bytes, pattern scans, and following one thread with
+// Stalker to count the calls it makes. Nothing writes to the target's memory. Results are plain JSON —
 // pointers are hex strings — and every list is capped so a huge target cannot
 // flood the UI.
 
@@ -13,6 +14,9 @@
 	var SCAN_BUDGET_MS = 8000; // stop scanning after this long
 	var SCAN_CHUNK = 16 * 1024 * 1024; // bytes scanned per step, so the limits are checked often
 	var MAX_FRAMES = 64;
+	var MAX_FOLLOW_MS = 15000;     // a follow stops by itself after this long
+	var MAX_FOLLOW_TARGETS = 20000; // distinct functions counted
+	var MAX_FOLLOW_ITEMS = 300;     // functions reported
 
 	function hex(p) { return p === null || p === undefined ? null : p.toString(); }
 
@@ -74,6 +78,41 @@
 		return s;
 	}
 
+	// ---- following a thread ----
+	// One thread at a time. Stalker runs the thread through instrumented copies
+	// of its code and reports how often each function was called; that is much
+	// heavier than the other views, so it is bounded in time and size.
+	var follow = null; // { threadId, counts, calls, distinct, overflow, timer, endedBy }
+
+	function stopStalking(endedBy) {
+		if (!follow || follow.endedBy) return;
+		follow.endedBy = endedBy;
+		if (follow.timer !== null) { clearTimeout(follow.timer); follow.timer = null; }
+		try { Stalker.unfollow(follow.threadId); } catch (e) { /* thread gone */ }
+		try { Stalker.flush(); } catch (e) { /* nothing buffered */ }
+		try { Stalker.garbageCollect(); } catch (e) { /* best effort */ }
+	}
+
+	function followResult() {
+		if (!follow) return { following: false, threadId: null, calls: 0, total: 0, truncated: false, items: [], endedBy: 'none' };
+		var keys = Object.keys(follow.counts);
+		keys.sort(function (a, b) { return follow.counts[b] - follow.counts[a]; });
+		var items = [];
+		for (var i = 0; i < keys.length && items.length < MAX_FOLLOW_ITEMS; i++) {
+			var address = ptr(keys[i]);
+			items.push({ address: keys[i], name: symbolName(address) || where(address), count: follow.counts[keys[i]] });
+		}
+		return {
+			following: false,
+			threadId: follow.threadId,
+			calls: follow.calls,
+			total: keys.length,
+			truncated: keys.length > MAX_FOLLOW_ITEMS || follow.overflow,
+			items: items,
+			endedBy: follow.endedBy,
+		};
+	}
+
 	rpc.exports = {
 		modules: function () {
 			return capped(Process.enumerateModules(), MAX_RANGES, function (m) {
@@ -115,6 +154,39 @@
 			return capped(frames, MAX_FRAMES, function (address) {
 				return { address: hex(address), where: where(address), symbol: symbolName(address) };
 			});
+		},
+
+		follow: function (id) {
+			if (follow && !follow.endedBy) throw new Error('Already following thread ' + follow.threadId + '. Stop that first.');
+			if (id === Process.getCurrentThreadId()) throw new Error("That is Frida's own thread; it cannot be followed.");
+			findThread(id); // throws for an unknown thread
+			var state = { threadId: id, counts: {}, calls: 0, distinct: 0, overflow: false, timer: null, endedBy: '' };
+			Stalker.follow(id, {
+				events: { call: true },
+				// A summary per time window: callee address -> number of calls.
+				onCallSummary: function (summary) {
+					for (var target in summary) {
+						var n = summary[target];
+						state.calls += n;
+						if (state.counts[target] !== undefined) { state.counts[target] += n; continue; }
+						if (state.distinct >= MAX_FOLLOW_TARGETS) { state.overflow = true; continue; }
+						state.counts[target] = n;
+						state.distinct++;
+					}
+				},
+			});
+			follow = state; // only once Stalker accepted the thread
+			state.timer = setTimeout(function () { if (follow === state) stopStalking('limit'); }, MAX_FOLLOW_MS);
+			return { following: true, threadId: id, maxSeconds: MAX_FOLLOW_MS / 1000 };
+		},
+
+		// Stop (if still running) and return what was counted. The result of a
+		// follow that ended at the time limit is kept until it is collected here.
+		unfollow: function () {
+			stopStalking('stop');
+			var result = followResult();
+			follow = null;
+			return result;
 		},
 
 		ranges: function (protection) {

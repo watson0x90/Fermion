@@ -92,7 +92,7 @@ To start a program under Frida instead of attaching to a running one, fill in **
 | Area | What it is for |
 |---|---|
 | **Title bar** | Drag to move the window; minimize, maximize and close on the right. |
-| **Rail** (far left) | Switches the toolbox tab, and opens the Frida API docs, About and Settings. The top button expands it to show labels. |
+| **Rail** (far left) | Switches the toolbox tab, and opens the Frida API reference, About and Settings. The top button expands it to show labels. |
 | **Session sidebar** | Device and process pickers, Attach / Reload / Detach, and Spawn new. |
 | **Toolbox** (centre) | Tabs: **Editor**, **REPL**, **Graph**, **Process tree**, **Inspector**. |
 | **Output** (right) | Everything the script prints, with filters and search. Can be detached into its own window. |
@@ -102,9 +102,15 @@ To start a program under Frida instead of attaching to a running one, fill in **
 
 The Monaco editor with Frida's type definitions loaded, so you get completion, signatures and inline documentation for the Frida API as you type.
 
+The toolbar shows the script's file name (hover for the full path), with a dot beside it while there are unsaved changes. A script that has never been saved is `untitled.js`.
+
+- **Open** (`Ctrl-O`) and **Save** (`Ctrl-S`). The first save asks where; after that, Save writes back to the same file. **Save as** always asks.
+- **Recent** (the clock) lists the last ten scripts you opened or saved. A file that has since been deleted is reported and dropped from the list.
+- Opening a file while there are unsaved changes asks before discarding them.
 - **Reload** loads the editor's current text into the attached process. A script that fails to load (a syntax error, say) is reported in Output.
 - **Wrap** toggles line wrapping.
-- `Ctrl-S` saves the script and `Ctrl-O` opens one. After the first save, `Ctrl-S` writes back to the same file.
+
+Saving the Output log or a graph does not change which file the script is saved to.
 
 ## Output
 
@@ -119,7 +125,7 @@ Output shows what your script produces, coloured by kind:
 | **STATUS** | Fermion's own lines: attach, reload, detach reason |
 
 - Click a chip to hide or show that kind. Hidden lines are kept and come back when you turn the chip on again.
-- **Search** starts as you type and highlights the first match. `Enter` goes to the next match and `Shift+Enter` to the previous one; `Esc` or the × clears it. The `.*` button switches between regex and plain-text search. `↑` / `↓` in the search box recall earlier searches.
+- **Search** starts as you type and highlights the first match. `Enter` goes to the next match and `Shift+Enter` to the previous one; `Esc` or the × clears it. The `.*` button switches between regex and plain-text search. `↑` / `↓` in the search box recall earlier searches, which are remembered between sessions.
 - The four buttons at the top right are **detach**, **follow tail** (keep the newest line in view), **clear** (`Alt-C`) and **save** (write the output to a text file).
 - The last 5,000 lines are kept.
 
@@ -136,7 +142,7 @@ A `frida>` prompt that evaluates JavaScript in the attached process.
 ![The REPL: a result, help for a function, and Tab completion](Images/fermion-repl.png)
 
 - `Enter` runs the entry; `Shift+Enter` adds a line. `↑` / `↓` recall earlier entries.
-- `Tab` completes the name at the cursor: a global (`Proc` → `Process`) or a member (`Process.enumerateMod` → `Process.enumerateModules`). When several names fit, the part they share is filled in and the choices are listed; click one or keep typing.
+- `Tab` completes the name at the cursor: a global (`Proc` → `Process`) or a member (`Process.enumerateMod` → `Process.enumerateModules`). When several names fit, the part they share is filled in and the choices are listed: keep typing, click one, or move through them with `↑` / `↓` and accept with `Enter` or `Tab`.
 - `help` explains the prompt and lists the Frida APIs available in the target. `help Process` shows Frida's documentation for it and the members that exist in this process; `help Process.enumerateModules` shows the full signature and description. `?Process` works too. The text is Frida's own, taken from its type definitions at build time.
 - Results are printed as JSON where that makes sense, and Frida values such as `NativePointer` print as themselves. Entries and results are also copied to Output; help text is not.
 
@@ -144,7 +150,7 @@ Things to know:
 
 - The REPL runs in **its own scope**, separate from the script in the Editor. It cannot see that script's variables, and it keeps its own across script reloads.
 - Only `var` declarations (and assignments to undeclared names) persist between entries. `let` and `const` do not.
-- An entry that has not finished after **20 seconds** is abandoned and the REPL is restarted, which clears its variables. A busy loop may keep running in the target until you detach.
+- A running entry can be stopped with **Cancel** (or `Esc`), and one that has not finished after **20 seconds** is abandoned automatically. Either way the REPL is restarted, which clears its variables. A busy loop may keep running in the target until you detach.
 - Completion only follows plain dotted names. It will not complete after a call or an index (`foo().ba`, `arr[0].x`), because that would mean running your code just to make suggestions.
 
 ## Process tree
@@ -159,7 +165,7 @@ The processes on the selected device as a parent → child tree, so you can tell
 
 ## Inspector
 
-Read-only views of the attached process. Nothing in the Inspector writes to the target. Each view loads when you open it and again when you press **Refresh** or come back to it.
+Views of the attached process that only observe it. Nothing in the Inspector writes to the target's memory. Each view loads when you open it and again when you press **Refresh** or come back to it. **Auto**, on the Threads list and the Memory hex view, re-reads every 2 seconds while the view is open, which is handy for watching a buffer change.
 
 ![Inspector: a thread's registers and backtrace](Images/fermion-inspector.png)
 
@@ -174,6 +180,8 @@ Read-only views of the attached process. Nothing in the Inspector writes to the 
 ![Inspector: a text scan and its match in the hex view](Images/fermion-memory.png)
 
 **Threads** lists each thread with its state and where it is. Select one for its register values and a backtrace with symbol names. Click a register value or a frame to open that address in Memory. Register values are a snapshot from the last refresh.
+
+**Follow** (on a selected thread) uses Frida's Stalker to count the calls that thread makes. Press it, let the thread run, then press **Stop**: the functions it called are listed, most-called first, and clicking one opens it in Memory. Only one thread can be followed at a time, and a follow ends by itself after 15 seconds. Following is much heavier than the other views: the thread runs through instrumented copies of its code, so it is slower while followed, and, as with tracing, a fragile target may not tolerate it.
 
 An address outside every readable range is refused rather than read. That includes stack guard pages, which must not be touched.
 
@@ -211,7 +219,8 @@ To reach a `frida-server` over the network, type its address in **Remote host:po
 | `Alt-C` | Clear Output |
 | `Tab` (REPL) | Complete the name at the cursor |
 | `Enter` / `Shift+Enter` (REPL) | Run the entry / new line |
-| `↑` / `↓` (REPL, Output search) | Earlier / later entries |
+| `↑` / `↓` (REPL, Output search) | Earlier / later entries; in the REPL, move through listed completions |
+| `Esc` (REPL, while an entry runs) | Cancel the entry |
 | `Esc` (Output search, REPL completions) | Clear / dismiss |
 
 On macOS use `Cmd` in place of `Ctrl`. `F5` and `Ctrl-R` are disabled on purpose: reloading the window would drop the session.
@@ -261,8 +270,8 @@ The scripts in [`Examples`](Examples) have been updated to the Frida 17 export-l
   * **Q**: I want to build Fermion against a newer Electron or Frida. Do I need to match a specific Electron prebuild?
     * **A**: No. Frida 17's Node bindings ship runtime-agnostic N-API prebuilds, so bump the versions in `Fermion/package.json` and reinstall.
 
-  * **Q**: Where do the editor's type definitions and the REPL's `help` text come from?
-    * **A**: Both come from `node_modules/@types/frida-gum/index.d.ts`. The REPL's help index is generated from it during `npm run build`.
+  * **Q**: Where do the editor's type definitions, the REPL's `help` text and the Docs window come from?
+    * **A**: All three come from `node_modules/@types/frida-gum/index.d.ts`, so they describe the Frida that is installed. The index behind `help` and the Docs window is generated from it during `npm run build`.
 
   * **Q**: Tracing made the target slow or unstable.
     * **A**: Call tracing is resource intensive. Fermion samples hot functions and caps the size of a graph, but tracing a function that does a great deal of work can still stall or crash a process. Prefer narrower functions.
@@ -290,7 +299,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, detach, process tree, REPL, inspector, graph, attach) |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, detach, process tree, REPL, inspector, graph, attach) |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.
@@ -320,8 +329,9 @@ If Fermion is useful in your work, pull requests, bug reports and feature reques
 * ~~Implement a more complete device manager interface.~~
 * ~~UI re-design.~~
 * ~~More native tools built on top of Fermion~~ (REPL, Process tree, Inspector).
-* Follow a thread with Stalker from the Inspector.
-* Cancel a running REPL entry.
+* ~~Follow a thread with Stalker from the Inspector.~~
+* ~~Cancel a running REPL entry.~~
+* Android and iOS scripts: bundle the Java and ObjC bridges, which Frida 17 no longer builds in.
 
 ### Special thanks
 

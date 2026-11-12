@@ -29,6 +29,7 @@ const EVAL_TIMEOUT_MS = 20000;
 // ---- Inspector argument validation (the renderer is untrusted) ----
 const MAX_READ_BYTES = 4096;
 const TIMED_OUT = Symbol('timed out');
+const CANCELLED = Symbol('cancelled');
 function checkModuleName(name) {
 	if (typeof name !== 'string') throw new Error('module name must be a string');
 	if (!name) throw new Error('module name is empty');
@@ -110,6 +111,8 @@ class FridaService extends EventEmitter {
 		this._agentSession = null;
 		this._agents = new Map();
 		this._evalTimeoutMs = EVAL_TIMEOUT_MS;
+		// Entries being evaluated right now: a function per entry that cancels it.
+		this._evalCancels = new Set();
 		// Unload the active script on process termination (the old inject/start
 		// registered these per call; once is equivalent and avoids leaking a
 		// listener per attach).
@@ -273,21 +276,23 @@ class FridaService extends EventEmitter {
 		if (!this._session) throw new Error('Not attached to a process');
 		const script = await this._getAgent('repl');
 		let timer;
+		let cancel;
 		const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(TIMED_OUT), this._evalTimeoutMs); });
+		const cancelled = new Promise((resolve) => { cancel = () => resolve(CANCELLED); });
+		this._evalCancels.add(cancel);
 		try {
-			const raw = await Promise.race([script.exports.evaluate(code), timeout]);
-			if (raw === TIMED_OUT) {
+			const raw = await Promise.race([script.exports.evaluate(code), timeout, cancelled]);
+			if (raw === TIMED_OUT || raw === CANCELLED) {
 				// The entry is still running (or waiting on a promise that never
 				// settles). Drop this agent so the prompt works again; the next
 				// entry starts a fresh one. Unloading is best-effort and not
 				// awaited: a spinning script may never answer.
 				if (this._agents.get('repl')) this._agents.delete('repl');
 				Promise.resolve().then(() => script.unload()).catch(() => {});
-				return {
-					ok: false,
-					error: 'Timed out after ' + Math.round(this._evalTimeoutMs / 1000) + ' s. The REPL was restarted, so its variables are gone. If the entry is a busy loop it may still be running in the target; detach to stop it.',
-					stack: '',
-				};
+				const tail = ' The REPL was restarted, so its variables are gone. If the entry is a busy loop it may still be running in the target; detach to stop it.';
+				return raw === CANCELLED
+					? { ok: false, cancelled: true, error: 'Cancelled.' + tail, stack: '' }
+					: { ok: false, error: 'Timed out after ' + Math.round(this._evalTimeoutMs / 1000) + ' s.' + tail, stack: '' };
 			}
 			const result = toPlain(raw);
 			if (result && typeof result.ok === 'boolean') return result;
@@ -297,7 +302,16 @@ class FridaService extends EventEmitter {
 			return { ok: false, error: e && e.message ? e.message : String(e), stack: '' };
 		} finally {
 			clearTimeout(timer);
+			this._evalCancels.delete(cancel);
 		}
+	}
+
+	// Stop waiting for the REPL entries that are running. Returns whether there
+	// was anything to cancel.
+	async cancelEvaluate() {
+		if (!this._evalCancels.size) return false;
+		for (const cancel of [...this._evalCancels]) cancel();
+		return true;
 	}
 
 	// One of each agent per session; concurrent first calls share the same load.
@@ -340,6 +354,10 @@ class FridaService extends EventEmitter {
 	async inspectRanges(protection) { return this._inspect('ranges', checkProtection(protection)); }
 	async inspectRead(address, size) { return this._inspect('read', checkAddress(address), checkReadSize(size)); }
 	async inspectScan(pattern, protection) { return this._inspect('scan', checkPattern(pattern), checkProtection(protection)); }
+	// Follow one thread with Stalker and count the calls it makes; unfollow
+	// stops and returns the counts. (Bounded in the agent: 15 s, one thread.)
+	async inspectFollow(threadId) { return this._inspect('follow', checkThreadId(threadId)); }
+	async inspectUnfollow() { return this._inspect('unfollow'); }
 
 	// Unload the user's script (the helper agents stay). A no-op when none is loaded.
 	async unload() {

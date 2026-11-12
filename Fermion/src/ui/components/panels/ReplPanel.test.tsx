@@ -4,7 +4,7 @@ import { configureStore } from '@reduxjs/toolkit';
 import { vi } from 'vitest';
 import session, { sessionActions } from '../../store/sessionSlice';
 import output from '../../store/outputSlice';
-import ui from '../../store/uiSlice';
+import ui, { uiActions } from '../../store/uiSlice';
 import { setTerminalSink } from '../../bridge';
 import { ReplPanel } from './ReplPanel';
 
@@ -139,4 +139,43 @@ test('a result that arrives after Clear does not resurrect the entry', async () 
   fireEvent.click(screen.getByTestId('repl-clear'));
   await act(async () => { finish({ ok: true, type: 'number', text: '1' }); });
   expect(screen.queryAllByTestId('repl-entry').length).toBe(0);
+});
+
+test('a running entry can be cancelled with the Cancel button; the prompt comes back', async () => {
+  const { type, key, input } = setup();
+  let finish: (v: unknown) => void = () => {};
+  evaluate.mockImplementationOnce(() => new Promise((r) => { finish = r; }));
+  const cancelEvaluate = vi.fn(async () => {
+    // The service ends the waiting entry as cancelled.
+    finish({ ok: false, cancelled: true, error: 'Cancelled. The REPL was restarted, so its variables are gone.', stack: '' });
+    return true;
+  });
+  (window as any).fermion.cancelEvaluate = cancelEvaluate;
+
+  expect(screen.queryByTestId('repl-cancel')).toBeNull(); // nothing running
+  type('while (true) {}'); key('Enter');
+  const btn = await screen.findByTestId('repl-cancel');
+  fireEvent.click(btn);
+  expect(cancelEvaluate).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(input).not.toBeDisabled());
+  expect(screen.getByTestId('repl-result')).toHaveClass('err');
+  expect(screen.getByTestId('repl-result')).toHaveTextContent(/Cancelled/);
+  expect(screen.queryByTestId('repl-cancel')).toBeNull();
+  // A cancelled entry is the user's own doing: it is not reported as an error in Output.
+  expect(lines.some((l) => l.startsWith('ERR'))).toBe(false);
+  expect(lines).toContain('STATUS [REPL] entry cancelled');
+});
+
+test('Escape cancels a running entry too; with nothing running it does nothing', async () => {
+  const { type, key, store } = setup();
+  act(() => { store.dispatch(uiActions.setActiveTab('repl')); }); // Escape only acts while the REPL is showing
+  const cancelEvaluate = vi.fn(async () => true);
+  (window as any).fermion.cancelEvaluate = cancelEvaluate;
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(cancelEvaluate).not.toHaveBeenCalled();
+  evaluate.mockImplementationOnce(() => new Promise(() => {}));
+  type('slow()'); key('Enter');
+  await screen.findByTestId('repl-cancel');
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(cancelEvaluate).toHaveBeenCalledTimes(1);
 });

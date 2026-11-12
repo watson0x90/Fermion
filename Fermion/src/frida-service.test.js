@@ -184,7 +184,7 @@ function inspectorService() {
     if (/Inspector agent/.test(src)) {
       const rec = (name) => async (...args) => { calls.push([name, ...args]); return { items: [], total: 0, truncated: false }; };
       s.exports = { modules: rec('modules'), exports: rec('exports'), imports: rec('imports'), threads: rec('threads'),
-        backtrace: rec('backtrace'), ranges: rec('ranges'), read: rec('read'), scan: rec('scan') };
+        backtrace: rec('backtrace'), ranges: rec('ranges'), read: rec('read'), scan: rec('scan'), follow: rec('follow'), unfollow: rec('unfollow') };
     }
     return s;
   };
@@ -332,4 +332,41 @@ test('loadScript / reloadScript without a session say "not attached" instead of 
   const svc = new FridaService();
   await assert.rejects(() => svc.loadScript('send(1)'), /not attached/i);
   await assert.rejects(() => svc.reloadScript('send(1)'), /not attached/i);
+});
+
+// ---- roadmap: cancel a running REPL entry, follow a thread ----
+test('cancelEvaluate: a running entry ends at once as "cancelled", and the REPL is restarted', async () => {
+  const { svc, session } = attachedService();
+  await svc.attach(4821);
+  await svc.evaluate('1');
+  session.scripts[0].exports.evaluate = () => new Promise(() => {}); // never finishes
+  const running = svc.evaluate('while (true) {}');
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(await svc.cancelEvaluate(), true);
+  const r = await running;
+  assert.equal(r.ok, false);
+  assert.equal(r.cancelled, true);
+  assert.match(r.error, /cancelled/i);
+  assert.equal(session.scripts[0].unloaded, true);
+  assert.equal((await svc.evaluate('2')).ok, true);     // a fresh agent
+  assert.equal(session.scripts.length, 2);
+});
+
+test('cancelEvaluate with nothing running does nothing', async () => {
+  const { svc } = attachedService();
+  assert.equal(await svc.cancelEvaluate(), false);
+  await svc.attach(4821);
+  await svc.evaluate('1');
+  assert.equal(await svc.cancelEvaluate(), false);
+  assert.equal((await svc.evaluate('2')).ok, true);
+});
+
+test('inspectFollow / inspectUnfollow: the thread id is validated; unfollow takes no arguments', async () => {
+  const { svc, calls } = inspectorService();
+  await svc.attach(1);
+  await svc.inspectFollow(4242);
+  await svc.inspectUnfollow('ignored', { also: 'ignored' });
+  assert.deepEqual(calls, [['follow', 4242], ['unfollow']]);
+  for (const bad of [-1, 1.5, '12', null, undefined, {}]) await assert.rejects(() => svc.inspectFollow(bad), /invalid thread id/i);
+  assert.equal(calls.length, 2);
 });

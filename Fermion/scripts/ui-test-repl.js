@@ -177,6 +177,34 @@ const shot = process.argv[2];
     if (shot) await win.screenshot({ path: shot.replace(/\.png$/, '-editor.png') });
     await win.click('role=tab[name="REPL"]');
 
+    step = 'cancel a running entry';
+    {
+      const n1 = await win.evaluate(() => document.querySelectorAll('[data-testid="repl-entry"]').length);
+      await win.click('[data-testid="repl-input"]');
+      await win.keyboard.type('new Promise(function () {})');
+      await win.keyboard.press('Enter');
+      await win.waitForSelector('[data-testid="repl-cancel"]', { timeout: 10000 });
+      const t0 = Date.now();
+      await win.click('[data-testid="repl-cancel"]');
+      await win.waitForFunction((k) => {
+        const r = document.querySelectorAll('[data-testid="repl-result"]')[k];
+        return r && r.classList.contains('err') && /Cancelled/.test(r.textContent);
+      }, n1, { timeout: 10000 });
+      if (Date.now() - t0 > 8000) throw new Error('Cancel took ' + (Date.now() - t0) + ' ms');
+      await win.waitForFunction(() => !document.querySelector('[data-testid="repl-input"]').disabled && !document.querySelector('[data-testid="repl-cancel"]'), undefined, { timeout: 10000 });
+      const after = await entry('2 + 2');
+      if (after.text !== '4') throw new Error('REPL did not recover after Cancel: ' + JSON.stringify(after));
+      // Escape cancels as well.
+      await win.click('[data-testid="repl-input"]');
+      await win.keyboard.type('new Promise(function () {})');
+      await win.keyboard.press('Enter');
+      await win.waitForSelector('[data-testid="repl-cancel"]', { timeout: 10000 });
+      await win.keyboard.press('Escape');
+      await win.waitForFunction(() => !document.querySelector('[data-testid="repl-cancel"]') && !document.querySelector('[data-testid="repl-input"]').disabled, undefined, { timeout: 10000 });
+      const cancelledInOutput = await win.evaluate(() => window.__fermion.terminal.getText());
+      if (!/\[REPL\] entry cancelled/.test(cancelledInOutput)) throw new Error('cancel was not noted in Output');
+    }
+
     step = 'entry that never finishes';
     // Must time out (20 s) and give the prompt back instead of locking it.
     const n0 = await win.evaluate(() => document.querySelectorAll('[data-testid="repl-entry"]').length);
@@ -195,7 +223,7 @@ const shot = process.argv[2];
     await win.click('[data-testid="detach"]');
     await win.waitForFunction(() => document.querySelector('[data-testid="repl-input"]').disabled, undefined, { timeout: 15000 });
 
-    console.log('REPL_OK evaluate + objects + persistence + errors + own scope + Output mirror + survives reload + history + Tab completion + help + editor Reload + timeout recovery');
+    console.log('REPL_OK evaluate + objects + persistence + errors + own scope + Output mirror + survives reload + history + Tab completion + help + editor Reload + Cancel + timeout recovery');
     await app.close();
     done(0);
   } catch (e) {
