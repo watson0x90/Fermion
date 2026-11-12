@@ -218,7 +218,7 @@ Hook functions in the attached process without writing a script.
 Each hook is a row with a switch, its state, and how many times the function has been called. Select a hook to see two views:
 
 - **Calls** lists what the hook logged: the time, the thread, `→` on entry and `←` on return, indented by call depth. Click a line to see where the call came from. Callers inside a module are named; addresses that belong to no module (JIT code, or values the unwinder mistook for return addresses) are counted on one line. **All hooks** shows every hook's lines together, and **Output** chooses whether the lines are also printed in the Output pane as `[hook] name -> …`.
-- **Handler** is the JavaScript that runs for that hook. Change it and press **Apply** (`Ctrl-Enter`); the new handler is used from the next call, and one that does not compile is rejected while the hook carries on with the old one.
+- **Handler** is the JavaScript that runs for that hook. Change it and press **Apply** (`Ctrl-Enter`); the new handler is used from the next call, and one that does not compile is rejected while the hook carries on with the old one. The handler is edited in the same editor as scripts: syntax errors are underlined as you type, and Frida's API (`Process.`, `Memory.`, `ptr(...)` and the rest) is completed. `args` and `retval` are not typed, so their methods are not offered.
 
 A new hook starts with a handler that prints the first four arguments and the return value:
 

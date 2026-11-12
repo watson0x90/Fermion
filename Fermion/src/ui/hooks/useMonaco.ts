@@ -3,6 +3,44 @@ import { applyTheme, loadSavedTheme } from '../theme/themeEngine';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+// Settings shared by every Monaco editor in the window; applied once.
+let configured = false;
+export function configureMonaco(monaco: any): void {
+  if (configured) return;
+  configured = true;
+  // The script in the Editor tab is a TypeScript model. JavaScript models
+  // (hook handlers) get syntax errors marked, but no type errors: their
+  // arguments are untyped.
+  monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
+    noSemanticValidation: true,
+    noSyntaxValidation: false,
+    noSuggestionDiagnostics: true, // no fading of a handler's unused log/args
+  });
+  monaco.languages.typescript.javascriptDefaults.setCompilerOptions({
+    target: monaco.languages.typescript.ScriptTarget.Latest,
+    allowNonTsExtensions: true,
+    allowJs: true,
+  });
+  monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
+    target: monaco.languages.typescript.ScriptTarget.Latest,
+    allowNonTsExtensions: true,
+    moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
+  });
+
+  // frida-gum defs (XHR relative to the document), for both languages.
+  try {
+    const req = new XMLHttpRequest();
+    req.onreadystatechange = () => {
+      if (req.readyState === 4 && req.status >= 200 && req.status < 300) {
+        monaco.languages.typescript.typescriptDefaults.addExtraLib(req.responseText, 'file:///frida-gum.d.ts');
+        monaco.languages.typescript.javascriptDefaults.addExtraLib(req.responseText, 'file:///frida-gum.d.ts');
+      }
+    };
+    req.open('GET', '../node_modules/@types/frida-gum/index.d.ts', true);
+    req.send();
+  } catch { /* defs are a nicety */ }
+}
+
 // Mount a Monaco editor into a ref'd container using the global AMD loader
 // (window.require, from the loader.js <script> in index.html). Ported from the
 // vanilla editor.js. Exposes the editor on window.MonacoCodeEditor (used by the
@@ -26,27 +64,7 @@ export function useMonaco(initialValue: string, onEdit?: () => void) {
       if (disposed || !hostRef.current) return;
       const monaco = (window as any).monaco;
 
-      monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
-        noSemanticValidation: true,
-        noSyntaxValidation: true,
-      });
-      monaco.languages.typescript.typescriptDefaults.setCompilerOptions({
-        target: monaco.languages.typescript.ScriptTarget.Latest,
-        allowNonTsExtensions: true,
-        moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
-      });
-
-      // frida-gum defs (XHR relative to the document).
-      try {
-        const req = new XMLHttpRequest();
-        req.onreadystatechange = () => {
-          if (req.readyState === 4 && req.status >= 200 && req.status < 300) {
-            monaco.languages.typescript.typescriptDefaults.addExtraLib(req.responseText, 'file:///frida-gum.d.ts');
-          }
-        };
-        req.open('GET', '../node_modules/@types/frida-gum/index.d.ts', true);
-        req.send();
-      } catch { /* defs are a nicety */ }
+      configureMonaco(monaco);
 
       // Define + select the active app theme on Monaco (and set the app tokens).
       applyTheme(loadSavedTheme());

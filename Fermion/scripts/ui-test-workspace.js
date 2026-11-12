@@ -17,6 +17,16 @@ const T = { timeout: 20000 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const TARGET = 'const fs = require("fs"); setInterval(() => { try { fs.statSync(process.execPath); } catch (e) {} }, 120)';
 
+// The hook handler is a Monaco editor (window.MonacoHookEditor).
+const setHandler = async (win, text) => {
+  await win.waitForFunction(() => !!window.MonacoHookEditor, undefined, { timeout: 20000 });
+  await win.evaluate((t) => window.MonacoHookEditor.setValue(t), text);
+};
+const getHandler = async (win) => {
+  await win.waitForFunction(() => !!window.MonacoHookEditor, undefined, { timeout: 20000 });
+  return win.evaluate(() => window.MonacoHookEditor.getValue());
+};
+
 (async () => {
   let app; let step = 'launch';
   const targets = [spawn(process.execPath, ['-e', TARGET], { stdio: 'ignore' }), spawn(process.execPath, ['-e', TARGET], { stdio: 'ignore' })];
@@ -58,7 +68,7 @@ const TARGET = 'const fs = require("fs"); setInterval(() => { try { fs.statSync(
     await win.click('[data-testid="hook-echo"]'); // keep Output quiet
     await win.click('[data-testid="hook-tab-handler"]');
     const HANDLER = '({ onEnter(log, args) { log("SAVED_HANDLER " + args[2].readUtf8String()); } })';
-    await win.fill('[data-testid="hook-code"]', HANDLER);
+    await setHandler(win, HANDLER);
     await win.click('[data-testid="hook-apply"]');
     await win.waitForFunction(() => /^Handler$/.test(document.querySelector('[data-testid="hook-tab-handler"]').textContent), undefined, T);
     const firstAddress = await win.evaluate(() => document.querySelector('[data-testid^="hook-row-"] .nm').getAttribute('title').split(' · ')[1]);
@@ -91,7 +101,7 @@ const TARGET = 'const fs = require("fs"); setInterval(() => { try { fs.statSync(
     await win.waitForSelector('[data-testid^="hook-row-"]', T);
     if ((await win.textContent('[data-testid="hook-status"]')) !== 'placed on attach') throw new Error('restored hook status: ' + await win.textContent('[data-testid="hook-status"]'));
     await win.click('[data-testid="hook-tab-handler"]');
-    if ((await win.inputValue('[data-testid="hook-code"]')) !== HANDLER) throw new Error('the handler was not restored');
+    if ((await getHandler(win)) !== HANDLER) throw new Error('the handler was not restored');
     await win.click('role=tab[name="Inspector"]');
     await win.click('[data-testid="insp-bookmarks"]');
     await win.waitForSelector('[data-testid="bm-row"]', T);

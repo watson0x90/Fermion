@@ -213,3 +213,4 @@
 -= Unreleased (after v2.1.0) =-
 
 * Hooks and bookmarks are kept as a set per program. Attaching or spawning brings that program's set in; Set (Hooks tab, Inspector > Bookmarks) picks another. What was saved before is under General
+* Hooks: the handler is edited in the same editor as scripts, with syntax errors marked and Frida's API completed

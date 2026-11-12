@@ -17,6 +17,16 @@ const shot = process.argv[2];
 const T = { timeout: 20000 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// The hook handler is a Monaco editor (window.MonacoHookEditor).
+const setHandler = async (win, text) => {
+  await win.waitForFunction(() => !!window.MonacoHookEditor, undefined, { timeout: 20000 });
+  await win.evaluate((t) => window.MonacoHookEditor.setValue(t), text);
+};
+const getHandler = async (win) => {
+  await win.waitForFunction(() => !!window.MonacoHookEditor, undefined, { timeout: 20000 });
+  return win.evaluate(() => window.MonacoHookEditor.getValue());
+};
+
 (async () => {
   let app; let step = 'launch';
   // The target stats its own executable several times a second: libuv's
@@ -79,7 +89,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     step = 'new handler';
     await win.click('[data-testid="hook-tab-handler"]');
-    await win.fill('[data-testid="hook-code"]', '({\n  onEnter(log, args) {\n    this.path = args[2].readUtf8String();\n  },\n  onLeave(log, retval) {\n    log("stat " + this.path + " = " + retval.toInt32());\n  }\n})');
+    await setHandler(win, '({\n  onEnter(log, args) {\n    this.path = args[2].readUtf8String();\n  },\n  onLeave(log, retval) {\n    log("stat " + this.path + " = " + retval.toInt32());\n  }\n})');
     await win.click('[data-testid="hook-apply"]');
     await win.waitForFunction(() => /^Handler$/.test(document.querySelector('[data-testid="hook-tab-handler"]').textContent), undefined, T);
     await snap('handler');
@@ -89,19 +99,49 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     step = 'a handler that does not compile';
     await win.click('[data-testid="hook-tab-handler"]');
-    const good = await win.inputValue('[data-testid="hook-code"]');
-    await win.fill('[data-testid="hook-code"]', '({ onEnter(log, args) {');
+    const good = await getHandler(win);
+    await setHandler(win, '({ onEnter(log, args) {');
     await win.click('[data-testid="hook-apply"]');
     await win.waitForFunction(() => /does not compile/.test(document.querySelector('[data-testid="hook-code-error"]')?.textContent ?? ''), undefined, T);
     const before = await calls();
     await sleep(700);
     if (!((await calls()) > before)) throw new Error('the hook stopped after a rejected handler');
+    // The editor marks the syntax error itself, before anything is applied.
+    await win.waitForFunction(() => window.monaco.editor.getModelMarkers({ resource: window.MonacoHookEditor.getModel().uri }).filter((m) => m.severity === 8).length > 0, undefined, T);
     await win.click('[data-testid="hook-revert"]');
-    if ((await win.inputValue('[data-testid="hook-code"]')) !== good) throw new Error('Revert did not restore the applied handler');
+    if ((await getHandler(win)) !== good) throw new Error('Revert did not restore the applied handler');
+    try {
+      await win.waitForFunction(() => window.monaco.editor.getModelMarkers({ resource: window.MonacoHookEditor.getModel().uri }).filter((m) => m.severity === 8).length === 0, undefined, T);
+    } catch (_) {
+      throw new Error('a valid handler is marked: ' + JSON.stringify(await win.evaluate(() => window.monaco.editor.getModelMarkers({ resource: window.MonacoHookEditor.getModel().uri }).map((m) => m.startLineNumber + ':' + m.message))));
+    }
+
+    step = 'the handler editor knows Frida and applies with Ctrl+Enter';
+    // Frida's API is offered: ask the language service what completes after "Process.".
+    const offered = await win.evaluate(async () => {
+      const model = window.MonacoHookEditor.getModel();
+      const before = model.getValue();
+      model.setValue('Process.');
+      try {
+        const getWorker = await window.monaco.languages.typescript.getJavaScriptWorker();
+        const worker = await getWorker(model.uri);
+        const info = await worker.getCompletionsAtPosition(model.uri.toString(), 'Process.'.length);
+        return (info ? info.entries : []).map((e) => e.name);
+      } finally { model.setValue(before); }
+    });
+    if (!offered.includes('enumerateModules') || !offered.includes('mainModule')) throw new Error('Frida completions: ' + offered.slice(0, 12).join(','));
+    await setHandler(win, '({ onEnter(log, args) { log("typed " + args[2].readUtf8String()); } })');
+    await win.click('[data-testid="hook-code"] .view-lines');
+    await win.keyboard.press('Control+Enter');
+    await win.click('[data-testid="hook-tab-hits"]');
+    await win.waitForFunction(() => [...document.querySelectorAll('[data-testid="hook-hit"] .hx')].some((e) => e.textContent.includes('typed ')), undefined, T);
+    await win.click('[data-testid="hook-tab-handler"]');
+    await setHandler(win, good);
+    await win.click('[data-testid="hook-apply"]');
 
     step = 'callers';
     // Callers are recorded on entry, so log there too.
-    await win.fill('[data-testid="hook-code"]', '({ onEnter(log, args) { log("enter " + args[2].readUtf8String()); } })');
+    await setHandler(win, '({ onEnter(log, args) { log("enter " + args[2].readUtf8String()); } })');
     await win.click('[data-testid="hook-apply"]');
     await win.waitForFunction(() => /^Handler$/.test(document.querySelector('[data-testid="hook-tab-handler"]').textContent), undefined, T);
     await win.click('[data-testid="hook-tab-hits"]');
@@ -147,7 +187,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     await sleep(400);
     if (target.exitCode !== null) throw new Error('the target died');
 
-    console.log('HOOKS_OK search (' + exportsFound + ' exports, debug symbols) + hook + calls + Output + new handler + rejected handler + callers + off/on + survives reload + re-placed after detach + remove');
+    console.log('HOOKS_OK search (' + exportsFound + ' exports, debug symbols) + hook + calls + Output + new handler + rejected handler + callers + off/on + handler editor (syntax marks, Frida completions, Ctrl+Enter) + survives reload + re-placed after detach + remove');
     await app.close();
     done(0);
   } catch (e) {
