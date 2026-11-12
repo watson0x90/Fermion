@@ -14,9 +14,11 @@ export interface InspectState<T> {
   reload: () => void;
 }
 
-// Run one inspector call when `enabled` first becomes true, again whenever
-// `key` changes, and on reload(). A response that arrives after a newer request
-// was started is dropped.
+// Run one inspector call whenever `enabled` becomes true (so a view refreshes
+// each time it is shown), whenever `key` changes, and on reload(). A response
+// that arrives after a newer request was started is dropped. When the key
+// changes, the previous result is cleared at once so it is never shown under
+// the new selection.
 export function useInspect<T>(call: () => Promise<T>, key: string, enabled: boolean): InspectState<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState('');
@@ -25,10 +27,12 @@ export function useInspect<T>(call: () => Promise<T>, key: string, enabled: bool
   const request = useRef(0);
   const callRef = useRef(call);
   callRef.current = call;
+  const loadedKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (!enabled) return;
     const id = ++request.current;
+    if (loadedKey.current !== key) { loadedKey.current = key; setData(null); setError(''); }
     setLoading(true);
     Promise.resolve()
       .then(() => callRef.current())

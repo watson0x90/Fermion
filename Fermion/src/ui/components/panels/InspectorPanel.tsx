@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAppSelector } from '../../store';
 import { ModulesTab } from './inspector/ModulesTab';
 import { MemoryTab, Goto } from './inspector/MemoryTab';
@@ -22,6 +22,10 @@ export function InspectorPanel() {
   const [sub, setSub] = useState<Sub>('modules');
   // An address handed to the Memory tab; it belongs to the session it came from.
   const [goto, setGoto] = useState<(Goto & { pid: string | null }) | null>(null);
+
+  // The hand-off belongs to one session: forget it when the session ends, so a
+  // later session (even on the same pid) does not open the old address.
+  useEffect(() => { if (!isAttached) setGoto(null); }, [isAttached]);
 
   // "Open in Memory" from the Modules and Threads tabs.
   const viewMemory = (address: string) => {

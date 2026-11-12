@@ -27,20 +27,56 @@
 		return proto === null || proto === Object.prototype;
 	}
 
-	function toJson(value) {
-		var seen = [];
-		return JSON.stringify(value, function (_key, v) {
-			if (typeof v === 'bigint') return v.toString() + 'n';
-			if (typeof v === 'undefined') return 'undefined';
-			if (typeof v === 'function') return '[Function]';
-			if (typeof v === 'symbol') return v.toString();
-			if (v !== null && typeof v === 'object') {
-				if (seen.indexOf(v) !== -1) return '[Circular]';
-				seen.push(v);
-				if (!isPlain(v) && typeof v.toJSON !== 'function') return String(v);
+	var MAX_DEPTH = 12;     // nesting printed before giving up with […]
+	var MAX_NODES = 20000;  // objects/arrays visited per result
+
+	// Turn a value into something JSON.stringify can print. Only the objects on
+	// the current path count as circular (an object reached twice by different
+	// routes is printed twice). Class instances print their own properties.
+	function toPlain(value) {
+		var path = [];
+		var nodes = 0;
+		function walk(v) {
+			var t = typeof v;
+			if (t === 'bigint') return v.toString() + 'n';
+			if (t === 'undefined') return 'undefined';
+			if (t === 'function') return '[Function]';
+			if (t === 'symbol') return v.toString();
+			if (v === null || t !== 'object') return v;
+			if (path.indexOf(v) !== -1) return '[Circular]';
+			if (path.length >= MAX_DEPTH || ++nodes > MAX_NODES) return '[…]';
+			if (!isPlain(v)) {
+				if (typeof v.toJSON === 'function') {
+					var viaJson;
+					try { viaJson = v.toJSON(); } catch (e) { return '[Thrown: ' + e.message + ']'; }
+					if (viaJson !== v) return walk(viaJson);
+				} else {
+					var s = String(v);
+					if (s !== '[object Object]') return s; // NativePointer, Int64, Error, …
+				}
 			}
-			return v;
-		}, 2);
+			path.push(v);
+			var out;
+			if (Array.isArray(v)) {
+				out = [];
+				for (var i = 0; i < v.length; i++) out.push(walk(v[i]));
+			} else {
+				out = {};
+				var keys = Object.keys(v);
+				for (var k = 0; k < keys.length; k++) {
+					var child;
+					try { child = v[keys[k]]; } catch (e) { out[keys[k]] = '[Thrown: ' + e.message + ']'; continue; }
+					out[keys[k]] = walk(child);
+				}
+			}
+			path.pop();
+			return out;
+		}
+		return walk(value);
+	}
+
+	function toJson(value) {
+		return JSON.stringify(toPlain(value), null, 2);
 	}
 
 	function describe(v) {

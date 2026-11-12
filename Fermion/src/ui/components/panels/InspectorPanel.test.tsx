@@ -195,7 +195,7 @@ test('Memory scan: a stopped scan says why', async () => {
   open('memory');
   fireEvent.click(screen.getByTestId('mem-mode-scan'));
   inspect.scan.mockResolvedValueOnce({ items: [], total: 0, truncated: true, stopped: 'time', rangesScanned: 3, rangesTotal: 400 });
-  fireEvent.change(screen.getByTestId('scan-pattern'), { target: { value: '00' } });
+  fireEvent.change(screen.getByTestId('scan-pattern'), { target: { value: '00 00' } });
   fireEvent.click(screen.getByTestId('scan-run'));
   await waitFor(() => expect(screen.getByTestId('scan-status')).toHaveTextContent(/0 matches in 3 of 400 ranges — stopped at the time limit/));
 });
@@ -249,4 +249,65 @@ test('a new session starts every view from scratch (no stale modules or hex view
   expect(screen.queryByTestId('hex-row')).toBeNull();
   expect(inspect.read).not.toHaveBeenCalled(); // the old address is not re-read in the new process
   expect((screen.getByTestId('mem-addr') as HTMLInputElement).value).toBe('');
+});
+
+test('Modules: selecting another module clears the previous module symbols while the new ones load', async () => {
+  setup();
+  fireEvent.click(await screen.findByTestId('mod-row-ntdll.dll'));
+  await waitFor(() => expect(screen.getAllByTestId('sym-row').length).toBe(2));
+  let finish: (v: unknown) => void = () => {};
+  inspect.exports.mockImplementationOnce(() => new Promise((r) => { finish = r; }));
+  fireEvent.click(screen.getByTestId('mod-row-node.exe'));
+  // node.exe header must not sit above ntdll.dll's (clickable) exports.
+  await waitFor(() => expect(screen.queryAllByTestId('sym-row').length).toBe(0));
+  await act(async () => { finish(list([{ type: 'function', name: 'node_main', address: '0x7ff62c711000' }])); });
+  await waitFor(() => expect(screen.getByTestId('mod-detail')).toHaveTextContent('node_main'));
+});
+
+test('Memory scan: a pattern with fewer than two concrete bytes, or one character of text, is refused locally', async () => {
+  setup();
+  open('memory');
+  fireEvent.click(screen.getByTestId('mem-mode-scan'));
+  fireEvent.change(screen.getByTestId('scan-pattern'), { target: { value: '00' } });
+  fireEvent.click(screen.getByTestId('scan-run'));
+  expect(screen.getByRole('alert')).toHaveTextContent(/at least two/);
+  fireEvent.change(screen.getByTestId('scan-as'), { target: { value: 'text' } });
+  fireEvent.change(screen.getByTestId('scan-pattern'), { target: { value: 'M' } });
+  fireEvent.click(screen.getByTestId('scan-run'));
+  expect(screen.getByRole('alert')).toHaveTextContent(/at least two/);
+  expect(inspect.scan).not.toHaveBeenCalled();
+});
+
+test('Memory: paging at the top of the address space stays row-aligned', async () => {
+  setup();
+  open('memory');
+  fireEvent.change(screen.getByTestId('mem-addr'), { target: { value: '0xffffffffffffff80' } });
+  fireEvent.click(screen.getByTestId('mem-go'));
+  await waitFor(() => expect(inspect.read).toHaveBeenLastCalledWith('0xffffffffffffff80', 256));
+  fireEvent.click(screen.getByTestId('mem-next'));
+  await waitFor(() => expect(inspect.read).toHaveBeenLastCalledWith('0xfffffffffffffff0', 256));
+});
+
+test('Memory: Go on the address already shown reads it again (memory changes)', async () => {
+  setup();
+  open('memory');
+  fireEvent.change(screen.getByTestId('mem-addr'), { target: { value: '0x2000' } });
+  fireEvent.click(screen.getByTestId('mem-go'));
+  await waitFor(() => expect(inspect.read).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByTestId('mem-go'));
+  await waitFor(() => expect(inspect.read).toHaveBeenCalledTimes(2));
+});
+
+test('re-attaching to the same pid does not replay the previous session address in Memory', async () => {
+  const store = setup();
+  fireEvent.click(await screen.findByTestId('mod-row-ntdll.dll'));
+  fireEvent.click((await screen.findAllByTestId('sym-addr'))[0]);
+  await waitFor(() => expect(inspect.read).toHaveBeenCalled());
+  act(() => { store.dispatch(sessionActions.detached()); });
+  inspect.read.mockClear();
+  act(() => { store.dispatch(sessionActions.syncState({ isAttached: true, currentPid: '4821' })); }); // same pid again
+  open('memory');
+  await waitFor(() => expect(inspect.ranges).toHaveBeenCalled());
+  await new Promise((r) => setTimeout(r, 20));
+  expect(inspect.read).not.toHaveBeenCalled();
 });

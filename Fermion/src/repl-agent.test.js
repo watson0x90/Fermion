@@ -87,3 +87,37 @@ test('huge results are truncated so they cannot flood the UI', async () => {
   assert.ok(r.text.length < 70000, 'text length ' + r.text.length);
   assert.match(r.text, /truncated/);
 });
+
+test('an object referenced twice is printed twice, not flagged as circular', async () => {
+  const ev = load();
+  const r = await ev('var o = { n: 1 }; ({ a: o, b: o })');
+  assert.equal(r.text, '{\n  "a": {\n    "n": 1\n  },\n  "b": {\n    "n": 1\n  }\n}');
+  assert.match((await ev('var c = { k: {} }; c.k.back = c; c')).text, /\[Circular\]/);
+});
+
+test('a class instance prints its properties instead of "[object Object]"', async () => {
+  const ev = load();
+  const r = await ev('new (class Hook { constructor() { this.target = "open"; this.hits = 3; } })()');
+  assert.equal(r.type, 'Hook');
+  assert.equal(r.text, '{\n  "target": "open",\n  "hits": 3\n}');
+  const nested = await ev('({ h: new (class Hook { constructor() { this.x = 1; } })() })');
+  assert.equal(nested.text, '{\n  "h": {\n    "x": 1\n  }\n}');
+});
+
+test('a property getter that throws does not fail the whole result', async () => {
+  const ev = load();
+  const r = await ev('({ fine: 1, get bad() { throw new Error("boom"); } })');
+  assert.equal(r.ok, true);
+  assert.match(r.text, /"fine": 1/);
+  assert.match(r.text, /"bad": "\[Thrown: boom\]"/);
+});
+
+test('very deep or very large structures are cut off rather than walked in full', async () => {
+  const ev = load();
+  const deep = await ev('var d = {}; var cur = d; for (var i = 0; i < 200; i++) { cur.next = {}; cur = cur.next; } d');
+  assert.equal(deep.ok, true);
+  assert.match(deep.text, /\[…\]/);
+  const wide = await ev('Array.from({ length: 200000 }, function (_, i) { return { i: i }; })');
+  assert.equal(wide.ok, true);
+  assert.ok(wide.text.length < 70000);
+});

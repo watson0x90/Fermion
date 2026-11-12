@@ -11,6 +11,7 @@
 	var MAX_READ = 4096;       // bytes per read
 	var MAX_MATCHES = 500;     // scan results
 	var SCAN_BUDGET_MS = 8000; // stop scanning after this long
+	var SCAN_CHUNK = 16 * 1024 * 1024; // bytes scanned per step, so the limits are checked often
 	var MAX_FRAMES = 64;
 
 	function hex(p) { return p === null || p === undefined ? null : p.toString(); }
@@ -125,8 +126,16 @@
 		read: function (address, size) {
 			var n = Math.max(1, Math.min(MAX_READ, size | 0));
 			var p = ptr(address);
-			// Read as much of the page run as is readable: shrink on a fault so the
-			// last bytes before an unmapped page are still shown.
+			// Only read inside a range Frida reports as readable, and never past
+			// its end. Frida leaves guard pages out of its ranges; touching one
+			// (e.g. below a thread's stack on Windows) would clear the guard and
+			// crash the target later, so such an address is refused untouched.
+			var range = Process.findRangeByAddress(p);
+			if (!range || range.protection.charAt(0) !== 'r') throw new Error('Memory at ' + hex(p) + ' is not readable');
+			var left = range.size - Number(p.sub(range.base).toString());
+			if (left < n) n = Math.max(1, left);
+			// If it faults anyway (the range changed under us), shrink so the
+			// readable part is still shown.
 			for (;;) {
 				try {
 					var buf = p.readByteArray(n);
@@ -138,25 +147,53 @@
 			}
 		},
 
+		// Scans asynchronously, one chunk at a time, so neither a huge range nor
+		// a pattern that matches everywhere can pin the target: matching stops
+		// inside a chunk the moment the match cap is reached, and the time
+		// budget is checked between chunks.
 		scan: function (pattern, protection) {
 			var started = Date.now();
 			var matches = [];
 			var ranges = Process.enumerateRanges(protection);
+			var overlap = Math.max(0, pattern.split(' ').length - 1); // so a match across a chunk edge is found
 			var scanned = 0;
 			var stopped = '';
-			for (var i = 0; i < ranges.length; i++) {
-				if (matches.length >= MAX_MATCHES) { stopped = 'limit'; break; }
-				if (Date.now() - started > SCAN_BUDGET_MS) { stopped = 'time'; break; }
-				var r = ranges[i];
-				var found;
-				try { found = Memory.scanSync(r.base, r.size, pattern); }
-				catch (e) { continue; } // range vanished or became unreadable
-				scanned++;
-				for (var j = 0; j < found.length && matches.length < MAX_MATCHES; j++) {
-					matches.push({ address: hex(found[j].address), size: found[j].size, where: where(found[j].address) });
-				}
+
+			function scanChunk(base, size) {
+				return new Promise(function (resolve) {
+					try {
+						Memory.scan(base, size, pattern, {
+							onMatch: function (address, len) {
+								matches.push({ address: hex(address), size: len, where: where(address) });
+								if (matches.length >= MAX_MATCHES) { stopped = 'limit'; return 'stop'; }
+							},
+							onError: function () { /* part of the chunk was unreadable */ },
+							onComplete: function () { resolve(true); },
+						});
+					} catch (e) {
+						resolve(false); // range vanished or became unreadable
+					}
+				});
 			}
-			return { items: matches, total: matches.length, truncated: stopped !== '', stopped: stopped, rangesScanned: scanned, rangesTotal: ranges.length };
+
+			function next(i, offset, ok) {
+				if (stopped) return finish();
+				if (i >= ranges.length) return finish();
+				if (Date.now() - started > SCAN_BUDGET_MS) { stopped = 'time'; return finish(); }
+				var r = ranges[i];
+				if (offset >= r.size) { if (ok) scanned++; return next(i + 1, 0, true); }
+				var len = Math.min(SCAN_CHUNK + overlap, r.size - offset);
+				return scanChunk(r.base.add(offset), len).then(function (fine) {
+					if (!fine) return next(i + 1, 0, true); // skip the rest of a faulting range
+					return next(i, offset + SCAN_CHUNK, ok);
+				});
+			}
+
+			function finish() {
+				return { items: matches, total: matches.length, truncated: stopped !== '', stopped: stopped, rangesScanned: scanned, rangesTotal: ranges.length };
+			}
+
+			return Promise.resolve().then(function () { return next(0, 0, true); });
 		},
 	};
 })();

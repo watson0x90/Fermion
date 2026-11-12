@@ -55,8 +55,11 @@ export function textToPattern(text: string): string {
 // spaced lower-case form Frida scans with; null when it is not a usable pattern.
 export function normalizePattern(input: string): string | null {
   const compact = (input ?? '').toLowerCase().replace(/0x/g, '').replace(/[\s,]+/g, '');
-  if (!compact || compact.length % 2 !== 0 || !/^[0-9a-f?]+$/.test(compact) || !/[0-9a-f]/.test(compact)) return null;
-  return (compact.match(/.{2}/g) as string[]).join(' ');
+  if (!compact || compact.length % 2 !== 0 || !/^[0-9a-f?]+$/.test(compact)) return null;
+  const bytes = compact.match(/.{2}/g) as string[];
+  // Fewer than two fully specified bytes matches a large part of any process.
+  if (bytes.filter((b) => !b.includes('?')).length < 2) return null;
+  return bytes.join(' ');
 }
 
 // Electron wraps a main-process rejection as

@@ -47,6 +47,11 @@ test('normalizePattern: accepts spaced, unspaced, comma or 0x-prefixed hex with 
   expect(normalizePattern('4d 5a ?? 00')).toBe('4d 5a ?? 00');
   expect(normalizePattern('4D5A??00')).toBe('4d 5a ?? 00');
   expect(normalizePattern(' 0x4d, 0x5a ')).toBe('4d 5a');
+  // Fewer than two concrete bytes would match a large part of the process.
+  expect(normalizePattern('00')).toBeNull();
+  expect(normalizePattern('4d ??')).toBeNull();
+  expect(normalizePattern('4? 5?')).toBeNull();
+  expect(normalizePattern('4d ?? 5a')).toBe('4d ?? 5a');
   expect(normalizePattern('4d 5')).toBeNull();     // half a byte
   expect(normalizePattern('xyz')).toBeNull();
   expect(normalizePattern('')).toBeNull();

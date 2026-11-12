@@ -24,9 +24,11 @@ const AGENT_PATHS = {
 	inspector: path.join(__dirname, 'tools', 'inspector-agent.js'),
 };
 const MAX_EVAL_CHARS = 200000;
+const EVAL_TIMEOUT_MS = 20000;
 
 // ---- Inspector argument validation (the renderer is untrusted) ----
 const MAX_READ_BYTES = 4096;
+const TIMED_OUT = Symbol('timed out');
 function checkModuleName(name) {
 	if (typeof name !== 'string') throw new Error('module name must be a string');
 	if (!name) throw new Error('module name is empty');
@@ -57,7 +59,9 @@ function checkPattern(pattern) {
 	if (!p) throw new Error('scan pattern is empty');
 	if (p.length > 3 * 1024) throw new Error('scan pattern is too long');
 	if (!/^[0-9a-f?]{2}( [0-9a-f?]{2})*$/.test(p)) throw new Error('invalid scan pattern (expected hex bytes like "4d 5a ?? 00")');
-	if (!/[0-9a-f]/.test(p)) throw new Error('invalid scan pattern (needs at least one concrete byte)');
+	// A pattern with fewer than two fully specified bytes matches a large part
+	// of any process and would flood the target with matches.
+	if (p.split(' ').filter((b) => /^[0-9a-f]{2}$/.test(b)).length < 2) throw new Error('invalid scan pattern (needs at least two concrete bytes)');
 	return p;
 }
 
@@ -105,6 +109,7 @@ class FridaService extends EventEmitter {
 		// Helper agents loaded into the current session (name -> Promise<Script>).
 		this._agentSession = null;
 		this._agents = new Map();
+		this._evalTimeoutMs = EVAL_TIMEOUT_MS;
 		// Unload the active script on process termination (the old inject/start
 		// registered these per call; once is equivalent and avoids leaking a
 		// listener per attach).
@@ -193,12 +198,30 @@ class FridaService extends EventEmitter {
 	async attach(pidOrName) {
 		const frida = this._getFrida();
 		const device = await frida.getDevice(this._deviceId);
-		this._session = await device.attach(pidOrName);
-		this._sessionPID = this._session.pid.toString();
-		this._session.detached.connect((reason) => {
-			this._session = null;
+		this._adoptSession(await device.attach(pidOrName));
+	}
+
+	// Make `session` the current one. Its `detached` signal only counts while it
+	// is still current: a signal from a session we already left must not tear
+	// down the one attached since.
+	_adoptSession(session) {
+		this._clearSession();
+		this._session = session;
+		this._sessionPID = session.pid.toString();
+		session.detached.connect((reason) => {
+			if (this._session !== session) return;
+			this._clearSession();
 			this.emit('detached', reason);
 		});
+	}
+
+	// Forget everything that belonged to the session (it is gone, or going).
+	_clearSession() {
+		this._session = null;
+		this._script = null;
+		this._sessionPID = null;
+		this._agentSession = null;
+		this._agents = new Map();
 	}
 
 	// Spawn (arg-splitting identical to the old start()) + attach. Returns the
@@ -214,12 +237,7 @@ class FridaService extends EventEmitter {
 			aBuildArgs.unshift(path);
 			procID = await device.spawn(aBuildArgs);
 		}
-		this._session = await device.attach(procID);
-		this._sessionPID = this._session.pid.toString();
-		this._session.detached.connect((reason) => {
-			this._session = null;
-			this.emit('detached', reason);
-		});
+		this._adoptSession(await device.attach(procID));
 		this._spawnDevice = device;
 		return { pid: procID };
 	}
@@ -253,13 +271,31 @@ class FridaService extends EventEmitter {
 		if (code.length > MAX_EVAL_CHARS) throw new Error('evaluate: code is too long');
 		if (!this._session) throw new Error('Not attached to a process');
 		const script = await this._getAgent('repl');
+		let timer;
+		const timeout = new Promise((resolve) => { timer = setTimeout(() => resolve(TIMED_OUT), this._evalTimeoutMs); });
 		try {
-			const result = toPlain(await script.exports.evaluate(code));
+			const raw = await Promise.race([script.exports.evaluate(code), timeout]);
+			if (raw === TIMED_OUT) {
+				// The entry is still running (or waiting on a promise that never
+				// settles). Drop this agent so the prompt works again; the next
+				// entry starts a fresh one. Unloading is best-effort and not
+				// awaited: a spinning script may never answer.
+				if (this._agents.get('repl')) this._agents.delete('repl');
+				Promise.resolve().then(() => script.unload()).catch(() => {});
+				return {
+					ok: false,
+					error: 'Timed out after ' + Math.round(this._evalTimeoutMs / 1000) + ' s. The REPL was restarted, so its variables are gone. If the entry is a busy loop it may still be running in the target; detach to stop it.',
+					stack: '',
+				};
+			}
+			const result = toPlain(raw);
 			if (result && typeof result.ok === 'boolean') return result;
 			return { ok: false, error: 'The REPL agent returned no result', stack: '' };
 		} catch (e) {
 			// e.g. the target exited mid-call and the script was destroyed.
 			return { ok: false, error: e && e.message ? e.message : String(e), stack: '' };
+		} finally {
+			clearTimeout(timer);
 		}
 	}
 
@@ -304,11 +340,17 @@ class FridaService extends EventEmitter {
 	async inspectRead(address, size) { return this._inspect('read', checkAddress(address), checkReadSize(size)); }
 	async inspectScan(pattern, protection) { return this._inspect('scan', checkPattern(pattern), checkProtection(protection)); }
 
+	// Unload the user's script (the helper agents stay). A no-op when none is loaded.
+	async unload() {
+		const script = this._script;
+		this._script = null;
+		if (script) await script.unload();
+	}
+
 	async detach() {
-		if (this._session) {
-			this._session.detach();
-			this._session = null;
-		}
+		const session = this._session;
+		this._clearSession();
+		if (session) session.detach();
 	}
 
 	// Frida delivers console.log/warn/error to logHandler (it does NOT emit

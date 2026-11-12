@@ -56,13 +56,19 @@ export function MemoryTab({ active, goto }: { active: boolean; goto: Goto | null
   const go = () => {
     const parsed = parseAddress(addrInput);
     if (!parsed) { setAddrError('Enter a hex address, e.g. 0x7ff000'); return; }
+    if (pageBase(parsed) === address) view.reload(); // same place: read it again
     show(parsed, 1);
   };
-  const page = (delta: number) => { if (address) { const next = addAddress(address, delta); setAddress(next); setAddrInput(next); } };
+  const page = (delta: number) => { if (address) { const next = pageBase(addAddress(address, delta)); setAddress(next); setAddrInput(next); } };
 
   const runScan = async () => {
-    const pat = scanAs === 'text' ? (pattern ? textToPattern(pattern) : null) : normalizePattern(pattern);
-    if (!pat) { setScanError(scanAs === 'text' ? 'Enter the text to find.' : 'Enter hex bytes, e.g. 4d 5a ?? 00 (?? matches any byte).'); return; }
+    const pat = normalizePattern(scanAs === 'text' ? textToPattern(pattern) : pattern);
+    if (!pat) {
+      setScanError(scanAs === 'text'
+        ? 'Enter at least two characters of text to find.'
+        : 'Enter hex bytes with at least two concrete bytes, e.g. 4d 5a ?? 00 (?? matches any byte).');
+      return;
+    }
     setScanError('');
     setScanning(true);
     try {
