@@ -17,6 +17,7 @@ export interface UiState {
   filePath: string | null; // the script file in the editor (null = never saved)
   dirty: boolean;          // the editor has changes that are not saved
   addressRequest: AddressRequest | null; // an address to open in the Inspector
+  bookmarksRequest: number;              // bumped to show the Inspector's Bookmarks view
 }
 
 const initialState: UiState = {
@@ -28,6 +29,7 @@ const initialState: UiState = {
   filePath: null,
   dirty: false,
   addressRequest: null,
+  bookmarksRequest: 0,
 };
 
 const uiSlice = createSlice({
@@ -50,6 +52,10 @@ const uiSlice = createSlice({
     openAddress(state, action: PayloadAction<{ view: AddressView; address: string }>) {
       state.activeTab = 'inspector';
       state.addressRequest = { ...action.payload, n: (state.addressRequest?.n ?? 0) + 1 };
+    },
+    showBookmarks(state) {
+      state.activeTab = 'inspector';
+      state.bookmarksRequest += 1;
     },
     setOutputDetached(state, action: PayloadAction<boolean>) {
       state.outputDetached = action.payload;

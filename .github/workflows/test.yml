@@ -100,6 +100,9 @@ jobs:
       - name: Child processes are caught before they run
         run: xvfb-run -a node scripts/ui-test-children.js
 
+      - name: Hooks and bookmarks survive a restart
+        run: xvfb-run -a node scripts/ui-test-workspace.js
+
       - name: Hooks tab finds, hooks and lists calls
         run: xvfb-run -a node scripts/ui-test-hooks.js
 

@@ -203,3 +203,5 @@
 * When a session ends the sidebar says why and offers Spawn again / Attach again
 * REPL: object and array results are an expandable tree; pointers in a result open the address menu
 * Catch child processes: a process started by the attached process is held before it runs; switch the session to it (script and hooks in place first, optionally kept suspended) or let it run
+* Hooks are saved and restored when Fermion is opened again
+* Bookmarks: save any address from the address menu, with a name and a note; kept by module and offset, saved automatically, listed under Inspector > Bookmarks

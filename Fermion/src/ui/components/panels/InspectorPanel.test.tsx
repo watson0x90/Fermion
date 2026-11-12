@@ -5,6 +5,7 @@ import { vi } from 'vitest';
 import session, { sessionActions } from '../../store/sessionSlice';
 import output from '../../store/outputSlice';
 import ui, { uiActions } from '../../store/uiSlice';
+import bookmarks, { bookmarksActions } from '../../store/bookmarksSlice';
 import { InspectorPanel } from './InspectorPanel';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -36,7 +37,7 @@ function setup({ attached = true, active = true } = {}) {
   };
   exportFile = vi.fn(async () => 'C:/calls.csv');
   (window as any).fermion = { inspect, exportFile };
-  const store = configureStore({ reducer: { session, output, ui } });
+  const store = configureStore({ reducer: { session, output, ui, bookmarks } });
   if (attached) store.dispatch(sessionActions.syncState({ isAttached: true, currentPid: '4821' }));
   if (active) store.dispatch(uiActions.setActiveTab('inspector'));
   render(<Provider store={store}><InspectorPanel /></Provider>);
@@ -679,4 +680,71 @@ test('an address request from elsewhere opens the Inspector on the view it names
   act(() => { store.dispatch(uiActions.openAddress({ view: 'memory', address: '0x7fff960d0000' })); });
   await waitFor(() => expect(screen.getByTestId('insp-memory')).toHaveAttribute('aria-selected', 'true'));
   await waitFor(() => expect(inspect.read).toHaveBeenCalledWith('0x7fff960d0000', 256));
+});
+
+// ---- Bookmarks ----
+const BM = { id: 'b1', label: 'ntdll start', module: 'ntdll.dll', offset: 0x100, address: '0x1100', view: 'memory' as const, note: '' };
+
+test('Bookmarks: an empty list explains how to add one', () => {
+  setup();
+  open('bookmarks');
+  expect(screen.getByTestId('bm-list')).toHaveTextContent('No bookmarks yet.');
+  expect(screen.getByTestId('bm-count')).toHaveTextContent('0 bookmarks');
+});
+
+test('Bookmarks: a bookmark in a module points at where that module is now, and opens there', async () => {
+  const store = setup();
+  act(() => { store.dispatch(bookmarksActions.added(BM)); });
+  open('bookmarks');
+  const row = await screen.findByTestId('bm-row');
+  // ntdll.dll is at 0x7fff960d0000 in this session: + 0x100.
+  await waitFor(() => expect(within(row).getByTestId('bm-where')).toHaveTextContent('ntdll.dll+0x100 · 0x7fff960d0100'));
+  fireEvent.click(within(row).getByTestId('bm-open-code'));
+  expect(store.getState().ui.addressRequest).toMatchObject({ view: 'code', address: '0x7fff960d0100' });
+  await waitFor(() => expect(screen.getByTestId('insp-code')).toHaveAttribute('aria-selected', 'true'));
+});
+
+test('Bookmarks: a module that is not loaded in this process is said to be so, and cannot be opened', async () => {
+  const store = setup();
+  act(() => { store.dispatch(bookmarksActions.added({ ...BM, module: 'gone.dll' })); });
+  open('bookmarks');
+  const row = await screen.findByTestId('bm-row');
+  await waitFor(() => expect(within(row).getByTestId('bm-where')).toHaveTextContent('gone.dll+0x100 · not loaded in this process'));
+  expect(within(row).getByTestId('bm-open-memory')).toBeDisabled();
+});
+
+test('Bookmarks: an address outside any module opens as it is', async () => {
+  const store = setup();
+  act(() => { store.dispatch(bookmarksActions.added({ ...BM, module: '', offset: null, address: '0x9000' })); });
+  open('bookmarks');
+  fireEvent.click(within(await screen.findByTestId('bm-row')).getByTestId('bm-open-memory'));
+  expect(store.getState().ui.addressRequest).toMatchObject({ view: 'memory', address: '0x9000' });
+});
+
+test('Bookmarks: the name and note can be edited in place; Remove deletes', async () => {
+  const store = setup();
+  act(() => { store.dispatch(bookmarksActions.added(BM)); });
+  open('bookmarks');
+  const row = await screen.findByTestId('bm-row');
+  fireEvent.change(within(row).getByTestId('bm-label'), { target: { value: 'syscall stubs' } });
+  fireEvent.change(within(row).getByTestId('bm-note'), { target: { value: 'check NtCreateFile' } });
+  expect(store.getState().bookmarks.items[0]).toMatchObject({ label: 'syscall stubs', note: 'check NtCreateFile' });
+  fireEvent.click(within(row).getByTestId('bm-remove'));
+  expect(screen.queryByTestId('bm-row')).toBeNull();
+});
+
+test('Bookmarks are listed without a session too, but cannot be opened', () => {
+  const store = setup({ attached: false });
+  act(() => { store.dispatch(bookmarksActions.added(BM)); });
+  open('bookmarks');
+  const row = screen.getByTestId('bm-row');
+  expect(within(row).getByTestId('bm-label')).toHaveValue('ntdll start');
+  expect(within(row).getByTestId('bm-open-memory')).toBeDisabled();
+  expect(within(row).getByTestId('bm-where')).toHaveTextContent(/^ntdll\.dll\+0x100$/);
+});
+
+test('a request to show the bookmarks opens that view', async () => {
+  const store = setup();
+  act(() => { store.dispatch(uiActions.showBookmarks()); });
+  await waitFor(() => expect(screen.getByTestId('insp-bookmarks')).toHaveAttribute('aria-selected', 'true'));
 });

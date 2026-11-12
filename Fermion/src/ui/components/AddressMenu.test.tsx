@@ -6,6 +6,7 @@ import session, { sessionActions } from '../store/sessionSlice';
 import output from '../store/outputSlice';
 import ui from '../store/uiSlice';
 import hooksReducer from '../store/hooksSlice';
+import bookmarksReducer from '../store/bookmarksSlice';
 import { addrMenu, openAddressMenu, closeAddressMenu } from '../addressMenu';
 import { setTerminalSink } from '../bridge';
 import { AddressMenu } from './AddressMenu';
@@ -21,7 +22,7 @@ function setup({ attached = true } = {}) {
   (window as any).fermion = { hooks };
   clip = [];
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: (t: string) => { clip.push(t); return Promise.resolve(); } } });
-  const store = configureStore({ reducer: { session, output, ui, hooks: hooksReducer } });
+  const store = configureStore({ reducer: { session, output, ui, hooks: hooksReducer, bookmarks: bookmarksReducer } });
   if (attached) store.dispatch(sessionActions.syncState({ isAttached: true, currentPid: '4821' }));
   render(
     <Provider store={store}>
@@ -43,7 +44,7 @@ test('right-clicking an address opens the menu for it; anything else is left alo
   const menu = screen.getByTestId('addr-menu');
   expect(menu).toHaveAttribute('role', 'menu');
   expect(menu).toHaveTextContent('0x7ff010');
-  expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Copy address', 'Open in Memory', 'Open in Disassembly', 'Hook this address']);
+  expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Copy address', 'Open in Memory', 'Open in Disassembly', 'Hook this address', 'Bookmark']);
 });
 
 test('Copy address puts it on the clipboard and closes the menu', () => {
@@ -97,7 +98,7 @@ test('without a session only Copy is available', () => {
   setup({ attached: false });
   openMenu();
   expect(screen.getByTestId('addr-menu-copy')).not.toBeDisabled();
-  for (const id of ['addr-menu-memory', 'addr-menu-code', 'addr-menu-hook']) expect(screen.getByTestId(id)).toBeDisabled();
+  for (const id of ['addr-menu-memory', 'addr-menu-code', 'addr-menu-hook', 'addr-menu-bookmark']) expect(screen.getByTestId(id)).toBeDisabled();
 });
 
 test('the menu closes on Escape, on a click elsewhere, and when asked to', () => {
@@ -122,7 +123,7 @@ test('the keyboard is put in the menu, and the arrow keys move through it', () =
   expect(document.activeElement).toBe(screen.getByTestId('addr-menu-memory'));
   fireEvent.keyDown(screen.getByTestId('addr-menu'), { key: 'ArrowUp' });
   fireEvent.keyDown(screen.getByTestId('addr-menu'), { key: 'ArrowUp' });
-  expect(document.activeElement).toBe(screen.getByTestId('addr-menu-hook'));
+  expect(document.activeElement).toBe(screen.getByTestId('addr-menu-bookmark'));
 });
 
 test('openAddressMenu refuses text that is not an address', () => {
@@ -131,4 +132,22 @@ test('openAddressMenu refuses text that is not an address', () => {
   act(() => { opened = openAddressMenu('<b>x</b>', 1, 1); });
   expect(opened).toBe(false);
   expect(screen.queryByTestId('addr-menu')).toBeNull();
+});
+
+test('Bookmark saves the place by module and offset, named after it, and shows the Bookmarks view', async () => {
+  const store = setup();
+  const lines: string[] = [];
+  setTerminalSink({ write: (k: string, t: string) => lines.push(k + ' ' + t) });
+  openMenu();
+  fireEvent.click(screen.getByTestId('addr-menu-bookmark'));
+  await waitFor(() => expect(store.getState().bookmarks.items.length).toBe(1));
+  expect(store.getState().bookmarks.items[0]).toMatchObject({ label: 'kernel32.dll!CreateFileW', module: 'kernel32.dll', offset: 16, address: '0x7ff010', view: 'memory', note: '' });
+  expect(store.getState().ui.activeTab).toBe('inspector');
+  expect(store.getState().ui.bookmarksRequest).toBe(1);
+  expect(lines).toContain('STATUS [+] Bookmarked kernel32.dll!CreateFileW');
+  // The same place again is not added twice.
+  openMenu();
+  fireEvent.click(screen.getByTestId('addr-menu-bookmark'));
+  await waitFor(() => expect(lines).toContain('STATUS [+] kernel32.dll!CreateFileW is already bookmarked'));
+  expect(store.getState().bookmarks.items.length).toBe(1);
 });

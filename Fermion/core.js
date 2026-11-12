@@ -9,6 +9,7 @@ const { isAllowedPage, isSafeExternalUrl } = require('./src/ipc-guards.js');
 const { createOutputWindowManager } = require('./src/output-window.js');
 const { createFileHandlers } = require('./src/file-ipc.js');
 const { RecentFiles } = require('./src/recent-files.js');
+const { createWorkspaceStore } = require('./src/workspace-store.js');
 var bWin;
 
 // All frida-node interaction runs here in the main process. The renderer drives
@@ -64,6 +65,11 @@ ipcMain.handle('fermion:saveCurrent', (_e, content) => fileHandlers.saveCurrent(
 // Recent scripts: the list lives here, and only a path on it can be re-opened.
 ipcMain.handle('fermion:recentFiles', () => fileHandlers.recentFiles());
 ipcMain.handle('fermion:openRecent', (_e, filePath) => fileHandlers.openRecent(filePath));
+// Saved hooks and bookmarks: one JSON file in userData. Main owns it, and
+// rebuilds whatever the renderer sends from known, bounded fields.
+const workspaceStore = createWorkspaceStore(path.join(app.getPath('userData'), 'workspace.json'));
+ipcMain.handle('fermion:workspaceLoad', () => workspaceStore.load());
+ipcMain.handle('fermion:workspaceSave', (_e, data) => workspaceStore.save(data));
 ipcMain.handle('fermion:messageBox', async (_e, options) => dialog.showMessageBox(options));
 
 // A remote origin must never inherit the bridge-privileged webPreferences, so
