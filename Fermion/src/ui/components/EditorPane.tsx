@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useMonaco } from '../hooks/useMonaco';
 import { writeTerminal } from '../bridge';
+import { useAppDispatch, useAppSelector } from '../store';
+import { reloadFromEditor } from '../sessionOps';
 import { Icon } from './Icon';
 
 function makeBanner(fermion: string, frida: string): string {
@@ -31,6 +33,13 @@ function toggleWrap() {
 
 export function EditorPane() {
   const [value, setValue] = useState<string | null>(null);
+  const dispatch = useAppDispatch();
+  const isAttached = useAppSelector((s) => s.session.isAttached);
+  const [reloading, setReloading] = useState(false);
+  const reload = async () => {
+    setReloading(true);
+    try { await reloadFromEditor(dispatch); } finally { setReloading(false); }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -50,6 +59,15 @@ export function EditorPane() {
     <div className="editorpane">
       <div className="ptool">
         <span className="grow">script.js — JavaScript</span>
+        <button
+          className="pill"
+          data-testid="editor-reload"
+          disabled={!isAttached || reloading}
+          title={isAttached ? 'Reload this script into the attached process (Ctrl-T)' : 'Attach to a process to reload the script into it'}
+          onClick={reload}
+        >
+          <Icon name="reload" size={12} />{reloading ? 'Reloading…' : 'Reload'}
+        </button>
         <button className="pill" onClick={toggleWrap}><Icon name="wrap" size={12} />Wrap</button>
       </div>
       <MonacoHost value={value} />

@@ -116,6 +116,132 @@
 		};
 	}
 
+	// ---- tab completion and `help` ----
+	// The REPL panel reaches these through evaluate(), as `__fermion.complete(…)`
+	// etc. They only look names up: a dotted chain of identifiers is resolved by
+	// property access (no calls, no indexing), so completing or asking for help
+	// never runs the user's functions.
+	var GLOBAL = (0, eval)('this');
+	var IDENT = /^[A-Za-z_$][\w$]*$/;
+	var IDENT_CHAIN = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/;
+	var MAX_ITEMS = 200;
+	var MAX_MEMBERS = 500;
+	var OBJECT_NOISE = Object.getOwnPropertyNames(Object.prototype);
+	var FUNCTION_NOISE = Object.getOwnPropertyNames(Function.prototype).concat(['prototype', 'length', 'name', 'arguments', 'caller']);
+
+	function resolve(chain) {
+		if (typeof chain !== 'string' || !IDENT_CHAIN.test(chain)) return { ok: false };
+		var parts = chain.split('.');
+		var cur;
+		try {
+			cur = (0, eval)(parts[0]); // a bare identifier: reads a global, runs nothing
+			for (var i = 1; i < parts.length; i++) {
+				if (cur === null || cur === undefined) return { ok: false };
+				cur = cur[parts[i]];
+			}
+		} catch (e) {
+			return { ok: false };
+		}
+		return { ok: true, value: cur };
+	}
+
+	// Own and inherited property names that are valid identifiers, de-duplicated.
+	function memberNames(value) {
+		var out = [];
+		var seen = {};
+		var o = Object(value);
+		for (var depth = 0; o && depth < 32; depth++) {
+			var names;
+			try { names = Object.getOwnPropertyNames(o); } catch (e) { break; }
+			for (var i = 0; i < names.length; i++) {
+				var n = names[i];
+				if (!IDENT.test(n) || seen['$' + n]) continue;
+				seen['$' + n] = true;
+				out.push(n);
+			}
+			o = Object.getPrototypeOf(o);
+		}
+		return out.sort();
+	}
+
+	function read(obj, name) {
+		try { return { ok: true, value: obj[name] }; } catch (e) { return { ok: false }; }
+	}
+
+	function without(names, noise) {
+		return names.filter(function (n) { return noise.indexOf(n) === -1; });
+	}
+
+	function complete(text) {
+		var none = { from: String(text).length, items: [], truncated: false };
+		text = String(text);
+		var tail = /[\w$.]*$/.exec(text)[0];
+		if (!tail || tail.charAt(0) === '.' || /^[0-9]/.test(tail)) return none;
+		var dot = tail.lastIndexOf('.');
+		var base = dot < 0 ? '' : tail.slice(0, dot);
+		var partial = tail.slice(dot + 1);
+		var holder;
+		var names;
+		if (base === '') {
+			if (!partial) return none;
+			holder = GLOBAL;
+			names = without(memberNames(GLOBAL), ['__fermion']);
+		} else {
+			var r = resolve(base);
+			if (!r.ok || r.value === null || r.value === undefined) return none;
+			holder = r.value;
+			names = memberNames(holder);
+			// Object.prototype members (toString, hasOwnProperty, …) only when typed for.
+			if (!partial) names = without(names, OBJECT_NOISE);
+		}
+		var matching = names.filter(function (n) { return n.indexOf(partial) === 0; });
+		var items = matching.slice(0, MAX_ITEMS).map(function (n) {
+			var v = read(holder, n);
+			return { name: n, kind: v.ok && typeof v.value === 'function' ? 'function' : 'property' };
+		});
+		return { from: text.length - partial.length, items: items, truncated: matching.length > MAX_ITEMS };
+	}
+
+	function memberList(holder, noise) {
+		return without(memberNames(holder), noise).slice(0, MAX_MEMBERS).map(function (n) {
+			var v = read(holder, n);
+			if (v.ok && typeof v.value === 'function') return { name: n, kind: 'function', arity: v.value.length };
+			return { name: n, kind: 'property', type: v.ok ? typeName(v.value) : 'unknown' };
+		});
+	}
+
+	// What a dotted name refers to, for `help <name>`.
+	function inspect(name) {
+		var r = resolve(name);
+		if (!r.ok || r.value === undefined) return { found: false, name: String(name) };
+		var v = r.value;
+		var t = typeof v;
+		var out = { found: true, name: name, type: t === 'function' ? 'function' : typeName(v) };
+		if (t === 'function') {
+			out.arity = v.length;
+			out.members = memberList(v, OBJECT_NOISE.concat(FUNCTION_NOISE));
+			// A class: also what its instances offer.
+			if (v.prototype && typeof v.prototype === 'object') out.instanceMembers = memberList(v.prototype, OBJECT_NOISE);
+		} else if (v !== null && t === 'object') {
+			out.members = memberList(v, OBJECT_NOISE);
+		} else {
+			var text = describe(v);
+			out.value = text.length > 200 ? text.slice(0, 200) + '…' : text;
+		}
+		return out;
+	}
+
+	function globals() {
+		return without(memberNames(GLOBAL), ['__fermion']);
+	}
+
+	Object.defineProperty(GLOBAL, '__fermion', {
+		value: { complete: complete, inspect: inspect, globals: globals },
+		enumerable: false,
+		configurable: true,
+		writable: false,
+	});
+
 	rpc.exports = {
 		evaluate: function (code) {
 			var value;

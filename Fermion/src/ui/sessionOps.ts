@@ -25,3 +25,21 @@ export async function attachAndLoad(dispatch: (a: any) => unknown, pid: number):
     return false;
   }
 }
+
+// Reload the editor's script into the attached process (Ctrl-T, the sidebar's
+// Reload, and the Editor toolbar's Reload all come here). Returns true when
+// the new script is loaded; a failure is reported in Output.
+export async function reloadFromEditor(dispatch: (a: any) => unknown): Promise<boolean> {
+  const f = api();
+  if (!f) return false;
+  try {
+    await f.reloadScript(scriptSrc());
+    dispatch(sessionActions.scriptLoaded());
+    writeTerminal('STATUS', '[+] Script reloaded..');
+    return true;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    writeTerminal('ERR', '[!] Error reloading script: ' + msg);
+    return false;
+  }
+}

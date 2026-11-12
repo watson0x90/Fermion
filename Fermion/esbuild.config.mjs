@@ -2,6 +2,13 @@
 // by pages/index.html. The renderer is context-isolated (no node); Monaco loads
 // via the global AMD loader (<script> in index.html), not bundled.
 import * as esbuild from 'esbuild';
+import { createRequire } from 'node:module';
+
+// The REPL's `help` index (src/frida-help.json) is generated from the Frida
+// type definitions on every build, next to the bundle.
+const { generate: generateFridaHelp } = createRequire(import.meta.url)('./scripts/gen-frida-help.js');
+const help = generateFridaHelp();
+console.log(`frida-help: ${help.entries} entries -> src/frida-help.json`);
 
 const config = {
   entryPoints: ['src/ui/main.tsx'],

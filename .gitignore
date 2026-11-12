@@ -29,3 +29,5 @@ Fermion/src/renderer.bundle.js
 Fermion/src/renderer.bundle.js.map
 Fermion/src/renderer.bundle.css
 Fermion/src/renderer.bundle.css.map
+# REPL help index (generated from @types/frida-gum by npm run build)
+Fermion/src/frida-help.json
