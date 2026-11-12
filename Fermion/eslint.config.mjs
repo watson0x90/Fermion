@@ -24,11 +24,14 @@ const projectGlobals = {
   ...monacoThemes,
 };
 
+// "Best effort" cleanup is common in this codebase (`try { ... } catch (_) {}`):
+// an empty catch and an unused caught error are deliberate, not warnings.
+const unusedVars = ['warn', { caughtErrors: 'none' }];
 const advisory = {
-  'no-unused-vars': 'warn',
+  'no-unused-vars': unusedVars,
   'no-undef': 'warn',
   'no-redeclare': 'warn',
-  'no-empty': 'warn',
+  'no-empty': ['warn', { allowEmptyCatch: true }],
   'no-cond-assign': 'warn',
   'no-prototype-builtins': 'warn',
   'no-useless-escape': 'warn',
@@ -94,7 +97,7 @@ export default tseslint.config(
       'no-undef': 'off',
       'no-redeclare': 'off',
       'no-unused-vars': 'off',
-      '@typescript-eslint/no-unused-vars': 'warn',
+      '@typescript-eslint/no-unused-vars': unusedVars,
     },
   },
 );

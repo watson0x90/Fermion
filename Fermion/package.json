@@ -12,7 +12,9 @@
     "typecheck": "tsc -p tsconfig.json",
     "test:unit": "vitest run"
   },
-  "repository": "github:FuzzySecurity/Fermion",
+  "repository": "github:watson0x90/Fermion",
+  "homepage": "https://github.com/watson0x90/Fermion#readme",
+  "bugs": "https://github.com/watson0x90/Fermion/issues",
   "author": "Ruben Boonen (@FuzzySec)",
   "license": "BSD-3-Clause",
   "dependencies": {

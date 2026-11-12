@@ -92,3 +92,17 @@ test('loadSavedTheme falls back to Kuroir when nothing valid is stored', () => {
   localStorage.removeItem('fermion.theme');
   expect(loadSavedTheme()).toBe('Kuroir');
 });
+
+test('applyTheme shares the derived tokens with the dialog windows through localStorage', () => {
+  (window as any).monaco = undefined;
+  (window as any).__fermion = undefined;
+  (window as any).fermion = undefined;
+  applyTheme('Monokai');
+  const stored = JSON.parse(localStorage.getItem('fermion.themeTokens') || 'null');
+  expect(stored).toBeTruthy();
+  expect(stored['--bg']).toBe(document.documentElement.style.getPropertyValue('--bg'));
+  expect(stored['--logo-filter']).toContain('invert(1)');
+  expect(stored['color-scheme']).toBe('dark');
+  applyTheme('Kuroir');
+  expect(JSON.parse(localStorage.getItem('fermion.themeTokens')!)['color-scheme']).toBe('light');
+});

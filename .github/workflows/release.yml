@@ -37,9 +37,9 @@ jobs:
             icon: ./src/images/fermion-ico.icns
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
 
@@ -105,7 +105,10 @@ jobs:
           REF="${GITHUB_REF_NAME//\//-}"   # branch names can contain '/'
           ZIP="fermion-${{ matrix.os }}-${REF}.zip"
           if command -v zip >/dev/null 2>&1; then
-            ( cd "$APPDIR" && zip -qr "../$ZIP" . )
+            # -y stores symlinks as symlinks. A macOS .app is full of them
+            # (framework Versions/Current etc.); following them copied the
+            # Electron framework several times over and broke the bundle layout.
+            ( cd "$APPDIR" && zip -qry "../$ZIP" . )
           else
             python3 -c "import shutil; shutil.make_archive('${ZIP%.zip}', 'zip', '$APPDIR')"
           fi
