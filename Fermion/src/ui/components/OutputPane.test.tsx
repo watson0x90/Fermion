@@ -143,3 +143,30 @@ test('toolbar: regex toggle switches search between regex and plain text; Shift+
   fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
   expect((fakeCtrl as any).searchPrev).toHaveBeenLastCalledWith('open(', { regex: false });
 });
+
+test('the terminal refits when its pane changes size, not only when the window does', async () => {
+  fakeOutput();
+  let fire: () => void = () => {};
+  const observed: Element[] = [];
+  const disconnect = vi.fn();
+  (globalThis as any).ResizeObserver = class {
+    constructor(cb: () => void) { fire = cb; }
+    observe(el: Element) { observed.push(el); }
+    disconnect() { disconnect(); }
+  };
+  try {
+    const { unmount } = render(<Provider store={makeStore()}><OutputPane /></Provider>);
+    expect(observed.length).toBe(1);
+    expect((observed[0] as HTMLElement).className).toBe('obody');
+    await new Promise((r) => requestAnimationFrame(() => r(null))); // let mount-time fits settle
+    fakeCtrl.fit.mockClear();
+    // e.g. the toolbar wrapped onto another row, or the rail was expanded
+    fire(); fire();
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(fakeCtrl.fit).toHaveBeenCalledTimes(1); // coalesced to one per frame
+    unmount();
+    expect(disconnect).toHaveBeenCalled();
+  } finally {
+    delete (globalThis as any).ResizeObserver;
+  }
+});
