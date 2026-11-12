@@ -17,3 +17,10 @@ test('Icon size prop sets width/height', () => {
   expect(svg).toHaveAttribute('width', '18');
   expect(svg).toHaveAttribute('height', '18');
 });
+
+test('the floppy (save) icon is drawn and is not the follow arrow', () => {
+  const a = render(<Icon name="floppy" />).container.querySelector('svg')!;
+  const b = render(<Icon name="follow" />).container.querySelector('svg')!;
+  expect(a.querySelector('path, rect')).toBeTruthy();
+  expect(a.innerHTML).not.toBe(b.innerHTML);
+});

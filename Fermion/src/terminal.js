@@ -73,6 +73,10 @@ function createTerminal(container) {
   // reset through the same queue keeps it ordered with the lines around it.
   const RIS = 'c';
 
+  function searchOptions(opts) {
+    return { regex: !(opts && opts.regex === false), caseSensitive: false };
+  }
+
   function renderFiltered() {
     let data = RIS;
     for (const e of buffer.filtered(active)) data += toTermText(e.kind, e.text);
@@ -122,13 +126,14 @@ function createTerminal(container) {
     setFontSize(px) { term.options.fontSize = px; try { fitAddon.fit(); } catch (_) {} },
     getFontSize() { return term.options.fontSize; },
     fit() { try { fitAddon.fit(); } catch (_) {} },
-    searchNext(regexStr) {
+    // `opts.regex` (default true) picks regex vs plain-text matching.
+    searchNext(query, opts) {
       // An invalid regex from the toolbar must fail gracefully, not throw.
-      try { return searchAddon.findNext(regexStr, { regex: true, caseSensitive: false }); }
+      try { return searchAddon.findNext(query, searchOptions(opts)); }
       catch (_) { return false; }
     },
-    searchPrev(regexStr) {
-      try { return searchAddon.findPrevious(regexStr, { regex: true, caseSensitive: false }); }
+    searchPrev(query, opts) {
+      try { return searchAddon.findPrevious(query, searchOptions(opts)); }
       catch (_) { return false; }
     },
     clearSearch() { try { searchAddon.clearDecorations(); } catch (_) {} },
