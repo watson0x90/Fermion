@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { hooksActions } from '../../store/hooksSlice';
 import { cleanIpcError } from '../../inspector/format';
@@ -7,6 +7,7 @@ import { addTarget, applyHandler, installAll, removeHook, setEnabled } from '../
 import { Icon } from '../Icon';
 import { addrMenu } from '../../addressMenu';
 import { SetPicker } from '../SetPicker';
+import { CodeEditor } from '../CodeEditor';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion?.hooks;
@@ -104,19 +105,6 @@ export function HooksPanel() {
     setApplying(false);
   };
   const revert = () => { if (hook) { setDraft(hook.code); setDraftBt(hook.backtrace); setCodeError(''); } };
-  const onCodeKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'Enter' || e.key === 's')) { e.preventDefault(); apply(); return; }
-    if (e.key === 'Tab' && !e.shiftKey) {
-      // Tab indents instead of leaving the editor.
-      e.preventDefault();
-      const el = e.currentTarget;
-      const { selectionStart: a, selectionEnd: b } = el;
-      const next = draft.slice(0, a) + '  ' + draft.slice(b);
-      setDraft(next);
-      requestAnimationFrame(() => { el.selectionStart = el.selectionEnd = a + 2; });
-    }
-  };
-
   // ---- hits ----
   const names = useMemo(() => new Map(hooks.map((h) => [h.id, h.name])), [hooks]);
   const shownHits = useMemo(() => {
@@ -276,15 +264,7 @@ export function HooksPanel() {
           {view === 'handler' && (
             <div className="hook-code">
               {codeError && <div className="insp-note err" role="alert" data-testid="hook-code-error">{codeError}</div>}
-              <textarea
-                data-testid="hook-code"
-                aria-label="Handler"
-                className="mono"
-                spellCheck={false}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={onCodeKey}
-              />
+              <CodeEditor testId="hook-code" label="Handler" value={draft} onChange={setDraft} onApply={apply} exposeAs="MonacoHookEditor" />
               <div className="hook-code-help">
                 <code>log(…)</code> adds a line to Calls. <code>args[n]</code> and <code>retval</code> are pointers: read them with <code>.readUtf8String()</code>, <code>.readUtf16String()</code>, <code>.toInt32()</code>. <code>retval.replace(x)</code> changes what the function returns. <code>this</code> is shared between onEnter and onLeave.
               </div>

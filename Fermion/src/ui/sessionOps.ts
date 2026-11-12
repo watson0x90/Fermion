@@ -8,6 +8,7 @@ import { Hook } from './hooking/model';
 import { cleanIpcError } from './inspector/format';
 import { SessionTarget, SpawnConfig, Proc, ChildInfo, parseEnv, pickReattach, childName, childCommand } from './session/launch';
 import { hooksActions } from './store/hooksSlice';
+import { isTypeScript } from './fileOps';
 import { switchSet, programName } from './workspace';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -16,9 +17,20 @@ const scriptSrc = (): string => (window as any).MonacoCodeEditor?.getValue?.() ?
 
 // Load (or reload) the editor's script, and say so when it had to be compiled
 // because it imports packages.
-async function loadEditorScript(f: any, reload = false): Promise<void> {
-  const r = reload ? await f.reloadScript(scriptSrc()) : await f.loadScript(scriptSrc());
-  if (r && r.compiled) writeTerminal('STATUS', '[+] Script compiled with the packages it imports');
+async function loadEditorScript(f: any, dispatch: (a: any) => unknown, reload = false): Promise<void> {
+  const options = scriptOptions(dispatch);
+  const load = reload ? f.reloadScript : f.loadScript;
+  const r = options ? await load(scriptSrc(), options) : await load(scriptSrc());
+  if (r && r.typescript) writeTerminal('STATUS', '[+] TypeScript compiled, types checked');
+  else if (r && r.compiled) writeTerminal('STATUS', '[+] Script compiled with the packages it imports');
+}
+
+// What the editor's script is written in, for main: { typescript: true } for
+// a file saved as .ts, nothing for JavaScript.
+export function scriptOptions(dispatch: (a: any) => unknown): { typescript: true } | undefined {
+  let path: unknown;
+  try { path = dispatch((_d: unknown, getState: () => any) => getState()?.ui?.filePath); } catch { /* a store that takes no functions */ }
+  return isTypeScript(typeof path === 'string' ? path : null) ? { typescript: true } : undefined;
 }
 
 // Hooks and bookmarks are kept per program: bring in the set of the program
@@ -45,7 +57,7 @@ export async function attachAndLoad(dispatch: (a: any) => unknown, pid: number, 
     targetHooks(dispatch, name, []); // this program's hooks and bookmarks; the Hooks tab places them
     dispatch(sessionActions.sessionStarted({ kind: 'attach', pid, name }));
     dispatch(sessionActions.syncState(await f.getState()));
-    await loadEditorScript(f);
+    await loadEditorScript(f, dispatch);
     dispatch(sessionActions.scriptLoaded());
     return true;
   } catch (e) {
@@ -63,7 +75,7 @@ export async function reloadFromEditor(dispatch: (a: any) => unknown): Promise<b
   const f = api();
   if (!f) return false;
   try {
-    await loadEditorScript(f, true);
+    await loadEditorScript(f, dispatch, true);
     dispatch(sessionActions.scriptLoaded());
     writeTerminal('STATUS', '[+] Script reloaded..');
     return true;
@@ -95,7 +107,7 @@ export async function spawnAndLoad(dispatch: (a: any) => unknown, config: SpawnC
     await installAll(dispatch, targetHooks(dispatch, programName(config.path), hooks));
     dispatch(sessionActions.sessionStarted({ kind: 'spawn', ...config }));
     dispatch(sessionActions.syncState(await f.getState()));
-    await loadEditorScript(f);
+    await loadEditorScript(f, dispatch);
     dispatch(sessionActions.scriptLoaded());
     if (config.suspended) {
       dispatch(sessionActions.suspendedSet(pid));
@@ -181,7 +193,7 @@ export async function switchToChild(dispatch: (a: any) => unknown, child: ChildI
     await installAll(dispatch, hooks.map((h) => ({ ...h, status: h.enabled ? 'waiting' as const : 'off' as const })));
     dispatch(sessionActions.sessionStarted({ kind: 'attach', pid: child.pid, name: childName(child) }));
     dispatch(sessionActions.syncState(await f.getState()));
-    await loadEditorScript(f);
+    await loadEditorScript(f, dispatch);
     dispatch(sessionActions.scriptLoaded());
     if (opts.keepCatching) {
       try { await f.setChildGating(true); } catch (e) { writeTerminal('ERR', '[!] Child processes of the new process are not being caught: ' + cleanIpcError(e)); dispatch(sessionActions.childGatingSet(false)); }

@@ -132,6 +132,24 @@ The toolbar shows the script's file name (hover for the full path), with a dot b
 
 Saving the Output log or a graph does not change which file the script is saved to.
 
+### TypeScript
+
+A script saved with the extension `.ts` is TypeScript. The Editor toolbar then shows **TypeScript** beside the file name.
+
+```ts
+interface Found { name: string; base: NativePointer }
+
+const first: Found = Process.enumerateModules().map((m): Found => ({ name: m.name, base: m.base }))[0];
+console.log(first.name + ' is loaded at ' + first.base);
+```
+
+Each time the script is loaded (attach, spawn, Reload) Fermion compiles it to JavaScript with Frida's built-in compiler and checks its types against Frida's own definitions. Output says `TypeScript compiled, types checked`. A script with a type error or a syntax error is not loaded: Output gives the line and the message, and on Reload the script that was running stays in place. Imports of [packages](#packages) work the same as in JavaScript.
+
+Things to know:
+
+- The language goes by the file name. A script that has not been saved, or is saved as `.js`, is loaded as JavaScript exactly as written, so save it as `.ts` first (**Save As**).
+- The REPL and hook handlers are JavaScript.
+
 ### Packages
 
 A script can import npm packages:
@@ -218,7 +236,7 @@ Hook functions in the attached process without writing a script.
 Each hook is a row with a switch, its state, and how many times the function has been called. Select a hook to see two views:
 
 - **Calls** lists what the hook logged: the time, the thread, `→` on entry and `←` on return, indented by call depth. Click a line to see where the call came from. Callers inside a module are named; addresses that belong to no module (JIT code, or values the unwinder mistook for return addresses) are counted on one line. **All hooks** shows every hook's lines together, and **Output** chooses whether the lines are also printed in the Output pane as `[hook] name -> …`.
-- **Handler** is the JavaScript that runs for that hook. Change it and press **Apply** (`Ctrl-Enter`); the new handler is used from the next call, and one that does not compile is rejected while the hook carries on with the old one.
+- **Handler** is the JavaScript that runs for that hook. Change it and press **Apply** (`Ctrl-Enter`); the new handler is used from the next call, and one that does not compile is rejected while the hook carries on with the old one. The handler is edited in the same editor as scripts: syntax errors are underlined as you type, and Frida's API (`Process.`, `Memory.`, `ptr(...)` and the rest) is completed. `args` and `retval` are not typed, so their methods are not offered.
 
 A new hook starts with a handler that prints the first four arguments and the return value:
 
@@ -422,7 +440,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.

@@ -212,3 +212,32 @@ test('preparer: a script that imports is compiled; any other script is left exac
   assert.equal(t.log.length, 0);
   assert.deepEqual(await prepare('import a from "a";\nsend(a);'), { code: 'BUNDLE(import a from "a";\nsend(a);)', compiled: true });
 });
+
+// ---- TypeScript ----
+test('compile: a TypeScript script is built as script.ts with its types checked', async () => {
+  const t = setup();
+  const out = await t.pkgs.compile('const n: number = 1;\nsend(n);', { typescript: true });
+  assert.equal(out, 'BUNDLE(const n: number = 1;\nsend(n);)');
+  const build = t.log.find((l) => l[0] === 'build');
+  assert.equal(build[1], 'script.ts');
+  assert.deepEqual(build[2], { projectRoot: t.dir, typeCheck: 'full', sourceMaps: 'included' });
+});
+
+test('compile: the entry of the other language is not left beside the one being built', async () => {
+  const t = setup();
+  await t.pkgs.compile('import a from "a";');
+  assert.equal(fs.existsSync(path.join(t.dir, 'script.js')), true);
+  await t.pkgs.compile('const n: number = 1;', { typescript: true });
+  assert.equal(fs.existsSync(path.join(t.dir, 'script.js')), false);
+  assert.equal(fs.existsSync(path.join(t.dir, 'script.ts')), true);
+  await t.pkgs.compile('import a from "a";');
+  assert.equal(fs.existsSync(path.join(t.dir, 'script.ts')), false);
+});
+
+test('preparer: a TypeScript script is always compiled, imports or not', async () => {
+  const t = setup();
+  const prepare = createScriptPreparer(t.pkgs);
+  assert.deepEqual(await prepare('const n: number = 1;', { typescript: true }), { code: 'BUNDLE(const n: number = 1;)', compiled: true, typescript: true });
+  assert.deepEqual(await prepare('send(1);', { typescript: false }), { code: 'send(1);', compiled: false });
+  assert.deepEqual(await prepare('send(1);', undefined), { code: 'send(1);', compiled: false });
+});

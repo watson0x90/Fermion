@@ -18,7 +18,7 @@ beforeEach(() => {
   (window as any).monaco = {
     editor: { create: () => editor, defineTheme: vi.fn(), setTheme: vi.fn() },
     languages: { typescript: {
-      javascriptDefaults: { setDiagnosticsOptions: vi.fn() },
+      javascriptDefaults: { setDiagnosticsOptions: vi.fn(), setCompilerOptions: vi.fn(), addExtraLib: vi.fn() },
       typescriptDefaults: { setCompilerOptions: vi.fn(), addExtraLib: vi.fn() },
       ScriptTarget: { Latest: 1 }, ModuleResolutionKind: { NodeJs: 1 },
     } },

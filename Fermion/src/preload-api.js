@@ -99,8 +99,9 @@ function buildApi(ipcRenderer) {
 		attach: (pid) => invoke('attach', pid),
 		spawn: (path, args, options) => (options === undefined ? invoke('spawn', path, args) : invoke('spawn', path, args, options)),
 		resume: (pid) => invoke('resume', pid),
-		loadScript: (src) => invoke('loadScript', src),
-		reloadScript: (src) => invoke('reloadScript', src),
+		// options: { typescript: true } for a script written in TypeScript.
+		loadScript: (src, options) => invoke('loadScript', src, options),
+		reloadScript: (src, options) => invoke('reloadScript', src, options),
 		detach: () => invoke('detach'),
 		unload: () => invoke('unload'),
 		getState: () => invoke('getState'),
