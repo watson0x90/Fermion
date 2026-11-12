@@ -239,7 +239,8 @@ Things to know:
 
 - Hooks live in their own helper script, so reloading or changing the script in the Editor does not remove them.
 - Hooks are remembered by module and offset. After a detach they wait, and are placed again when you attach, including to a new run of the program where the module sits at a different address.
-- Hooks are saved automatically, with their handlers and switches, and are there when Fermion is opened again. A hook whose module is not loaded in the process you attach to is shown as *not placed*; switch it off or remove it if it belongs to another program.
+- Hooks are saved automatically, with their handlers and switches, and are there when Fermion is opened again. A hook whose module is not loaded in the process you attach to is shown as *not placed*.
+- Hooks and bookmarks are kept as one set per program, named after it (`notepad.exe`). Attaching to or spawning a program brings its set in and puts the one that was showing away; Output says which set is in use. **Set**, at the top of the Hooks tab and of Inspector → Bookmarks, shows the set and lets you pick another, for example to use the hooks you made for one program on another. Picking a set during a session takes the old set's hooks out of the process and places the new one's. **General** is the set used before any program has been attached to; hooks and bookmarks saved by Fermion 2.1 and earlier are there. Moving the session to a child process keeps the set you are on.
 - A hook on a very busy function cannot flood Fermion: lines are delivered in batches of at most 200 every 100 ms, and the rest are counted as *dropped*. The call count stays exact. Switching **Callers** off in the Handler view makes a busy hook much cheaper.
 - A handler that throws is reported as a red line, and the target carries on.
 - There can be up to 200 hooks.
@@ -284,7 +285,7 @@ Views of the attached process that only observe it. Nothing in the Inspector wri
 
 The menu key on the keyboard opens it too, and the arrow keys move through it.
 
-**Bookmarks** are places you saved with the address menu. Each has a name and a note you can edit in place, and opens in Memory or Disassembly. A bookmark inside a module is kept as module and offset, so it points at the same code or data when the module is loaded at another address, in a later run or another process; the row shows where that is now, or says the module is not loaded in this process. Bookmarks are saved automatically and are listed with or without a session.
+**Bookmarks** are places you saved with the address menu. Each has a name and a note you can edit in place, and opens in Memory or Disassembly. A bookmark inside a module is kept as module and offset, so it points at the same code or data when the module is loaded at another address, in a later run or another process; the row shows where that is now, or says the module is not loaded in this process. Bookmarks are saved automatically, in the set of the program they were made in (see **Set** under [Hooks](#hooks)), and are listed with or without a session.
 
 **Threads** lists each thread with its state and where it is. Select one for its register values and a backtrace with symbol names. Click a register value or a frame to open that address in Memory. Register values are a snapshot from the last refresh.
 

@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { SetPicker } from '../../SetPicker';
 import { useAppDispatch, useAppSelector } from '../../../store';
 import { bookmarksActions, Bookmark } from '../../../store/bookmarksSlice';
 import { addAddress } from '../../../inspector/format';
@@ -37,7 +38,8 @@ export function BookmarksTab({ active, attached, onOpen }: { active: boolean; at
   return (
     <div className="insp-tab bm-tab">
       <div className="ptool">
-        <span className="grow">Right-click any address and choose Bookmark to add one. Bookmarks are kept between sessions.</span>
+        <span className="grow">Right-click an address and choose Bookmark. Kept between sessions, per program.</span>
+        <SetPicker />
         <span className="count" data-testid="bm-count">{items.length} {items.length === 1 ? 'bookmark' : 'bookmarks'}</span>
       </div>
       {mods.error && <div className="insp-note err" role="alert">Could not list modules: {mods.error}</div>}

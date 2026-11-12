@@ -16,22 +16,24 @@ function tmpFile() {
 
 test('nothing saved yet: an empty workspace', () => {
   const { file } = tmpFile();
-  assert.deepEqual(createWorkspaceStore(file).load(), { hooks: [], bookmarks: [] });
+  assert.deepEqual(createWorkspaceStore(file).load(), { hooks: [], bookmarks: [], set: '', others: [] });
 });
 
 test('what is saved comes back, from a new store on the same file', () => {
   const { file } = tmpFile();
-  assert.deepEqual(createWorkspaceStore(file).save({ hooks: [HOOK], bookmarks: [MARK] }), { hooks: 1, bookmarks: 1 });
+  assert.deepEqual(createWorkspaceStore(file).save({ hooks: [HOOK], bookmarks: [MARK] }), { hooks: 1, bookmarks: 1, others: 0 });
   assert.deepEqual(createWorkspaceStore(file).load(), {
     hooks: [{ ...HOOK, address: '0x7ff010' }],
     bookmarks: [MARK],
+    set: '',
+    others: [],
   });
   assert.equal(fs.existsSync(file + '.tmp'), false);
 });
 
 test('only known fields are kept; state that belongs to a session is not saved', () => {
   const w = cleanWorkspace({ hooks: [{ ...HOOK, status: 'on', calls: 99, error: 'x', evil: '<img>' }], bookmarks: [{ ...MARK, extra: 1 }], other: 'dropped' });
-  assert.deepEqual(Object.keys(w), ['hooks', 'bookmarks']);
+  assert.deepEqual(Object.keys(w), ['hooks', 'bookmarks', 'set', 'others']);
   assert.deepEqual(Object.keys(w.hooks[0]), ['id', 'name', 'module', 'offset', 'address', 'code', 'enabled', 'backtrace']);
   assert.deepEqual(Object.keys(w.bookmarks[0]), ['id', 'label', 'module', 'offset', 'address', 'view', 'note']);
 });
@@ -64,19 +66,19 @@ test('sizes are bounded', () => {
 });
 
 test('anything that is not a workspace is an empty one', () => {
-  for (const bad of [null, undefined, 'x', 5, [], { hooks: 'x', bookmarks: 7 }]) assert.deepEqual(cleanWorkspace(bad), { hooks: [], bookmarks: [] });
+  for (const bad of [null, undefined, 'x', 5, [], { hooks: 'x', bookmarks: 7 }]) assert.deepEqual(cleanWorkspace(bad), { hooks: [], bookmarks: [], set: '', others: [] });
 });
 
 test('a corrupt or hostile file starts empty instead of throwing; saving repairs it', () => {
   const { file } = tmpFile();
   fs.writeFileSync(file, '{ not json');
   const store = createWorkspaceStore(file);
-  assert.deepEqual(store.load(), { hooks: [], bookmarks: [] });
+  assert.deepEqual(store.load(), { hooks: [], bookmarks: [], set: '', others: [] });
   fs.writeFileSync(file, JSON.stringify({ hooks: [{ id: 'x', code: 'c', module: 'm', offset: 1, __proto__: { polluted: true } }, HOOK] }));
   assert.deepEqual(store.load().hooks.map((h) => h.id), ['x', 'hk-1']);
   assert.equal(({}).polluted, undefined);
   store.save({ hooks: [HOOK] });
-  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).version, 1);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).version, 2);
 });
 
 test('a save that cannot be written throws (so the caller can say so) and leaves the old file intact', () => {
@@ -89,4 +91,46 @@ test('a save that cannot be written throws (so the caller can say so) and leaves
   });
   assert.throws(() => failing.save({ hooks: [] }), /disk full/);
   assert.equal(createWorkspaceStore(file).load().hooks.length, 1);
+});
+
+// ---- a set per program ----
+test('the set in use and the sets of other programs are saved and come back', () => {
+  const { file } = tmpFile();
+  const store = createWorkspaceStore(file);
+  assert.deepEqual(store.save({
+    hooks: [HOOK], bookmarks: [], set: 'Notepad.exe',
+    others: [{ name: 'calc.exe', hooks: [{ ...HOOK, id: 'hk-2' }], bookmarks: [MARK] }, { name: '', hooks: [], bookmarks: [{ ...MARK, id: 'bm-2' }] }],
+  }), { hooks: 1, bookmarks: 0, others: 2 });
+  const w = createWorkspaceStore(file).load();
+  assert.equal(w.set, 'Notepad.exe');
+  assert.deepEqual(w.others.map((o) => [o.name, o.hooks.length, o.bookmarks.length]), [['calc.exe', 1, 1], ['', 0, 1]]);
+  assert.deepEqual(Object.keys(w.others[0]), ['name', 'hooks', 'bookmarks']);
+});
+
+test('a file from before sets existed is the general set', () => {
+  const { file } = tmpFile();
+  fs.writeFileSync(file, JSON.stringify({ version: 1, hooks: [HOOK], bookmarks: [MARK] }));
+  const w = createWorkspaceStore(file).load();
+  assert.deepEqual([w.set, w.hooks.length, w.bookmarks.length, w.others], ['', 1, 1, []]);
+});
+
+test('other sets: empty ones, repeats of a name (in any case), the set in use, and bad names are dropped; entries are validated', () => {
+  const w = cleanWorkspace({
+    set: 'App.exe',
+    others: [
+      null, 'x', { name: 5, hooks: [HOOK] }, { name: 'bad' + String.fromCharCode(10) + 'name', hooks: [HOOK] }, { name: 'n'.repeat(300), hooks: [HOOK] },
+      { name: 'empty.exe', hooks: [], bookmarks: [] },
+      { name: 'app.EXE', hooks: [HOOK] },                 // the set in use
+      { name: 'calc.exe', hooks: [HOOK, { id: '../x' }], bookmarks: 'x', extra: 1 },
+      { name: 'CALC.EXE', hooks: [HOOK] },                // already there
+    ],
+  });
+  assert.deepEqual(w.others, [{ name: 'calc.exe', hooks: [{ ...HOOK, address: '0x7ff010' }], bookmarks: [] }]);
+  assert.equal(cleanWorkspace({ set: 7 }).set, '');
+  assert.equal(cleanWorkspace({ set: 'a' + String.fromCharCode(0) + 'b' }).set, '');
+});
+
+test('the number of other sets is bounded', () => {
+  const w = cleanWorkspace({ others: Array.from({ length: 300 }, (_, i) => ({ name: 'p' + i + '.exe', hooks: [HOOK] })) });
+  assert.equal(w.others.length, 100);
 });

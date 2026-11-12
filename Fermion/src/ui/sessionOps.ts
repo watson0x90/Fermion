@@ -8,6 +8,7 @@ import { Hook } from './hooking/model';
 import { cleanIpcError } from './inspector/format';
 import { SessionTarget, SpawnConfig, Proc, ChildInfo, parseEnv, pickReattach, childName, childCommand } from './session/launch';
 import { hooksActions } from './store/hooksSlice';
+import { switchSet, programName } from './workspace';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion;
@@ -20,13 +21,28 @@ async function loadEditorScript(f: any, reload = false): Promise<void> {
   if (r && r.compiled) writeTerminal('STATUS', '[+] Script compiled with the packages it imports');
 }
 
+// Hooks and bookmarks are kept per program: bring in the set of the program
+// the session is starting on. Returns the hooks to place — that set's, or
+// `fallback` where no sets are kept or the program has no name.
+function targetHooks(dispatch: (a: any) => unknown, program: string, fallback: Hook[]): Hook[] {
+  if (!program) return fallback;
+  const hooks = dispatch(switchSet(program)) as unknown;
+  return Array.isArray(hooks) ? hooks as Hook[] : fallback;
+}
+
 // Returns true when attached and the script is loaded. A failure (access
 // denied, process gone, script error) is reported in Output rather than thrown.
-export async function attachAndLoad(dispatch: (a: any) => unknown, pid: number, name = ''): Promise<boolean> {
+// With `rethrow` the failure is also thrown, for callers that need the reason.
+export async function attachAndLoad(dispatch: (a: any) => unknown, pid: number, name = '', rethrow = false): Promise<boolean> {
   const f = api();
   if (!f) return false;
   try {
     await f.attach(pid);
+    if (!name) {
+      // Attached by pid alone: find out which program it is, for its saved set.
+      try { name = ((await f.enumerateProcesses()) as Proc[]).find((p) => p.pid === pid)?.name ?? ''; } catch { /* stays unnamed */ }
+    }
+    targetHooks(dispatch, name, []); // this program's hooks and bookmarks; the Hooks tab places them
     dispatch(sessionActions.sessionStarted({ kind: 'attach', pid, name }));
     dispatch(sessionActions.syncState(await f.getState()));
     await loadEditorScript(f);
@@ -35,6 +51,7 @@ export async function attachAndLoad(dispatch: (a: any) => unknown, pid: number, 
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     writeTerminal('ERR', `[!] Attach to PID ${pid} failed: ${msg}`);
+    if (rethrow) throw e;
     return false;
   }
 }
@@ -75,7 +92,7 @@ export async function spawnAndLoad(dispatch: (a: any) => unknown, config: SpawnC
     pid = spawned.pid;
     // Hooks first, while the store still shows no session: the Hooks tab then
     // finds them placed and does not place them a second time.
-    await installAll(dispatch, hooks);
+    await installAll(dispatch, targetHooks(dispatch, programName(config.path), hooks));
     dispatch(sessionActions.sessionStarted({ kind: 'spawn', ...config }));
     dispatch(sessionActions.syncState(await f.getState()));
     await loadEditorScript(f);

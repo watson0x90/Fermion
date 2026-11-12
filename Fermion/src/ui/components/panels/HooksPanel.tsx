@@ -6,6 +6,7 @@ import { Frame, Hit, Hook, SearchKind, Target, hitTime, sameTarget } from '../..
 import { addTarget, applyHandler, installAll, removeHook, setEnabled } from '../../hooking/ops';
 import { Icon } from '../Icon';
 import { addrMenu } from '../../addressMenu';
+import { SetPicker } from '../SetPicker';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion?.hooks;
@@ -172,6 +173,7 @@ export function HooksPanel() {
           />
         </span>
         <button className="pill" data-testid="hook-search" disabled={!isAttached || !query.trim() || searching} onClick={search}>{searching ? 'Searching…' : 'Find'}</button>
+        <SetPicker />
       </div>
       {!isAttached && (
         <div className="insp-note" data-testid="hook-detached">
