@@ -123,6 +123,11 @@ function buildApi(ipcRenderer) {
 			disassemble: (address, count) => invoke('inspectDisassemble', address, count),
 			follow: (threadId, scope) => invoke('inspectFollow', threadId, scope),
 			unfollow: () => invoke('inspectUnfollow'),
+			// Coverage: threads is 'all' or a thread id. Save asks the operator
+			// where, in main; format is 'drcov' or 'text'.
+			coverStart: (threads, scope) => invoke('inspectCoverStart', threads, scope),
+			coverStop: () => invoke('inspectCoverStop'),
+			coverSave: (format) => invoke('inspectCoverSave', format),
 		},
 		// Hooks tab: find functions and hook them without writing a script.
 		hooks: {

@@ -1051,3 +1051,84 @@ test('inspectWrite is on the allow-list the window can call', () => {
   const { INVOKE_METHODS } = require('./frida-ipc.js');
   assert.ok(INVOKE_METHODS.has('inspectWrite'));
 });
+
+// ---- recording coverage ----
+function coverService() {
+  const { svc } = attachedService();
+  const calls = [];
+  const agent = { exports: {
+    coverStart: async (...a) => { calls.push(['coverStart', ...a]); if (agent.rescope) { agent.rescope = false; throw new Error('FERMION_RESCOPE'); } return { recording: true, threads: 3 }; },
+    coverStop: async () => { calls.push(['coverStop']); return agent.summary; },
+    coverData: async (format) => { calls.push(['coverData', format]); return format === 'text' ? '# report' : new Uint8Array([1, 2, 250]).buffer; },
+  } };
+  agent.summary = { recorded: true, blocks: 5, modules: [{ name: 'app.exe', path: 'C:\\app.exe', blocks: 5, bytes: 9 }] };
+  svc._getAgent = async () => agent;
+  svc._dropAgent = async (name) => { calls.push(['drop', name]); };
+  return { svc, agent, calls };
+}
+
+test('inspectCoverStart: all threads or one, with a checked scope; anything else is refused in main', async () => {
+  const t = coverService();
+  await t.svc.attach(1);
+  assert.deepEqual(await t.svc.inspectCoverStart('all', { mode: 'app', junk: 1 }), { recording: true, threads: 3 });
+  await t.svc.inspectCoverStart(11, { mode: 'module', module: 'app.exe' });
+  assert.deepEqual(t.calls, [['coverStart', 'all', { mode: 'app', module: '' }], ['coverStart', 11, { mode: 'module', module: 'app.exe' }]]);
+  for (const bad of ['ALL', 'every', -1, 1.5, null, undefined, {}, '11']) await assert.rejects(() => t.svc.inspectCoverStart(bad, { mode: 'all' }), /invalid thread/);
+  await assert.rejects(() => t.svc.inspectCoverStart('all', { mode: 'nope' }), /scope/i);
+  assert.equal(t.calls.length, 2);
+});
+
+test('inspectCoverStart: an agent that has excluded for another scope is replaced and asked again', async () => {
+  const t = coverService();
+  await t.svc.attach(1);
+  t.agent.rescope = true;
+  assert.deepEqual(await t.svc.inspectCoverStart('all', { mode: 'all' }), { recording: true, threads: 3 });
+  assert.deepEqual(t.calls.map((c) => c[0]), ['coverStart', 'drop', 'coverStart']);
+});
+
+test('inspectCoverStop returns the summary and keeps the files in main; inspectCoverSave hands them to the saver', async () => {
+  const t = coverService();
+  const saved = [];
+  t.svc.setCoverageSaver(async (file) => { saved.push(file); return 'C:/out/' + file.format; });
+  await t.svc.attach(1);
+  await assert.rejects(() => t.svc.inspectCoverSave('drcov'), /No coverage has been recorded/);
+  assert.deepEqual(await t.svc.inspectCoverStop(), t.agent.summary);
+  assert.deepEqual(t.calls.map((c) => c.join(':')), ['coverStop', 'coverData:drcov', 'coverData:text']);
+  assert.deepEqual(await t.svc.inspectCoverSave('drcov'), { path: 'C:/out/drcov', format: 'drcov' });
+  assert.deepEqual(await t.svc.inspectCoverSave('text'), { path: 'C:/out/text', format: 'text' });
+  assert.ok(Buffer.isBuffer(saved[0].data));
+  assert.deepEqual([...saved[0].data], [1, 2, 250]);
+  assert.equal(saved[0].program, 'app.exe'); // the module with the most blocks names the file
+  assert.equal(saved[1].data, '# report');
+  // Saving does not need the session any more: the files are in main.
+  await t.svc.detach();
+  assert.deepEqual(await t.svc.inspectCoverSave('text'), { path: 'C:/out/text', format: 'text' });
+});
+
+test('inspectCoverSave: only the two known formats; a cancelled dialog is not an error; no saver is', async () => {
+  const t = coverService();
+  await t.svc.attach(1);
+  await t.svc.inspectCoverStop();
+  await assert.rejects(() => t.svc.inspectCoverSave('exe'), /format must be drcov or text/);
+  await assert.rejects(() => t.svc.inspectCoverSave('drcov'), /cannot be saved here/);
+  t.svc.setCoverageSaver(async () => null);
+  assert.deepEqual(await t.svc.inspectCoverSave('drcov'), { path: null, format: 'drcov' });
+});
+
+test('a stop with nothing recorded keeps what was recorded before', async () => {
+  const t = coverService();
+  t.svc.setCoverageSaver(async (file) => 'p:' + file.data.length);
+  await t.svc.attach(1);
+  await t.svc.inspectCoverStop();
+  t.agent.summary = { recorded: false };
+  assert.deepEqual(await t.svc.inspectCoverStop(), { recorded: false });
+  assert.equal((await t.svc.inspectCoverSave('text')).path, 'p:8');
+  // A new recording replaces it.
+  await t.svc.inspectCoverStart('all', { mode: 'all' });
+  await assert.rejects(() => t.svc.inspectCoverSave('text'), /No coverage has been recorded/);
+});
+
+test('the three coverage operations are on the allow-list the window can call', () => {
+  const { INVOKE_METHODS } = require('./frida-ipc.js');
+  for (const m of ['inspectCoverStart', 'inspectCoverStop', 'inspectCoverSave']) assert.ok(INVOKE_METHODS.has(m), m);
+});

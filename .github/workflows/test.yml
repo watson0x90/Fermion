@@ -111,6 +111,9 @@ jobs:
       - name: TypeScript scripts are compiled, type-checked and loaded
         run: xvfb-run -a node scripts/ui-test-typescript.js
 
+      - name: Coverage is recorded and saved as drcov and as a text report
+        run: xvfb-run -a node scripts/ui-test-coverage.js
+
       - name: Hooks tab finds, hooks and lists calls
         run: xvfb-run -a node scripts/ui-test-hooks.js
 

@@ -179,6 +179,259 @@
 		};
 	}
 
+	// ---- recording coverage ----
+	// Which basic blocks ran, on one thread or on all of them. Stalker reports
+	// a block once, when it first compiles it for a thread, which is exactly
+	// "this code was reached" and costs far less than an event per execution.
+	// A recording is bounded in time and in blocks, and its result is kept
+	// here until the next one starts: a summary, the drcov file (for
+	// Lighthouse, Dragondance and the like) and a plain-text report.
+	var MAX_COVER_MS = 600000;       // a recording stops by itself after 10 minutes
+	var MAX_COVER_BLOCKS = 2000000;  // ... or after this many distinct blocks
+	var COVER_POLL_MS = 500;         // how often new threads are picked up
+	var COVER_SETTLE_MS = 150;       // Stalker hands over its last events a moment after unfollow
+	var MAX_COVER_MODULES = 200;     // modules in the summary
+	var MAX_TEXT_MODULES = 60;       // modules in the text report
+	var MAX_TEXT_FUNCTIONS = 300;    // functions listed per module in the text report
+	var MAX_COVER_SYMBOLS = 60000;   // blocks looked up by name for the text report
+	var MAX_SYMBOL_MS = 6000;        // ... and how long that may take
+	var cover = null;   // { all, threads, count, scope, blocks, n, overflow, timer, poll, endedBy, started, ended }
+	var covered = null; // { summary, drcov, text } of the last recording
+
+	function otherThreadIds() {
+		var me = Process.getCurrentThreadId();
+		var ids = [];
+		var threads = Process.enumerateThreads();
+		for (var i = 0; i < threads.length; i++) if (threads[i].id !== me) ids.push(threads[i].id);
+		return ids;
+	}
+
+	// Returns true when Stalker took the thread.
+	function coverThread(state, id) {
+		if (state.threads[id]) return false;
+		try {
+			Stalker.follow(id, {
+				events: { compile: true },
+				onReceive: function (raw) {
+					var list = Stalker.parse(raw, { annotate: false, stringify: false });
+					for (var i = 0; i < list.length; i++) {
+						var key = list[i][0].toString();
+						if (state.blocks[key] !== undefined) continue;
+						if (state.n >= MAX_COVER_BLOCKS) {
+							// Stop from outside this callback: Stalker is delivering to it.
+							if (!state.overflow) { state.overflow = true; setTimeout(function () { if (cover === state) stopCover('limit'); }, 0); }
+							return;
+						}
+						state.blocks[key] = parseInt(list[i][1].sub(list[i][0]).toString(16), 16);
+						state.n++;
+					}
+				},
+			});
+		} catch (e) {
+			return false; // a thread that ended, or one Stalker cannot take
+		}
+		state.threads[id] = true;
+		state.count++;
+		return true;
+	}
+
+	function stopCover(endedBy) {
+		if (!cover || cover.endedBy) return;
+		cover.endedBy = endedBy;
+		cover.ended = Date.now();
+		if (cover.timer !== null) { clearTimeout(cover.timer); cover.timer = null; }
+		if (cover.poll !== null) { clearInterval(cover.poll); cover.poll = null; }
+		for (var id in cover.threads) {
+			try { Stalker.unfollow(Number(id)); } catch (e) { /* thread gone */ }
+		}
+		try { Stalker.flush(); } catch (e) { /* nothing buffered */ }
+	}
+
+	function utf8(text) {
+		var out = [];
+		for (var i = 0; i < text.length; i++) {
+			var c = text.charCodeAt(i);
+			if (c >= 0xd800 && c < 0xdc00 && i + 1 < text.length) { c = 0x10000 + ((c - 0xd800) << 10) + (text.charCodeAt(++i) - 0xdc00); }
+			if (c < 0x80) out.push(c);
+			else if (c < 0x800) out.push(0xc0 | (c >> 6), 0x80 | (c & 63));
+			else if (c < 0x10000) out.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+			else out.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));
+		}
+		return out;
+	}
+
+	function pad16(p) {
+		var s = p.toString(16);
+		while (s.length < 16) s = '0' + s;
+		return '0x' + s;
+	}
+
+	function thousands(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
+
+	// Sort the recorded blocks into modules. -> { used: [{ module, blocks: [{ off, size }], bytes }], unmapped, total, bytes }
+	function coverByModule(state) {
+		var modules = Process.enumerateModules().slice();
+		modules.sort(function (a, b) { return a.base.compare(b.base); });
+		var ends = [];
+		for (var i = 0; i < modules.length; i++) ends.push(modules[i].base.add(modules[i].size));
+		function find(p) {
+			var lo = 0, hi = modules.length - 1;
+			while (lo <= hi) {
+				var mid = (lo + hi) >> 1;
+				if (p.compare(modules[mid].base) < 0) hi = mid - 1;
+				else if (p.compare(ends[mid]) >= 0) lo = mid + 1;
+				else return mid;
+			}
+			return -1;
+		}
+		var slots = {};
+		var used = [];
+		var unmapped = 0, total = 0, bytes = 0;
+		for (var key in state.blocks) {
+			var p = ptr(key);
+			var at = find(p);
+			if (at < 0) { unmapped++; continue; } // code outside every module (JIT, shellcode)
+			// A thread that was inside an excluded module when the recording
+			// began runs on there until it returns: that code is out of scope.
+			if (state.skip && state.skip(modules[at])) continue;
+			var slot = slots[at];
+			if (!slot) { slot = slots[at] = { module: modules[at], blocks: [], bytes: 0 }; used.push(slot); }
+			var size = state.blocks[key];
+			slot.blocks.push({ off: parseInt(p.sub(modules[at].base).toString(16), 16), size: size });
+			slot.bytes += size;
+			total++;
+			bytes += size;
+		}
+		for (var u = 0; u < used.length; u++) used[u].blocks.sort(function (a, b) { return a.off - b.off; });
+		used.sort(function (a, b) { return b.blocks.length - a.blocks.length || (a.module.name < b.module.name ? -1 : 1); });
+		return { used: used, unmapped: unmapped, total: total, bytes: bytes };
+	}
+
+	// The drcov file: a text header naming the modules, then one 8-byte
+	// record per block (offset in its module, size, module id).
+	function coverDrcov(sorted) {
+		var head = 'DRCOV VERSION: 2\nDRCOV FLAVOR: fermion\nModule Table: version 2, count ' + sorted.used.length + '\n'
+			+ 'Columns: id, base, end, entry, checksum, timestamp, path\n';
+		for (var i = 0; i < sorted.used.length; i++) {
+			var m = sorted.used[i].module;
+			head += ' ' + i + ', ' + pad16(m.base) + ', ' + pad16(m.base.add(m.size)) + ', 0x0000000000000000, 0x00000000, 0x00000000, ' + (m.path || m.name) + '\n';
+		}
+		head += 'BB Table: ' + sorted.total + ' bbs\n';
+		var text = utf8(head);
+		var out = new Uint8Array(text.length + sorted.total * 8);
+		out.set(text, 0);
+		var at = text.length;
+		for (var k = 0; k < sorted.used.length; k++) {
+			var blocks = sorted.used[k].blocks;
+			for (var b = 0; b < blocks.length; b++) {
+				var off = blocks[b].off, size = Math.min(blocks[b].size, 0xffff);
+				out[at++] = off & 0xff; out[at++] = (off >>> 8) & 0xff; out[at++] = (off >>> 16) & 0xff; out[at++] = (off >>> 24) & 0xff;
+				out[at++] = size & 0xff; out[at++] = (size >>> 8) & 0xff;
+				out[at++] = k & 0xff; out[at++] = (k >>> 8) & 0xff;
+			}
+		}
+		return out.buffer;
+	}
+
+	function scopeText(scope) {
+		if (scope.mode === 'app') return 'everything except system libraries';
+		if (scope.mode === 'module') return 'only ' + scope.module;
+		return 'every module';
+	}
+
+	// A report meant to be read by a person or a language model: what ran,
+	// by module and by function, in plain text with the units spelled out.
+	function coverText(state, sorted, summary) {
+		var started = Date.now();
+		var looked = 0;
+		var lines = [];
+		var main = '';
+		try { main = Process.enumerateModules()[0].name; } catch (e) { /* unknown */ }
+		lines.push('# Code coverage recorded by Fermion (Frida)');
+		lines.push('');
+		lines.push('Process: ' + (main || 'unknown') + (Process.id ? ' (pid ' + Process.id + ')' : '') + (Process.platform ? ', ' + Process.platform + ' ' + (Process.arch || '') : ''));
+		lines.push('Recorded: ' + summary.seconds + ' s on ' + summary.threads + ' thread' + (summary.threads === 1 ? '' : 's') + '; scope: ' + scopeText(state.scope)
+			+ '; ended by: ' + (summary.endedBy === 'limit' ? 'the time or block limit' : 'the operator'));
+		lines.push('Total: ' + thousands(sorted.total) + ' basic blocks (' + thousands(sorted.bytes) + ' bytes of code) in ' + sorted.used.length + ' module' + (sorted.used.length === 1 ? '' : 's')
+			+ (sorted.unmapped ? '; ' + thousands(sorted.unmapped) + ' more blocks ran outside every module (generated code)' : ''));
+		lines.push('');
+		lines.push('How to read this: a basic block is a straight run of instructions with one entry and one exit. A block is listed if it ran at least once while recording; how many times is not recorded.');
+		lines.push('Every offset is hexadecimal and relative to the base address of its module, so it can be looked up in a disassembler whatever address the module was loaded at.');
+		lines.push('A function line reads: name, offset of its first block that ran, blocks that ran, bytes of code in those blocks. Code that is absent from this report did not run during the recording (or was outside the scope).');
+		lines.push('Function names come from the symbols Frida can find. Where a module has no debug symbols, a block is named after the nearest exported symbol before it, so an exported name with far more blocks than such a function could hold is standing in for internal functions that have no name of their own. Trust the offsets over the names.');
+		if (summary.overflow) lines.push('The recording hit the block limit: later code is missing.');
+		lines.push('');
+		lines.push('## Modules, most blocks first');
+		lines.push('');
+		lines.push('| module | blocks | bytes | path |');
+		lines.push('| --- | ---: | ---: | --- |');
+		for (var i = 0; i < sorted.used.length && i < MAX_TEXT_MODULES; i++) {
+			var s = sorted.used[i];
+			lines.push('| ' + s.module.name + ' | ' + s.blocks.length + ' | ' + s.bytes + ' | ' + (s.module.path || '') + ' |');
+		}
+		if (sorted.used.length > MAX_TEXT_MODULES) lines.push('(' + (sorted.used.length - MAX_TEXT_MODULES) + ' more modules with fewer blocks are not listed.)');
+		lines.push('');
+		lines.push('## Functions that ran, by module');
+		for (var k = 0; k < sorted.used.length && k < MAX_TEXT_MODULES; k++) {
+			var slot = sorted.used[k];
+			var byName = {};
+			var names = [];
+			var unnamed = 0;
+			var skipped = 0;
+			for (var b = 0; b < slot.blocks.length; b++) {
+				var block = slot.blocks[b];
+				if (looked >= MAX_COVER_SYMBOLS || Date.now() - started > MAX_SYMBOL_MS) { skipped++; continue; }
+				looked++;
+				var name = '';
+				try { var sym = DebugSymbol.fromAddress(slot.module.base.add(block.off)); if (sym && sym.name) name = sym.name; } catch (e) { /* no symbol */ }
+				if (!name) { unnamed++; continue; }
+				var f = byName[name];
+				if (!f) { f = byName[name] = { name: name, off: block.off, blocks: 0, bytes: 0 }; names.push(name); }
+				f.blocks++;
+				f.bytes += block.size;
+			}
+			names.sort(function (a, c) { return byName[c].blocks - byName[a].blocks || byName[a].off - byName[c].off; });
+			lines.push('');
+			lines.push('### ' + slot.module.name + ': ' + slot.blocks.length + ' blocks in ' + names.length + ' named function' + (names.length === 1 ? '' : 's'));
+			lines.push('');
+			for (var n = 0; n < names.length && n < MAX_TEXT_FUNCTIONS; n++) {
+				var fn = byName[names[n]];
+				lines.push('- ' + fn.name + ' +0x' + fn.off.toString(16) + ': ' + fn.blocks + ' block' + (fn.blocks === 1 ? '' : 's') + ', ' + fn.bytes + ' bytes');
+			}
+			if (names.length > MAX_TEXT_FUNCTIONS) lines.push('(' + (names.length - MAX_TEXT_FUNCTIONS) + ' more functions with fewer blocks are not listed.)');
+			if (unnamed) lines.push('(' + unnamed + ' blocks have no symbol name: this module has no debug symbols for them.)');
+			if (skipped) lines.push('(' + skipped + ' blocks were not looked up by name, to keep this report quick to produce. The drcov file has them all.)');
+		}
+		lines.push('');
+		return lines.join('\n');
+	}
+
+	function coverResult(state) {
+		var sorted = coverByModule(state);
+		var modules = [];
+		for (var i = 0; i < sorted.used.length && i < MAX_COVER_MODULES; i++) {
+			var s = sorted.used[i];
+			modules.push({ name: s.module.name, path: s.module.path || '', blocks: s.blocks.length, bytes: s.bytes });
+		}
+		var drcov = coverDrcov(sorted);
+		var summary = {
+			recorded: true,
+			threads: state.count,
+			all: state.all,
+			seconds: Math.round(((state.ended || Date.now()) - state.started) / 100) / 10,
+			blocks: sorted.total,
+			bytes: sorted.bytes,
+			unmapped: sorted.unmapped,
+			overflow: state.overflow,
+			endedBy: state.endedBy,
+			scope: state.scope,
+			modules: modules,
+			moduleCount: sorted.used.length,
+			drcovBytes: drcov.byteLength,
+		};
+		return { summary: summary, drcov: drcov, text: coverText(state, sorted, summary) };
+	}
+
 	rpc.exports = {
 		modules: function () {
 			return capped(Process.enumerateModules(), MAX_RANGES, function (m) {
@@ -225,6 +478,7 @@
 		// scope: { mode: 'all' | 'app' | 'module', module } — see resolveScope.
 		follow: function (id, scope) {
 			if (follow && !follow.endedBy) throw new Error('Already following thread ' + follow.threadId + '. Stop that first.');
+			if (cover && !cover.endedBy) throw new Error('Coverage is being recorded. Stop that first.');
 			if (id === Process.getCurrentThreadId()) throw new Error("That is Frida's own thread; it cannot be followed.");
 			findThread(id); // throws for an unknown thread
 			var resolved = resolveScope(scope); // throws for an unknown module
@@ -248,6 +502,61 @@
 			follow = state; // only once Stalker accepted the thread
 			state.timer = setTimeout(function () { if (follow === state) stopStalking('limit'); }, MAX_FOLLOW_MS);
 			return { following: true, threadId: id, maxSeconds: MAX_FOLLOW_MS / 1000, scope: resolved.scope, excluded: excluded };
+		},
+
+		// threads: 'all' or one thread id; scope as for follow.
+		coverStart: function (threads, scope) {
+			if (follow && !follow.endedBy) throw new Error('Thread ' + follow.threadId + ' is being followed. Stop that first.');
+			if (cover && !cover.endedBy) throw new Error('Coverage is already being recorded. Stop that first.');
+			var all = threads === 'all';
+			var ids;
+			if (all) {
+				ids = otherThreadIds();
+			} else {
+				if (threads === Process.getCurrentThreadId()) throw new Error("That is Frida's own thread; it cannot be followed.");
+				findThread(threads); // throws for an unknown thread
+				ids = [threads];
+			}
+			var resolved = resolveScope(scope); // throws for an unknown module
+			if (excludedScope && excludedScope !== resolved.key) throw new Error('FERMION_RESCOPE');
+			var excluded = applyScope(resolved);
+			var state = { all: all, threads: {}, count: 0, scope: resolved.scope, skip: resolved.skip, blocks: {}, n: 0, overflow: false, timer: null, poll: null, endedBy: '', started: Date.now(), ended: 0 };
+			for (var i = 0; i < ids.length; i++) coverThread(state, ids[i]);
+			if (!state.count) throw new Error('No thread could be followed.');
+			cover = state;
+			covered = null;
+			if (all) {
+				state.poll = setInterval(function () {
+					if (cover !== state || state.endedBy) return;
+					var now = otherThreadIds();
+					for (var k = 0; k < now.length; k++) coverThread(state, now[k]);
+				}, COVER_POLL_MS);
+			}
+			state.timer = setTimeout(function () { if (cover === state) stopCover('limit'); }, MAX_COVER_MS);
+			return { recording: true, threads: state.count, all: all, maxSeconds: MAX_COVER_MS / 1000, maxBlocks: MAX_COVER_BLOCKS, scope: resolved.scope, excluded: excluded };
+		},
+
+		// Stop (if still running) and return the summary. It is given again
+		// until another recording starts.
+		coverStop: function () {
+			if (!cover) return covered ? covered.summary : { recorded: false };
+			stopCover('stop');
+			var state = cover;
+			return new Promise(function (resolve) {
+				setTimeout(function () {
+					try { Stalker.garbageCollect(); } catch (e) { /* best effort */ }
+					covered = coverResult(state);
+					if (cover === state) cover = null;
+					resolve(covered.summary);
+				}, COVER_SETTLE_MS);
+			});
+		},
+
+		// The last recording as a file: 'text' is the report, anything else the
+		// drcov file (binary).
+		coverData: function (format) {
+			if (!covered) throw new Error('No coverage has been recorded.');
+			return format === 'text' ? covered.text : covered.drcov;
 		},
 
 		// Stop (if still running) and return what was counted. The result of a

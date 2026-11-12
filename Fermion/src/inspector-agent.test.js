@@ -71,13 +71,16 @@ function load(over = {}) {
   };
   const scans = [];
   const timers = [];
+  const intervals = [];
   const stalker = {
     followed: [], unfollowed: [], opts: null, flushed: 0, excluded: [],
     exclude: (range) => { stalker.excluded.push(range.base.toString() + '+' + range.size); },
-    follow: (tid, opts) => { if (over.followThrows) throw new Error('unable to follow'); stalker.followed.push(tid); stalker.opts = opts; },
+    follow: (tid, opts) => { if (over.followThrows || (over.unfollowable || []).includes(tid)) throw new Error('unable to follow'); stalker.followed.push(tid); stalker.opts = opts; stalker.optsBy[tid] = opts; },
+    optsBy: {}, collected: 0,
+    parse: (raw) => raw,
     unfollow: (tid) => { stalker.unfollowed.push(tid); },
     flush: () => { stalker.flushed++; },
-    garbageCollect: () => {},
+    garbageCollect: () => { stalker.collected++; },
   };
   const matchesFor = over.matchesFor || ((base, size, pattern) => {
     if (base.v === 0xdead000n) throw new Error('access violation');
@@ -112,10 +115,11 @@ function load(over = {}) {
       if (n === 0x14) { insn.mnemonic = 'ret'; insn.opStr = ''; insn.groups = ['ret']; }
       return insn;
     } },
+    setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; }, clearInterval: (id) => { if (intervals[id - 1]) intervals[id - 1].cancelled = true; },
     Stalker: stalker, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].cancelled = true; },
   });
   vm.runInContext(SOURCE, ctx);
-  return Object.assign({ scans, stalker, timers }, ctx.rpc.exports);
+  return Object.assign({ scans, stalker, timers, intervals }, ctx.rpc.exports);
 }
 // Results cross rpc as JSON; compare them the same way.
 const j = (v) => JSON.parse(JSON.stringify(v));
@@ -543,4 +547,160 @@ test('write: only 1..4096 whole hex bytes', () => {
   for (const bad of ['', 'd', 'xyz1', 'dead beef', 5, null, '00'.repeat(4097)]) assert.throws(() => a.write('0x1010', bad), /hex bytes/);
   assert.equal(a.write('0x1000', '00'.repeat(4096)).size, 4096);
   assert.equal(Ptr.writes.length, 1);
+});
+
+// ---- recording coverage ----
+// Stalker reports compiled blocks as [start, end] pairs.
+const blk = (start, size) => [new Ptr(start), new Ptr(start + size)];
+// coverStop waits a moment for Stalker's last events: let that timer fire.
+async function stopCover(a) {
+  const p = a.coverStop();
+  const settle = a.timers.filter((t) => t.ms === 150 && !t.cancelled).pop();
+  if (settle) settle.fn();
+  return j(await p);
+}
+const ntdll = { name: 'ntdll.dll', base: new Ptr(0x7fe000), size: 0x1000, path: 'C:/Windows/System32/ntdll.dll', enumerateExports: () => [], enumerateImports: () => [] };
+
+test('coverStart: every thread but Frida\'s own is followed for compiled blocks; new threads are picked up', () => {
+  const threads = [{ id: 11, state: 'waiting', context: {} }, { id: 12, state: 'running', context: {} }, { id: 99, state: 'running', context: {} }];
+  const a = load({ Process: { enumerateThreads: () => threads } });
+  assert.deepEqual(j(a.coverStart('all', { mode: 'all' })), { recording: true, threads: 2, all: true, maxSeconds: 600, maxBlocks: 2000000, scope: { mode: 'all', module: '' }, excluded: 0 });
+  assert.deepEqual(a.stalker.followed, [11, 12]); // 99 is the agent's own thread
+  assert.deepEqual(a.stalker.opts.events, { compile: true });
+  assert.equal(a.intervals.length, 1);
+  threads.push({ id: 13, state: 'running', context: {} });
+  a.intervals[0].fn();
+  a.intervals[0].fn(); // not followed twice
+  assert.deepEqual(a.stalker.followed, [11, 12, 13]);
+});
+
+test('coverStart: one thread only; unknown threads, Frida\'s own thread and a second recording are refused', () => {
+  const a = load();
+  assert.throws(() => a.coverStart(404, { mode: 'all' }), /thread/i);
+  assert.throws(() => a.coverStart(99, { mode: 'all' }), /Frida's own thread/);
+  assert.equal(a.coverStart(11, { mode: 'all' }).threads, 1);
+  assert.deepEqual(a.stalker.followed, [11]);
+  assert.equal(a.intervals.length, 0); // one thread: nothing to pick up
+  assert.throws(() => a.coverStart('all', { mode: 'all' }), /already being recorded/);
+  assert.throws(() => a.follow(12, { mode: 'all' }), /Coverage is being recorded/);
+});
+
+test('coverStart: a follow in progress is not disturbed; a thread Stalker cannot take is skipped; none at all is an error', () => {
+  const a = load();
+  a.follow(11, { mode: 'all' });
+  assert.throws(() => a.coverStart('all', { mode: 'all' }), /being followed/);
+  const b = load({ unfollowable: [11] });
+  assert.equal(b.coverStart('all', { mode: 'all' }).threads, 1);
+  const c = load({ followThrows: true });
+  assert.throws(() => c.coverStart('all', { mode: 'all' }), /No thread could be followed/);
+  assert.deepEqual(j(await_(c)), { recorded: false });
+});
+function await_(a) { return a.coverStop(); } // nothing recorded: answers at once
+
+test('coverStart: the scope excludes modules like a follow, and a different scope needs a fresh agent', () => {
+  const a = load({ modules: [ntdll] });
+  assert.equal(a.coverStart('all', { mode: 'app' }).excluded, 2); // both fakes live under C:/Windows
+  a.coverStop();
+  a.timers.filter((t) => t.ms === 150).pop().fn();
+  assert.throws(() => a.coverStart('all', { mode: 'all' }), /FERMION_RESCOPE/);
+  assert.throws(() => load().coverStart('all', { mode: 'module', module: 'nope.dll' }), /Module not found/);
+});
+
+test('coverStop: blocks are counted once, sorted into modules, and summarised', async () => {
+  const a = load({ modules: [ntdll] });
+  a.coverStart('all', { mode: 'all' });
+  a.stalker.optsBy[11].onReceive([blk(0x7ff010, 4), blk(0x7ff020, 6), blk(0x7fe100, 2)]);
+  a.stalker.optsBy[12].onReceive([blk(0x7ff010, 4), blk(0x500, 3)]); // one again, one outside every module
+  const r = await stopCover(a);
+  assert.deepEqual(a.stalker.unfollowed, [11, 12]);
+  assert.equal(a.stalker.collected, 1);
+  assert.equal(a.intervals[0].cancelled, true);
+  assert.equal(typeof r.seconds, 'number');
+  delete r.seconds; delete r.drcovBytes;
+  assert.deepEqual(r, {
+    recorded: true, threads: 2, all: true, blocks: 3, bytes: 12, unmapped: 1, overflow: false, endedBy: 'stop', scope: { mode: 'all', module: '' }, moduleCount: 2,
+    modules: [
+      { name: 'kernel32.dll', path: 'C:/Windows/kernel32.dll', blocks: 2, bytes: 10 },
+      { name: 'ntdll.dll', path: 'C:/Windows/System32/ntdll.dll', blocks: 1, bytes: 2 },
+    ],
+  });
+  // The same summary is given again until another recording starts.
+  assert.equal((await stopCover(a)).blocks, 3);
+});
+
+test('coverData: the drcov file has a module table and one 8-byte record per block', async () => {
+  const a = load({ modules: [ntdll] });
+  a.coverStart('all', { mode: 'all' });
+  a.stalker.optsBy[11].onReceive([blk(0x7ff020, 6), blk(0x7ff010, 4), blk(0x7fe100, 2)]);
+  const r = await stopCover(a);
+  const file = Buffer.from(new Uint8Array(a.coverData('drcov')));
+  assert.equal(file.length, r.drcovBytes);
+  const marker = 'BB Table: 3 bbs\n';
+  const at = file.indexOf(marker) + marker.length;
+  assert.equal(file.subarray(0, at).toString('utf8'), [
+    'DRCOV VERSION: 2',
+    'DRCOV FLAVOR: fermion',
+    'Module Table: version 2, count 2',
+    'Columns: id, base, end, entry, checksum, timestamp, path',
+    ' 0, 0x00000000007ff000, 0x0000000000800000, 0x0000000000000000, 0x00000000, 0x00000000, C:/Windows/kernel32.dll',
+    ' 1, 0x00000000007fe000, 0x00000000007ff000, 0x0000000000000000, 0x00000000, 0x00000000, C:/Windows/System32/ntdll.dll',
+    'BB Table: 3 bbs',
+    '',
+  ].join('\n'));
+  const table = file.subarray(at);
+  assert.equal(table.length, 24);
+  const rec = (i) => [table.readUInt32LE(i * 8), table.readUInt16LE(i * 8 + 4), table.readUInt16LE(i * 8 + 6)];
+  assert.deepEqual([rec(0), rec(1), rec(2)], [[0x10, 4, 0], [0x20, 6, 0], [0x100, 2, 1]]); // offset, size, module id; sorted
+});
+
+test('coverData: the text report names modules and functions, with the units explained', async () => {
+  const a = load({ modules: [ntdll] });
+  a.coverStart(11, { mode: 'all' });
+  a.stalker.optsBy[11].onReceive([blk(0x7ff010, 4), blk(0x7ff020, 6), blk(0x7fe100, 2), blk(0x500, 3)]);
+  await stopCover(a);
+  const text = a.coverData('text');
+  assert.match(text, /^# Code coverage recorded by Fermion \(Frida\)\n/);
+  assert.match(text, /Recorded: [\d.]+ s on 1 thread; scope: every module; ended by: the operator/);
+  assert.match(text, /Total: 3 basic blocks \(12 bytes of code\) in 2 modules; 1 more blocks ran outside every module \(generated code\)/);
+  assert.match(text, /Every offset is hexadecimal and relative to the base address of its module/);
+  assert.match(text, /\| kernel32\.dll \| 2 \| 10 \| C:\/Windows\/kernel32\.dll \|/);
+  assert.match(text, /### kernel32\.dll: 2 blocks in 1 named function\n\n- CreateFileW \+0x10: 2 blocks, 10 bytes/);
+  assert.match(text, /### ntdll\.dll: 1 blocks in 1 named function/);
+});
+
+test('coverData: nothing recorded yet is an error; an unknown format is the drcov file', async () => {
+  const a = load();
+  assert.throws(() => a.coverData('drcov'), /No coverage has been recorded/);
+  a.coverStart(11, { mode: 'all' });
+  assert.throws(() => a.coverData('text'), /No coverage has been recorded/); // not until it is stopped
+  await stopCover(a);
+  assert.equal(typeof a.coverData('text'), 'string');
+});
+
+test('a recording stops by itself at the time limit, and at the block limit, and is still there to collect', async () => {
+  const a = load();
+  a.coverStart(11, { mode: 'all' });
+  a.stalker.optsBy[11].onReceive([blk(0x7ff010, 4)]);
+  const limit = a.timers.find((t) => t.ms === 600000);
+  limit.fn();
+  assert.deepEqual(a.stalker.unfollowed, [11]);
+  const r = await stopCover(a);
+  assert.equal(r.endedBy, 'limit');
+  assert.equal(r.blocks, 1);
+  a.coverStart(11, { mode: 'all' }); // and another can start
+  assert.equal((await stopCover(a)).blocks, 0);
+});
+
+test('coverStop: blocks inside a module the scope leaves out are dropped, wherever the thread happened to be', async () => {
+  const app = { name: 'app.exe', base: new Ptr(0x400000), size: 0x1000, path: 'C:/Program Files/App/app.exe', enumerateExports: () => [], enumerateImports: () => [] };
+  const a = load({ modules: [ntdll, app] });
+  a.coverStart(11, { mode: 'app' });
+  a.stalker.optsBy[11].onReceive([blk(0x400010, 4), blk(0x7fe100, 2), blk(0x7ff010, 4)]); // app, ntdll, kernel32
+  const r = await stopCover(a);
+  assert.deepEqual(r.modules.map((m) => [m.name, m.blocks]), [['app.exe', 1]]);
+  assert.equal(r.blocks, 1);
+  const b = load({ modules: [ntdll, app] });
+  b.coverStart(11, { mode: 'module', module: 'ntdll.dll' });
+  b.stalker.optsBy[11].onReceive([blk(0x400010, 4), blk(0x7fe100, 2)]);
+  assert.deepEqual((await stopCover(b)).modules.map((m) => m.name), ['ntdll.dll']);
 });

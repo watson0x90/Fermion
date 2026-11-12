@@ -3,16 +3,18 @@ import { useAppDispatch, useAppSelector } from '../../store';
 import { uiActions, AddressView } from '../../store/uiSlice';
 import { ModulesTab } from './inspector/ModulesTab';
 import { MemoryTab, Goto } from './inspector/MemoryTab';
+import { CoverageTab } from './inspector/CoverageTab';
 import { ThreadsTab } from './inspector/ThreadsTab';
 import { CodeTab } from './inspector/CodeTab';
 import { BookmarksTab } from './inspector/BookmarksTab';
 
-type Sub = 'modules' | 'memory' | 'code' | 'threads' | 'bookmarks';
+type Sub = 'modules' | 'memory' | 'code' | 'threads' | 'coverage' | 'bookmarks';
 const SUBS: { id: Sub; label: string }[] = [
   { id: 'modules', label: 'Modules' },
   { id: 'memory', label: 'Memory' },
   { id: 'code', label: 'Disassembly' },
   { id: 'threads', label: 'Threads' },
+  { id: 'coverage', label: 'Coverage' },
   { id: 'bookmarks', label: 'Bookmarks' },
 ];
 
@@ -72,6 +74,7 @@ export function InspectorPanel() {
           <div className="insp-slot" hidden={sub !== 'memory'}><MemoryTab active={panelActive && sub === 'memory'} goto={gotoFor('memory')} /></div>
           <div className="insp-slot" hidden={sub !== 'code'}><CodeTab goto={gotoFor('code')} /></div>
           <div className="insp-slot" hidden={sub !== 'threads'}><ThreadsTab active={panelActive && sub === 'threads'} onViewMemory={viewMemory} /></div>
+          <div className="insp-slot" hidden={sub !== 'coverage'}><CoverageTab active={panelActive && sub === 'coverage'} /></div>
         </div>
       )}
     </div>

@@ -299,6 +299,19 @@ Writing works on data and on code. Code is patched the way Frida patches it, so 
 
 **Disassembly** shows the instructions at an address. Type an address and press Go, or send one here from the address menu (below). Calls are blue, jumps amber and returns red. A call or jump to a fixed address shows where it goes: click that to follow it, and **◀** to come back. **More** continues the listing; it ends at the end of the memory range, or where the bytes stop being instructions. The header names the function and the memory's protection, and memory that is not executable is flagged, since its bytes may not be code.
 
+**Coverage** records which code runs while you use the program. Choose the threads (all of them, including threads that start while recording, or one) and what to record (everything except system libraries, one module, or everything), press **Record**, do the thing you are interested in in the target, and press **Stop**. The view then lists the modules that ran with how many basic blocks and how much code. A recording can be saved in two forms:
+
+- **Save drcov…** writes the standard drcov file. Load it into Lighthouse (IDA Pro, Binary Ninja) or Dragondance (Ghidra) to see the code that ran painted onto the disassembly, or to compare two runs.
+- **Save text report…** writes plain text made to be read by a person or handed to a language model: a header saying what was recorded and how to read it, a table of modules, and, for each module, the functions that ran with their offset, block count and bytes. Offsets are relative to the module base, so they can be looked up in any disassembler.
+
+Things to know:
+
+- The program runs slower while recording. Leaving system libraries out (the default) keeps it usable and the result readable. A recording stops by itself after 10 minutes or 2,000,000 blocks.
+- A block is recorded once, the first time it runs. How often it ran is not recorded; use **Follow** on the Threads view for call counts.
+- Function names in the text report come from the symbols Frida can find. In a module without debug symbols a block is named after the nearest exported symbol before it, so trust the offsets over the names there. The report says this too.
+- Code that is not in any module (code generated at run time by a JIT, for example) is counted but cannot be put in a drcov file, which describes code by module and offset.
+- The saved file is written by Fermion's main process to the place you pick; the recording stays available to save until you record again, even after the session ends.
+
 **The address menu.** Right-click an address anywhere in Fermion (a register, a backtrace frame, a symbol, a hex row, a scan result, an instruction, a function found in Hooks, a caller of a hooked call) for:
 
 | Item | Does |
@@ -448,7 +461,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.
