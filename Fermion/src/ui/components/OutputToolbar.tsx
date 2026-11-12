@@ -27,7 +27,8 @@ export function OutputToolbar({ ctrlRef, standalone = false }: { ctrlRef: Mutabl
   const save = async () => {
     const text: string = ctrlRef.current?.getText() ?? '';
     if (!text.trim()) return;
-    await window.fermion.saveFile(text, { title: 'Save Frida Output', defaultPath: 'frida-output.txt' });
+    // An export: it must not become the script file that Ctrl-S writes to.
+    await window.fermion.exportFile(text, { title: 'Save Frida Output', defaultPath: 'frida-output.txt' });
   };
 
   // ---- search: live as you type, with a session history on Up/Down ----

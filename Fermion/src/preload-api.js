@@ -42,6 +42,12 @@ function buildApi(ipcRenderer) {
 		openFile: () => ipcRenderer.invoke('fermion:openFile'),
 		saveFile: (content, opts) => ipcRenderer.invoke('fermion:saveFile', content, opts),
 		saveCurrentFile: (content) => ipcRenderer.invoke('fermion:saveCurrent', content),
+		// Save something that is not the script (Output log, graph): it does not
+		// become the file Ctrl-S writes to.
+		exportFile: (content, opts) => ipcRenderer.invoke('fermion:saveFile', content, opts, 'export'),
+		// Recent scripts (the list is kept by the main process).
+		recentFiles: () => ipcRenderer.invoke('fermion:recentFiles'),
+		openRecent: (filePath) => ipcRenderer.invoke('fermion:openRecent', filePath),
 		messageBox: (options) => ipcRenderer.invoke('fermion:messageBox', options),
 		openExternal: (url) => ipcRenderer.invoke('fermion:openExternal', url),
 		openWindow: (page, dims) => ipcRenderer.invoke('fermion:openWindow', page, dims),

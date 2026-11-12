@@ -7,6 +7,8 @@ const { createDispatch, wireServiceEvents } = require('./src/frida-ipc.js');
 const { buildWindowOptions } = require('./src/windows.js');
 const { isAllowedPage, isSafeExternalUrl } = require('./src/ipc-guards.js');
 const { createOutputWindowManager } = require('./src/output-window.js');
+const { createFileHandlers } = require('./src/file-ipc.js');
+const { RecentFiles } = require('./src/recent-files.js');
 var bWin;
 
 // All frida-node interaction runs here in the main process. The renderer drives
@@ -51,26 +53,17 @@ ipcMain.handle('fermion:openExternal', (_e, url) => {
 // File dialogs + I/O. Main owns the "current file" so the renderer never gets an
 // arbitrary write-anywhere primitive: the overwrite path (saveCurrent) can only
 // write the path a dialog previously returned to this app.
-let currentFilePath = null;
-ipcMain.handle('fermion:openFile', async () => {
-  const r = await dialog.showOpenDialog({ properties: ['openFile'], title: 'Fermion Open File' });
-  if (!r.filePaths || r.filePaths.length === 0) return null;
-  currentFilePath = r.filePaths[0];
-  const content = await fs.promises.readFile(currentFilePath, 'utf-8');
-  return { path: currentFilePath, content };
+const fileHandlers = createFileHandlers({
+  dialog,
+  fs,
+  recent: new RecentFiles(path.join(app.getPath('userData'), 'recent-files.json')),
 });
-ipcMain.handle('fermion:saveFile', async (_e, content, opts) => {
-  const r = await dialog.showSaveDialog(opts || { title: 'Fermion Save File' });
-  if (!r.filePath) return null;
-  await fs.promises.writeFile(r.filePath, content);
-  currentFilePath = r.filePath;
-  return r.filePath;
-});
-ipcMain.handle('fermion:saveCurrent', async (_e, content) => {
-  if (!currentFilePath) return null;
-  await fs.promises.writeFile(currentFilePath, content);
-  return currentFilePath;
-});
+ipcMain.handle('fermion:openFile', () => fileHandlers.openFile());
+ipcMain.handle('fermion:saveFile', (_e, content, opts, purpose) => fileHandlers.saveFile(content, opts, purpose));
+ipcMain.handle('fermion:saveCurrent', (_e, content) => fileHandlers.saveCurrent(content));
+// Recent scripts: the list lives here, and only a path on it can be re-opened.
+ipcMain.handle('fermion:recentFiles', () => fileHandlers.recentFiles());
+ipcMain.handle('fermion:openRecent', (_e, filePath) => fileHandlers.openRecent(filePath));
 ipcMain.handle('fermion:messageBox', async (_e, options) => dialog.showMessageBox(options));
 
 // A remote origin must never inherit the bridge-privileged webPreferences, so

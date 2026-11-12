@@ -74,3 +74,60 @@ test('a failed reload (script error) is reported in Output', async () => {
   await waitFor(() => expect(lines.some((l) => l.startsWith('ERR') && l.includes('unexpected token'))).toBe(true));
   setTerminalSink(null);
 });
+
+test('the toolbar names the file, marks unsaved changes, and Save clears the mark', async () => {
+  let onChange: () => void = () => {};
+  const editor = { getValue: () => 'x', setValue: vi.fn(), updateOptions: vi.fn(), getRawOptions: () => ({ wordWrap: 'off' }), dispose: vi.fn(), onDidChangeModelContent: (cb: () => void) => { onChange = cb; } };
+  (window as any).monaco.editor.create = () => editor;
+  (window as any).fermion.saveFile = vi.fn(async () => 'C:/scripts/hook.js');
+  (window as any).fermion.saveCurrentFile = vi.fn(async () => 'C:/scripts/hook.js');
+  const store = makeStore();
+  render(<Provider store={store}><EditorPane /></Provider>);
+  await waitFor(() => expect((window as any).MonacoCodeEditor).toBeDefined());
+
+  expect(screen.getByTestId('editor-file')).toHaveTextContent('untitled.js');
+  expect(screen.queryByTestId('editor-dirty')).toBeNull();
+  act(() => { onChange(); }); // the user types
+  expect(screen.getByTestId('editor-dirty')).toBeInTheDocument();
+
+  fireEvent.click(screen.getByTestId('editor-save'));
+  await waitFor(() => expect(screen.getByTestId('editor-file')).toHaveTextContent('hook.js'));
+  expect(screen.getByTestId('editor-file')).toHaveAttribute('title', 'C:/scripts/hook.js');
+  expect(screen.queryByTestId('editor-dirty')).toBeNull();
+  expect((window as any).fermion.saveFile).toHaveBeenCalledTimes(1);
+
+  act(() => { onChange(); });
+  fireEvent.click(screen.getByTestId('editor-save'));
+  await waitFor(() => expect((window as any).fermion.saveCurrentFile).toHaveBeenCalledWith('x')); // no dialog the second time
+  await waitFor(() => expect(screen.queryByTestId('editor-dirty')).toBeNull());
+});
+
+test('the recent menu lists files from the main process and opens the one picked', async () => {
+  const editor = { getValue: () => 'x', setValue: vi.fn(), updateOptions: vi.fn(), getRawOptions: () => ({ wordWrap: 'off' }), dispose: vi.fn(), onDidChangeModelContent: () => {} };
+  (window as any).monaco.editor.create = () => editor;
+  (window as any).fermion.recentFiles = vi.fn(async () => ['C:/scripts/a.js', 'D:/work/b.js']);
+  (window as any).fermion.openRecent = vi.fn(async (p: string) => ({ path: p, content: 'B-CONTENT' }));
+  const store = makeStore();
+  render(<Provider store={store}><EditorPane /></Provider>);
+  await waitFor(() => expect((window as any).MonacoCodeEditor).toBeDefined());
+
+  expect(screen.queryByTestId('editor-recent-menu')).toBeNull();
+  fireEvent.click(screen.getByTestId('editor-recent'));
+  const items = await screen.findAllByTestId('editor-recent-item');
+  expect(items.map((i) => i.querySelector('.mn')!.textContent)).toEqual(['a.js', 'b.js']);
+  expect(items[1]).toHaveAttribute('title', 'D:/work/b.js');
+
+  fireEvent.click(items[1]);
+  await waitFor(() => expect((window as any).fermion.openRecent).toHaveBeenCalledWith('D:/work/b.js'));
+  await waitFor(() => expect(editor.setValue).toHaveBeenCalledWith('B-CONTENT'));
+  expect(screen.queryByTestId('editor-recent-menu')).toBeNull(); // closed after picking
+  expect(screen.getByTestId('editor-file')).toHaveTextContent('b.js');
+});
+
+test('an empty recent list says so', async () => {
+  (window as any).fermion.recentFiles = vi.fn(async () => []);
+  render(<Provider store={makeStore()}><EditorPane /></Provider>);
+  await waitFor(() => expect((window as any).MonacoCodeEditor).toBeDefined());
+  fireEvent.click(screen.getByTestId('editor-recent'));
+  await waitFor(() => expect(screen.getByTestId('editor-recent-menu')).toHaveTextContent(/No recent scripts yet/));
+});

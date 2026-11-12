@@ -117,3 +117,18 @@ test('inspect.* invoke the matching inspect methods', async () => {
     ['inspectBacktrace', 7], ['inspectRanges', 'r--'], ['inspectRead', '0x10', 256], ['inspectScan', '4d 5a', 'r--'],
   ]);
 });
+
+test('file bridge: exports are flagged, and recent files use their own channels', async () => {
+  const sent = [];
+  const api = buildApi({ invoke: (...a) => { sent.push(a); return Promise.resolve(null); }, on: () => {} });
+  await api.saveFile('script', { title: 'x' });
+  await api.exportFile('log', { title: 'Save Frida Output' });
+  await api.recentFiles();
+  await api.openRecent('C:/scripts/a.js');
+  assert.deepEqual(sent, [
+    ['fermion:saveFile', 'script', { title: 'x' }],
+    ['fermion:saveFile', 'log', { title: 'Save Frida Output' }, 'export'],
+    ['fermion:recentFiles'],
+    ['fermion:openRecent', 'C:/scripts/a.js'],
+  ]);
+});

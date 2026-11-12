@@ -25,7 +25,7 @@ function setup({ attached = true } = {}) {
     onMessage: (cb: any) => { onMessage = cb; }, onLog: () => {}, onDetached: () => {},
     reloadScript: vi.fn(async (s: string) => { calls.push(['reload', s]); }),
     renderGraph: vi.fn(async (dot: string) => `<svg width="300pt" height="150pt" xmlns="http://www.w3.org/2000/svg"><!--${dot}--></svg>`),
-    saveFile: vi.fn(async () => 'C:/trace.svg'),
+    exportFile: vi.fn(async () => 'C:/trace.svg'),
     inspect: {
       modules: vi.fn(async () => ({ items: [{ name: 'kernel32.dll' }, { name: 'ntdll.dll' }] })),
       exports: vi.fn(async () => ({ items: [{ type: 'function', name: 'CreateFileW' }, { type: 'variable', name: 'g_data' }, { type: 'function', name: 'CloseHandle' }] })),
@@ -223,7 +223,7 @@ test('the graph opens at its natural, readable size; zoom scales it; Fit shrinks
   fireEvent.click(screen.getByTestId('graph-zoom-in')); // from Fit, zoom starts again at 100%
   expect(img.style.width).toBe('400px');
   fireEvent.click(screen.getByTestId('graph-save'));
-  expect(fermion.saveFile).toHaveBeenCalledWith(expect.stringContaining('<svg'), expect.objectContaining({ defaultPath: 'trace.svg' }));
+  expect(fermion.exportFile).toHaveBeenCalledWith(expect.stringContaining('<svg'), expect.objectContaining({ defaultPath: 'trace.svg' }));
 });
 
 test('module and function suggestions come from the attached process', async () => {
