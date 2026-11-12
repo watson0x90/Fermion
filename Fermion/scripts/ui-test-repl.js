@@ -96,6 +96,63 @@ const shot = process.argv[2];
 
     if (shot) await win.screenshot({ path: shot });
 
+    step = 'tab completion';
+    const input = '[data-testid="repl-input"]';
+    await win.click(input);
+    await win.keyboard.type('Process.enumerateMod');
+    await win.keyboard.press('Tab');
+    await win.waitForFunction(() => document.querySelector('[data-testid="repl-input"]').value === 'Process.enumerateModules', undefined, { timeout: 15000 });
+    await win.fill(input, '');
+    await win.keyboard.type('Process.enum');
+    await win.keyboard.press('Tab');
+    await win.waitForFunction(() => document.querySelectorAll('[data-testid="repl-choice"]').length >= 3, undefined, { timeout: 15000 });
+    const offered = await win.evaluate(() => ({
+      value: document.querySelector('[data-testid="repl-input"]').value,
+      names: [...document.querySelectorAll('[data-testid="repl-choice"]')].map((c) => c.textContent),
+      focused: document.activeElement === document.querySelector('[data-testid="repl-input"]'),
+    }));
+    if (offered.value !== 'Process.enumerate') throw new Error('shared prefix not filled in: ' + offered.value);
+    if (!offered.names.includes('enumerateModules()') || !offered.names.includes('enumerateThreads()')) throw new Error('choices: ' + offered.names.join(','));
+    if (!offered.focused) throw new Error('Tab moved the focus out of the prompt');
+    if (shot) await win.screenshot({ path: shot.replace(/\.png$/, '-complete.png') });
+    await win.click('[data-testid="repl-choice"]:has-text("enumerateThreads")');
+    if ((await win.inputValue(input)) !== 'Process.enumerateThreads') throw new Error('picking a choice gave ' + (await win.inputValue(input)));
+    await win.fill(input, '');
+    // Completion left no trace in the transcript.
+    const nBefore = await win.evaluate(() => document.querySelectorAll('[data-testid="repl-entry"]').length);
+
+    step = 'help';
+    const helpFn = await entry('help Process.enumerateModules');
+    if (helpFn.err || !/enumerateModules\(\): Module\[\]/.test(helpFn.text) || !/modules/i.test(helpFn.text)) throw new Error('help for a function: ' + JSON.stringify(helpFn.text.slice(0, 300)));
+    const helpNs = await entry('help Process');
+    for (const want of ['Process — namespace', 'enumerateModules', 'id: number', 'help Process.<name>']) {
+      if (!helpNs.text.includes(want)) throw new Error('help Process lacks "' + want + '": ' + helpNs.text.slice(0, 400));
+    }
+    const helpCls = await entry('help NativePointer');
+    if (!/NativePointer — class/.test(helpCls.text) || !/Instances/.test(helpCls.text) || !/readByteArray/.test(helpCls.text)) throw new Error('help NativePointer: ' + helpCls.text.slice(0, 400));
+    const overview = await entry('help');
+    for (const want of ['help <name>', 'Interceptor', 'Process', 'Memory']) {
+      if (!overview.text.includes(want)) throw new Error('help overview lacks "' + want + '"');
+    }
+    const unknown = await entry('help definitelyNotAThing');
+    if (!/No help for/.test(unknown.text)) throw new Error('unknown topic: ' + unknown.text);
+    const nAfter = await win.evaluate(() => document.querySelectorAll('[data-testid="repl-entry"]').length);
+    if (nAfter !== nBefore + 5) throw new Error('transcript grew by ' + (nAfter - nBefore) + ' (completion must add nothing, help 5)');
+    const outText = await win.evaluate(() => window.__fermion.terminal.getText());
+    if (/frida> help/.test(outText) || outText.includes('__fermion')) throw new Error('help/completion leaked into Output');
+    if (shot) await win.screenshot({ path: shot.replace(/\.png$/, '-help.png') });
+
+    step = 'editor reload button';
+    await win.click('role=tab[name="Editor"]');
+    await win.evaluate(() => window.MonacoCodeEditor.setValue("console.log('EDITOR_RELOAD_MARK');"));
+    await win.click('[data-testid="editor-reload"]');
+    await win.waitForFunction(() => {
+      const t = window.__fermion.terminal.getText();
+      return t.includes('EDITOR_RELOAD_MARK') && t.includes('Script reloaded');
+    }, undefined, { timeout: 20000 });
+    if (shot) await win.screenshot({ path: shot.replace(/\.png$/, '-editor.png') });
+    await win.click('role=tab[name="REPL"]');
+
     step = 'entry that never finishes';
     // Must time out (20 s) and give the prompt back instead of locking it.
     const n0 = await win.evaluate(() => document.querySelectorAll('[data-testid="repl-entry"]').length);
@@ -114,7 +171,7 @@ const shot = process.argv[2];
     await win.click('[data-testid="detach"]');
     await win.waitForFunction(() => document.querySelector('[data-testid="repl-input"]').disabled, undefined, { timeout: 15000 });
 
-    console.log('REPL_OK evaluate + objects + persistence + errors + own scope + Output mirror + survives reload + history + timeout recovery');
+    console.log('REPL_OK evaluate + objects + persistence + errors + own scope + Output mirror + survives reload + history + Tab completion + help + editor Reload + timeout recovery');
     await app.close();
     done(0);
   } catch (e) {

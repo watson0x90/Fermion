@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
-import { sessionActions } from '../store/sessionSlice';
 import { outputActions } from '../store/outputSlice';
 import { writeTerminal, clearTerminal } from '../bridge';
+import { reloadFromEditor } from '../sessionOps';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion;
@@ -83,11 +83,7 @@ export function useKeybinds() {
 
     function reloadScript() {
       if (!attachedRef.current) return; // nothing to reload without a session
-      const content: string = editor()?.getValue?.() ?? '';
-      Promise.resolve(api()?.reloadScript?.(content)).then(() => {
-        dispatch(sessionActions.scriptLoaded());
-        writeTerminal('STATUS', '[+] Script reloaded..');
-      }).catch((err: unknown) => writeTerminal('ERR', '[!] Error reloading script: ' + err));
+      reloadFromEditor(dispatch);
     }
 
     document.addEventListener('keydown', onKey);

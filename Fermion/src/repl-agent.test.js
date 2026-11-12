@@ -121,3 +121,99 @@ test('very deep or very large structures are cut off rather than walked in full'
   assert.equal(wide.ok, true);
   assert.ok(wide.text.length < 70000);
 });
+
+// ---- tab completion + help introspection (called through evaluate) ----
+// The REPL panel calls these as `__fermion.complete("…")` / `__fermion.inspect("…")`.
+const names = (r) => JSON.parse(r.text).items.map((i) => i.name);
+
+test('__fermion is a hidden global: usable, but not listed among the globals', async () => {
+  const ev = load();
+  assert.equal((await ev('typeof __fermion.complete')).text, '"function"');
+  assert.equal((await ev('Object.keys(globalThis).indexOf("__fermion")')).text, '-1');
+});
+
+test('complete: members of an object by prefix, with where the replacement starts', async () => {
+  const ev = load();
+  await ev('var Proc = { id: 1, enumerateModules: function () {}, enumerateThreads: function () {}, arch: "x64" }');
+  const r = JSON.parse((await ev('__fermion.complete("x = Proc.enum")')).text);
+  assert.deepEqual(r.items, [{ name: 'enumerateModules', kind: 'function' }, { name: 'enumerateThreads', kind: 'function' }]);
+  assert.equal(r.from, 'x = Proc.'.length);
+  assert.deepEqual(names(await ev('__fermion.complete("Proc.")')), ['arch', 'enumerateModules', 'enumerateThreads', 'id']);
+  assert.equal(JSON.parse((await ev('__fermion.complete("Proc.a")')).text).items[0].kind, 'property');
+});
+
+test('complete: global names by prefix; nothing for an empty prefix', async () => {
+  const ev = load();
+  await ev('var hookCount = 0; var hookTable = {}');
+  assert.deepEqual(names(await ev('__fermion.complete("1 + hook")')), ['hookCount', 'hookTable']);
+  assert.deepEqual(names(await ev('__fermion.complete("")')), []);
+  assert.deepEqual(names(await ev('__fermion.complete("foo(")')), []);
+});
+
+test('complete: inherited members are offered; Object.prototype noise only when asked for by prefix', async () => {
+  const ev = load();
+  await ev('var inst = new (class Base { baseMethod() {} })(); inst.own = 1');
+  const all = names(await ev('__fermion.complete("inst.")'));
+  assert.ok(all.includes('own') && all.includes('baseMethod'));
+  assert.ok(!all.includes('hasOwnProperty') && !all.includes('constructor'));
+  assert.deepEqual(names(await ev('__fermion.complete("inst.hasOwn")')), ['hasOwnProperty']);
+});
+
+test('complete: never calls anything — a chain containing a call or index is not completed', async () => {
+  const ev = load();
+  await ev('var calls = 0; function sideEffect() { calls++; return { value: 1 }; } var arr = [{ v: 1 }]');
+  assert.deepEqual(names(await ev('__fermion.complete("sideEffect().va")')), []);
+  assert.deepEqual(names(await ev('__fermion.complete("arr[0].v")')), []);
+  assert.equal((await ev('calls')).text, '0');
+});
+
+test('complete: an unknown or broken base gives no candidates rather than an error', async () => {
+  const ev = load();
+  assert.deepEqual(names(await ev('__fermion.complete("nope.x")')), []);
+  await ev('var trap = { get boom() { throw new Error("no"); } }');
+  assert.deepEqual(names(await ev('__fermion.complete("trap.boom.x")')), []);
+  assert.deepEqual(names(await ev('__fermion.complete("undefinedThing.")')), []);
+});
+
+test('complete: the list is capped', async () => {
+  const ev = load();
+  await ev('var wide = {}; for (var i = 0; i < 2000; i++) wide["k" + i] = i');
+  const r = JSON.parse((await ev('__fermion.complete("wide.k")')).text);
+  assert.equal(r.items.length, 200);
+  assert.equal(r.truncated, true);
+});
+
+test('inspect: what a name is, and its members with kind and argument count', async () => {
+  const ev = load();
+  await ev('var Proc = { id: 42, arch: "x64", enumerateModules: function () {}, findModuleByName: function (name) { return name; } }');
+  const r = JSON.parse((await ev('__fermion.inspect("Proc")')).text);
+  assert.equal(r.found, true);
+  assert.equal(r.type, 'object');
+  assert.deepEqual(r.members, [
+    { name: 'arch', kind: 'property', type: 'string' },
+    { name: 'enumerateModules', kind: 'function', arity: 0 },
+    { name: 'findModuleByName', kind: 'function', arity: 1 },
+    { name: 'id', kind: 'property', type: 'number' },
+  ]);
+  const fn = JSON.parse((await ev('__fermion.inspect("Proc.findModuleByName")')).text);
+  assert.deepEqual({ found: fn.found, type: fn.type, arity: fn.arity }, { found: true, type: 'function', arity: 1 });
+  const val = JSON.parse((await ev('__fermion.inspect("Proc.id")')).text);
+  assert.deepEqual({ found: val.found, type: val.type, value: val.value }, { found: true, type: 'number', value: '42' });
+});
+
+test('inspect: unknown names and non-names are reported as not found, without evaluating code', async () => {
+  const ev = load();
+  await ev('var ran = 0; function go() { ran++; }');
+  assert.equal(JSON.parse((await ev('__fermion.inspect("nope")')).text).found, false);
+  assert.equal(JSON.parse((await ev('__fermion.inspect("go()")')).text).found, false);
+  assert.equal(JSON.parse((await ev('__fermion.inspect("a; go()")')).text).found, false);
+  assert.equal((await ev('ran')).text, '0');
+});
+
+test('globals: the names available at the prompt (for the help overview)', async () => {
+  const ev = load();
+  await ev('var mine = 1');
+  const r = JSON.parse((await ev('__fermion.globals()')).text);
+  assert.ok(r.includes('mine') && r.includes('ptr') && r.includes('NativePointer'));
+  assert.ok(!r.includes('__fermion'));
+});

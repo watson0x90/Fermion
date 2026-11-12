@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
 import { sessionActions } from '../store/sessionSlice';
-import { attachAndLoad } from '../sessionOps';
+import { attachAndLoad, reloadFromEditor } from '../sessionOps';
 import { Icon } from './Icon';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -36,10 +36,7 @@ export function SessionControls() {
     if (!pid) return;
     await attachAndLoad(dispatch, Number(pid)); // shared with the Process tree
   };
-  const onReload = async () => {
-    await api().reloadScript(scriptSrc());
-    dispatch(sessionActions.scriptLoaded());
-  };
+  const onReload = () => reloadFromEditor(dispatch);
   const onDetach = async () => {
     await api().detach();
     dispatch(sessionActions.detached());
