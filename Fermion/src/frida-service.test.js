@@ -171,3 +171,158 @@ test('evaluate: two entries racing on a fresh session still load one agent', asy
   await Promise.all([svc.evaluate('a'), svc.evaluate('b')]);
   assert.equal(session.scripts.length, 1);
 });
+
+// ---- Inspector: read-only target inspection ----
+function inspectorService() {
+  const { FridaService } = require('./frida-service.js');
+  const svc = new FridaService();
+  const calls = [];
+  const session = fakeSession();
+  const create = session.createScript;
+  session.createScript = async (src) => {
+    const s = await create(src);
+    if (/Inspector agent/.test(src)) {
+      const rec = (name) => async (...args) => { calls.push([name, ...args]); return { items: [], total: 0, truncated: false }; };
+      s.exports = { modules: rec('modules'), exports: rec('exports'), imports: rec('imports'), threads: rec('threads'),
+        backtrace: rec('backtrace'), ranges: rec('ranges'), read: rec('read'), scan: rec('scan') };
+    }
+    return s;
+  };
+  svc._frida = { getDevice: async () => ({ attach: async () => session }) };
+  return { svc, session, calls };
+}
+
+test('inspect*: every operation refuses when not attached', async () => {
+  const { FridaService } = require('./frida-service.js');
+  const svc = new FridaService();
+  for (const call of [() => svc.inspectModules(), () => svc.inspectThreads(), () => svc.inspectRanges('r--'), () => svc.inspectRead('0x1000', 16)]) {
+    await assert.rejects(call, /not attached/i);
+  }
+});
+
+test('inspect*: forwards validated arguments to one inspector agent per session', async () => {
+  const { svc, session, calls } = inspectorService();
+  await svc.attach(1);
+  await svc.inspectModules();
+  await svc.inspectExports('kernel32.dll');
+  await svc.inspectImports('kernel32.dll');
+  await svc.inspectThreads();
+  await svc.inspectBacktrace(4242);
+  await svc.inspectRanges('r-x');
+  await svc.inspectRead('0x7FF000', 256);
+  await svc.inspectScan('4d 5a ?? 00', 'rw-');
+  assert.deepEqual(calls, [
+    ['modules'], ['exports', 'kernel32.dll'], ['imports', 'kernel32.dll'], ['threads'], ['backtrace', 4242],
+    ['ranges', 'r-x'], ['read', '0x7ff000', 256], ['scan', '4d 5a ?? 00', 'rw-'],
+  ]);
+  assert.equal(session.scripts.filter((s) => /Inspector agent/.test(s.src)).length, 1);
+});
+
+test('inspect*: the inspector agent is separate from the REPL agent and the user script', async () => {
+  const { svc, session } = inspectorService();
+  await svc.attach(1);
+  await svc.inspectModules();
+  await svc.evaluate('1');
+  await svc.loadScript('send(1)');
+  assert.equal(session.scripts.length, 3);
+  assert.equal(svc.hasScript, true);
+  assert.equal(session.scripts.some((s) => s.unloaded), false);
+});
+
+test('inspect*: malformed arguments are rejected before reaching the target', async () => {
+  const { svc, calls } = inspectorService();
+  await svc.attach(1);
+  const bad = [
+    () => svc.inspectExports(''), () => svc.inspectExports(42), () => svc.inspectExports('x'.repeat(2000)),
+    () => svc.inspectBacktrace(-1), () => svc.inspectBacktrace(1.5), () => svc.inspectBacktrace('12'),
+    () => svc.inspectRanges('rwxx'), () => svc.inspectRanges('abc'), () => svc.inspectRanges(undefined),
+    () => svc.inspectRead('1000', 16), () => svc.inspectRead('0xZZ', 16), () => svc.inspectRead('0x' + 'f'.repeat(17), 16),
+    () => svc.inspectRead('0x1000', 0), () => svc.inspectRead('0x1000', 4097), () => svc.inspectRead('0x1000', '16'),
+    () => svc.inspectScan('', 'r--'), () => svc.inspectScan('zz', 'r--'), () => svc.inspectScan('4d5a', 'r--'),
+    () => svc.inspectScan('4d 5a', 'nope'), () => svc.inspectScan('4d '.repeat(3000).trim(), 'r--'),
+    () => svc.inspectScan('?? ??', 'r--'),
+  ];
+  for (const call of bad) await assert.rejects(call, /invalid|empty|too long|must/i);
+  assert.deepEqual(calls, []);
+});
+
+test('inspect*: an error thrown inside the target is passed on as a rejection with its message', async () => {
+  const { svc, session } = inspectorService();
+  await svc.attach(1);
+  await svc.inspectModules();
+  session.scripts[0].exports.exports = async () => { throw new Error('Module not found: nope.dll'); };
+  await assert.rejects(() => svc.inspectExports('nope.dll'), /Module not found: nope\.dll/);
+});
+
+// ---- review fixes: timeouts, unload, session cleanup, scan pattern ----
+test('evaluate: an entry that never finishes times out, and the next entry gets a fresh agent', async () => {
+  const { svc, session } = attachedService();
+  svc._evalTimeoutMs = 30;
+  await svc.attach(4821);
+  await svc.evaluate('1');
+  session.scripts[0].exports.evaluate = () => new Promise(() => {}); // e.g. new Promise(() => {})
+  const r = await svc.evaluate('hang()');
+  assert.equal(r.ok, false);
+  assert.match(r.error, /timed out/i);
+  assert.equal(session.scripts[0].unloaded, true); // the stuck agent is dropped
+  const next = await svc.evaluate('2');
+  assert.equal(next.ok, true);
+  assert.equal(session.scripts.length, 2);
+});
+
+test('unload: unloads the user script only, and is reachable through the dispatch', async () => {
+  const { createDispatch } = require('./frida-ipc.js');
+  const { svc, session } = attachedService();
+  await svc.attach(4821);
+  await svc.evaluate('1');
+  await svc.loadScript('send(1)');
+  await createDispatch(svc)('unload');
+  const user = session.scripts.find((s) => s.src === 'send(1)');
+  assert.equal(user.unloaded, true);
+  assert.equal(svc.hasScript, false);
+  assert.equal(session.scripts[0].unloaded, false); // the REPL agent stays
+  await createDispatch(svc)('unload'); // nothing loaded: a no-op, not an error
+});
+
+test('detach: the service forgets the script and pid, so getState is truthful afterwards', async () => {
+  const { svc } = attachedService();
+  await svc.attach(4821);
+  await svc.loadScript('send(1)');
+  await svc.detach();
+  assert.deepEqual(svc.getState(), { deviceId: 'local', isAttached: false, hasScript: false, currentPid: null });
+});
+
+test('an old session reporting "detached" late does not detach the new session', async () => {
+  const { FridaService } = require('./frida-service.js');
+  const svc = new FridaService();
+  const handlers = [];
+  const mk = () => { const s = fakeSession(); s.detached = { connect: (cb) => handlers.push(cb) }; return s; };
+  const sessions = [mk(), mk()];
+  let i = 0;
+  svc._frida = { getDevice: async () => ({ attach: async () => sessions[i++] }) };
+  const events = [];
+  svc.on('detached', (reason) => events.push(reason));
+
+  await svc.attach(1);
+  await svc.detach();          // user detaches; frida will report it later
+  await svc.attach(2);
+  await svc.loadScript('send(1)');
+  handlers[0]('application-requested'); // the OLD session's signal arrives now
+  assert.equal(svc.isAttached, true);
+  assert.equal(svc.hasScript, true);
+  assert.deepEqual(events, []);
+
+  handlers[1]('process-terminated');    // the current session really ends
+  assert.equal(svc.isAttached, false);
+  assert.equal(svc.hasScript, false);
+  assert.equal(svc.currentPid, null);
+  assert.deepEqual(events, ['process-terminated']);
+});
+
+test('inspectScan: a pattern needs at least two concrete bytes (a 1-byte scan matches nearly everything)', async () => {
+  const { svc, calls } = inspectorService();
+  await svc.attach(1);
+  for (const p of ['00', '4d', '4d ??', '?? 4d ??', '4? 5?']) await assert.rejects(() => svc.inspectScan(p, 'r--'), /two concrete bytes/i);
+  await svc.inspectScan('4d ?? 5a', 'r--');
+  assert.deepEqual(calls, [['scan', '4d ?? 5a', 'r--']]);
+});

@@ -96,11 +96,25 @@ const shot = process.argv[2];
 
     if (shot) await win.screenshot({ path: shot });
 
+    step = 'entry that never finishes';
+    // Must time out (20 s) and give the prompt back instead of locking it.
+    const n0 = await win.evaluate(() => document.querySelectorAll('[data-testid="repl-entry"]').length);
+    await win.click('[data-testid="repl-input"]');
+    await win.keyboard.type('new Promise(function () {})');
+    await win.keyboard.press('Enter');
+    await win.waitForFunction((k) => {
+      const r = document.querySelectorAll('[data-testid="repl-result"]')[k];
+      return r && r.classList.contains('err') && /Timed out/.test(r.textContent);
+    }, n0, { timeout: 40000 });
+    await win.waitForFunction(() => !document.querySelector('[data-testid="repl-input"]').disabled, undefined, { timeout: 15000 });
+    const again = await entry('1 + 1');
+    if (again.text !== '2') throw new Error('REPL did not recover after a timeout: ' + JSON.stringify(again));
+
     step = 'detach';
     await win.click('[data-testid="detach"]');
     await win.waitForFunction(() => document.querySelector('[data-testid="repl-input"]').disabled, undefined, { timeout: 15000 });
 
-    console.log('REPL_OK evaluate + objects + persistence + errors + own scope + Output mirror + survives reload + history');
+    console.log('REPL_OK evaluate + objects + persistence + errors + own scope + Output mirror + survives reload + history + timeout recovery');
     await app.close();
     done(0);
   } catch (e) {

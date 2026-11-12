@@ -39,3 +39,14 @@ test('evaluate (REPL) is allow-listed and forwards its code argument', async () 
   assert.deepEqual(await dispatch('evaluate', 'Process.id'), { ok: true });
   assert.deepEqual(calls, ['Process.id']);
 });
+
+test('the Inspector read-only operations are allow-listed', async () => {
+  const names = ['inspectModules', 'inspectExports', 'inspectImports', 'inspectThreads', 'inspectBacktrace', 'inspectRanges', 'inspectRead', 'inspectScan'];
+  const svc = {};
+  for (const n of names) svc[n] = async (...a) => [n, ...a];
+  const dispatch = createDispatch(svc);
+  for (const n of names) assert.deepEqual(await dispatch(n, 'x'), [n, 'x']);
+  // Nothing that writes to the target is exposed under an inspect* name.
+  const { INVOKE_METHODS } = require('./frida-ipc.js');
+  assert.deepEqual([...INVOKE_METHODS].filter((m) => m.startsWith('inspect')).sort(), names.slice().sort());
+});

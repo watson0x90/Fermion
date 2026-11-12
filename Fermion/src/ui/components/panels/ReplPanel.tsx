@@ -104,7 +104,7 @@ export function ReplPanel() {
         {!entries.length && (
           <div className="repl-hint">
             {isAttached
-              ? <>Type an expression and press Enter — for example <code>Process.id</code> or <code>Process.enumerateModules()[0]</code>. Variables you define stay available. The REPL has its own scope, separate from the script in the Editor.</>
+              ? <>Type an expression and press Enter — for example <code>Process.id</code> or <code>Process.enumerateModules()[0]</code>. Variables declared with <code>var</code> stay available between entries (<code>let</code> and <code>const</code> do not). The REPL has its own scope, separate from the script in the Editor. An entry that runs longer than 20 seconds is stopped.</>
               : <>Attach to a process to use the REPL.</>}
           </div>
         )}

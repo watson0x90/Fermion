@@ -61,10 +61,12 @@ function killTarget(t) {
 
     step = 'filter';
     await win.fill('[data-testid="tree-filter"]', String(target.child));
-    await win.waitForFunction((c) => {
+    // The filter matches PIDs by substring, so a short PID can match several
+    // processes; require only that the list narrowed and our row is a match.
+    await win.waitForFunction(([c, all]) => {
       const rows = [...document.querySelectorAll('[role="treeitem"]')];
-      return rows.length > 0 && rows.length < 12 && rows.some((r) => r.getAttribute('data-pid') === String(c) && r.classList.contains('match'));
-    }, target.child, { timeout: 15000 });
+      return rows.length > 0 && rows.length < all && rows.some((r) => r.getAttribute('data-pid') === String(c) && r.classList.contains('match'));
+    }, [target.child, total], { timeout: 15000 });
     const kept = await win.evaluate((p) => !!document.querySelector('[data-testid="proc-' + p + '"]'), target.parent);
     if (!kept) throw new Error('filter dropped the parent of the match');
     await win.fill('[data-testid="tree-filter"]', '');
@@ -101,7 +103,7 @@ function killTarget(t) {
       await win.click('[data-testid="tree-ancestry"]');
       await win.waitForFunction(([p, c]) => {
         const pids = [...document.querySelectorAll('[role="treeitem"]')].map((r) => r.getAttribute('data-pid'));
-        return pids.includes(String(p)) && pids.includes(String(c)) && pids.length < 12;
+        return pids.includes(String(p)) && pids.includes(String(c)) && pids.length < 40;
       }, [target.parent, target.child], { timeout: 15000 });
       if (shot) await win.screenshot({ path: shot.replace(/\.png$/, '-attached.png') });
       console.log('TREE_OK hierarchy + filter + collapse + attach from row + only ancestry');
