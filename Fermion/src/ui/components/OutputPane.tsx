@@ -39,7 +39,13 @@ export function OutputPane({ standalone = false }: { standalone?: boolean }) {
     let raf = 0;
     const onResize = () => { if (raf) return; raf = requestAnimationFrame(() => { raf = 0; ctrl.fit(); }); };
     window.addEventListener('resize', onResize);
+    // The pane also changes size without the window doing so: the toolbar wraps
+    // onto another row, the rail expands, Output docks. Refit on those too, or
+    // the terminal keeps its old rows/columns and runs past the pane.
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
+    ro?.observe(hostRef.current);
     return () => {
+      ro?.disconnect();
       window.removeEventListener('resize', onResize);
       if (raf) cancelAnimationFrame(raf);
       setTerminalSink(null);
