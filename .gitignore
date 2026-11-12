@@ -31,3 +31,7 @@ Fermion/src/renderer.bundle.css
 Fermion/src/renderer.bundle.css.map
 # REPL help index (generated from @types/frida-gum by npm run build)
 Fermion/src/frida-help.json
+
+
+# Research Folder
+references/
