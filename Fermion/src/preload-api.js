@@ -52,6 +52,7 @@ function buildApi(ipcRenderer) {
 			toggleMaximize: () => ipcRenderer.invoke('fermion:win', 'toggleMaximize'),
 			close: () => ipcRenderer.invoke('fermion:win', 'close'),
 			isMaximized: () => ipcRenderer.invoke('fermion:win', 'isMaximized'),
+			setBackground: (color) => ipcRenderer.invoke('fermion:win', 'setBackground', color),
 		},
 		onMaximizeChange: (cb) => onChannel('fermion:win-state', cb),
 		// Child windows -> main -> main window (relays).
