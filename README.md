@@ -183,6 +183,18 @@ Views of the attached process that only observe it. Nothing in the Inspector wri
 
 **Follow** (on a selected thread) uses Frida's Stalker to count the calls that thread makes. Press it, let the thread run, then press **Stop**: the functions it called are listed, most-called first, and clicking one opens it in Memory. Only one thread can be followed at a time, and a follow ends by itself after 15 seconds. Following is much heavier than the other views: the thread runs through instrumented copies of its code, so it is slower while followed, and, as with tracing, a fragile target may not tolerate it.
 
+The menu beside **Follow** sets what is followed:
+
+| Choice | What Stalker follows |
+| --- | --- |
+| **Follow everything** | All the code the thread runs. |
+| **Skip system libraries** | Everything except modules under the system directories (`C:\Windows`, `/usr/lib`, `/System`, …). |
+| **Only one module** | The module you name (suggestions come from the loaded modules), plus code that belongs to no module, such as JIT-compiled code. |
+
+A call *into* code that is left out is still counted; what that code does inside is not. Leaving code out makes the thread run faster while it is followed and keeps the result to the code you care about. Code that a skipped library calls back into (a callback, for instance) is not seen either.
+
+Above the result, **Filter functions** narrows the list by name, module or address, **By module** groups the functions under their modules with each module's call and function totals (click a module to open it), and the disk button saves the functions shown as a CSV file. Module totals count every function the thread called, including those beyond the 300 most-called that are listed.
+
 An address outside every readable range is refused rather than read. That includes stack guard pages, which must not be touched.
 
 ## Graph

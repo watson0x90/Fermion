@@ -82,7 +82,56 @@
 	// One thread at a time. Stalker runs the thread through instrumented copies
 	// of its code and reports how often each function was called; that is much
 	// heavier than the other views, so it is bounded in time and size.
-	var follow = null; // { threadId, counts, calls, distinct, overflow, timer, endedBy }
+	var follow = null; // { threadId, scope, counts, calls, distinct, overflow, timer, endedBy }
+
+	// A follow can be limited so Stalker does not go into some modules: calls
+	// into them are still counted, what happens inside them is not. Stalker has
+	// no way to un-exclude a range, so one loaded copy of this agent serves one
+	// scope: asked for a different one, it throws FERMION_RESCOPE and the
+	// service replaces it with a fresh copy.
+	var MAX_FOLLOW_MODULES = 200; // modules reported in the per-module totals
+	var excludedScope = '';   // '' until this agent has excluded anything
+	var excludedBases = {};   // module base -> true
+
+	function isSystemPath(path) {
+		var p = String(path || '').replace(/\\/g, '/');
+		return /^[a-z]:\/windows\//i.test(p)               // Windows: System32, SysWOW64, WinSxS
+			|| /^\/(usr\/)?lib(32|64)?\//.test(p)          // Linux
+			|| /^\/System\//.test(p) || /^\/usr\/lib\//.test(p) // macOS
+			|| /^\/(system|apex|vendor)\//.test(p);        // Android
+	}
+
+	// -> { scope: { mode, module }, key, skip(module) }. Throws for a module
+	// that is not loaded.
+	function resolveScope(scope) {
+		var mode = scope && scope.mode;
+		if (mode === 'app') return { scope: { mode: 'app', module: '' }, key: 'app', skip: function (m) { return isSystemPath(m.path); } };
+		if (mode === 'module') {
+			var only = moduleByName(scope.module);
+			var base = hex(only.base);
+			return { scope: { mode: 'module', module: only.name }, key: 'module:' + base, skip: function (m) { return hex(m.base) !== base; } };
+		}
+		return { scope: { mode: 'all', module: '' }, key: '', skip: null };
+	}
+
+	// Exclude what the scope skips (once per module) and return how many
+	// modules are excluded for it.
+	function applyScope(resolved) {
+		if (!resolved.skip) return 0;
+		var modules = Process.enumerateModules();
+		var n = 0;
+		for (var i = 0; i < modules.length; i++) {
+			var m = modules[i];
+			if (!resolved.skip(m)) continue;
+			n++;
+			var base = hex(m.base);
+			if (excludedBases[base]) continue;
+			Stalker.exclude({ base: m.base, size: m.size });
+			excludedBases[base] = true;
+		}
+		excludedScope = resolved.key;
+		return n;
+	}
 
 	function stopStalking(endedBy) {
 		if (!follow || follow.endedBy) return;
@@ -94,14 +143,27 @@
 	}
 
 	function followResult() {
-		if (!follow) return { following: false, threadId: null, calls: 0, total: 0, truncated: false, items: [], endedBy: 'none' };
+		if (!follow) return { following: false, threadId: null, calls: 0, total: 0, truncated: false, items: [], modules: [], scope: null, endedBy: 'none' };
 		var keys = Object.keys(follow.counts);
 		keys.sort(function (a, b) { return follow.counts[b] - follow.counts[a]; });
 		var items = [];
-		for (var i = 0; i < keys.length && items.length < MAX_FOLLOW_ITEMS; i++) {
+		// Per-module totals cover every function counted; only the most-called
+		// functions are listed (and symbolicated).
+		var totals = {};
+		var names = [];
+		for (var i = 0; i < keys.length; i++) {
 			var address = ptr(keys[i]);
-			items.push({ address: keys[i], name: symbolName(address) || where(address), count: follow.counts[keys[i]] });
+			var count = follow.counts[keys[i]];
+			var mod = '';
+			try { var m = Process.findModuleByAddress(address); if (m) mod = m.name; } catch (e) { /* not in a module */ }
+			if (!totals[mod]) { totals[mod] = { name: mod, calls: 0, functions: 0 }; names.push(mod); }
+			totals[mod].calls += count;
+			totals[mod].functions++;
+			if (items.length < MAX_FOLLOW_ITEMS) items.push({ address: keys[i], name: symbolName(address) || where(address), module: mod, count: count });
 		}
+		names.sort(function (a, b) { return totals[b].calls - totals[a].calls; });
+		var modules = [];
+		for (var k = 0; k < names.length && modules.length < MAX_FOLLOW_MODULES; k++) modules.push(totals[names[k]]);
 		return {
 			following: false,
 			threadId: follow.threadId,
@@ -109,6 +171,8 @@
 			total: keys.length,
 			truncated: keys.length > MAX_FOLLOW_ITEMS || follow.overflow,
 			items: items,
+			modules: modules,
+			scope: follow.scope,
 			endedBy: follow.endedBy,
 		};
 	}
@@ -156,11 +220,15 @@
 			});
 		},
 
-		follow: function (id) {
+		// scope: { mode: 'all' | 'app' | 'module', module } — see resolveScope.
+		follow: function (id, scope) {
 			if (follow && !follow.endedBy) throw new Error('Already following thread ' + follow.threadId + '. Stop that first.');
 			if (id === Process.getCurrentThreadId()) throw new Error("That is Frida's own thread; it cannot be followed.");
 			findThread(id); // throws for an unknown thread
-			var state = { threadId: id, counts: {}, calls: 0, distinct: 0, overflow: false, timer: null, endedBy: '' };
+			var resolved = resolveScope(scope); // throws for an unknown module
+			if (excludedScope && excludedScope !== resolved.key) throw new Error('FERMION_RESCOPE');
+			var excluded = applyScope(resolved);
+			var state = { threadId: id, scope: resolved.scope, counts: {}, calls: 0, distinct: 0, overflow: false, timer: null, endedBy: '' };
 			Stalker.follow(id, {
 				events: { call: true },
 				// A summary per time window: callee address -> number of calls.
@@ -177,7 +245,7 @@
 			});
 			follow = state; // only once Stalker accepted the thread
 			state.timer = setTimeout(function () { if (follow === state) stopStalking('limit'); }, MAX_FOLLOW_MS);
-			return { following: true, threadId: id, maxSeconds: MAX_FOLLOW_MS / 1000 };
+			return { following: true, threadId: id, maxSeconds: MAX_FOLLOW_MS / 1000, scope: resolved.scope, excluded: excluded };
 		},
 
 		// Stop (if still running) and return what was counted. The result of a
