@@ -102,7 +102,14 @@ app.commandLine.appendSwitch('disable-features', 'CrossOriginOpenerPolicy');
 // Trace graph rendering runs in the main process (node-graphviz is a Node
 // module the isolated renderer/trace window can't require); DOT -> SVG string.
 const { graphviz } = require('node-graphviz');
-ipcMain.handle('fermion:renderGraph', (_event, dot) => graphviz.dot(dot, 'svg'));
+// Only a DOT string of sane size is rendered (the tracer caps a graph at a few
+// hundred edges; this bounds what any renderer can ask the main process to lay out).
+const MAX_DOT_CHARS = 1024 * 1024;
+ipcMain.handle('fermion:renderGraph', (_event, dot) => {
+  if (typeof dot !== 'string' || !dot.trim()) throw new Error('renderGraph: expected a DOT string');
+  if (dot.length > MAX_DOT_CHARS) throw new Error('renderGraph: graph is too large to draw');
+  return graphviz.dot(dot, 'svg');
+});
 
 // Custom-title-bar window controls for the frameless window. Additive only:
 // acts on the sender's own window; no change to the security model.
