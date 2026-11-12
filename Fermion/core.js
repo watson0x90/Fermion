@@ -120,11 +120,10 @@ ipcMain.handle('fermion:win', (event, action) => {
 function createWindow() {
   // Create the browser window.
   bWin = new BrowserWindow({
-    width: 1024,
-    minWidth: 1024,
-    maxWidth: 3000,
-    height: 930,
-    minHeight: 930,
+    width: 1280,
+    minWidth: 860,
+    height: 860,
+    minHeight: 600,
     frame: false,
     show: false,
     transparent: false,

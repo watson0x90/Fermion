@@ -21,7 +21,10 @@ button, input, select { font-family: inherit; }
 ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 
 /* ===== app frame: titlebar / body / status ===== */
-.app { display: grid; grid-template-rows: 38px 1fr 26px; height: 100vh; background: var(--bg); color: var(--fg); }
+/* minmax(0,1fr) lets the body row shrink during a window resize instead of
+   pushing the fixed status row off the bottom; height:100% tracks the real
+   window height (100vh can lag mid-resize). */
+.app { display: grid; grid-template-rows: 38px minmax(0, 1fr) 26px; height: 100%; min-height: 0; background: var(--bg); color: var(--fg); }
 
 /* ---- title bar ---- */
 .titlebar { display: flex; align-items: center; gap: 10px; background: var(--title-bg); border-bottom: 1px solid var(--border); padding: 0 4px 0 12px; -webkit-app-region: drag; }
@@ -36,8 +39,8 @@ button, input, select { font-family: inherit; }
 .winctl button.close:hover { background: #e5484d; color: #fff; }
 
 /* ---- body grid ---- */
-.body { display: grid; grid-template-columns: 48px 232px minmax(0,1fr) minmax(0,1.05fr); min-height: 0; transition: grid-template-columns .16s ease; position: relative; }
-.app.rail-open .body { grid-template-columns: 176px 232px minmax(0,1fr) minmax(0,1.05fr); }
+.body { display: grid; grid-template-columns: 48px 244px minmax(0,1fr) minmax(0,1.05fr); min-height: 0; transition: grid-template-columns .16s ease; position: relative; }
+.app.rail-open .body { grid-template-columns: 176px 244px minmax(0,1fr) minmax(0,1.05fr); }
 
 /* ---- activity rail ---- */
 .rail { background: var(--chrome); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 8px; gap: 2px; overflow: hidden; }
@@ -66,7 +69,8 @@ button, input, select { font-family: inherit; }
 .iconbtn, .row button { width: 32px; height: 32px; flex: 0 0 auto; border: 1px solid var(--border); background: var(--elev); color: var(--muted); border-radius: 7px; display: grid; place-items: center; cursor: pointer; }
 .iconbtn:hover, .row button:hover { color: var(--fg); }
 .btns { display: flex; gap: 6px; }
-.btn { flex: 1; font-size: 11.5px; font-weight: 500; border-radius: 6px; padding: 5px 7px; cursor: pointer; border: 1px solid var(--border); background: var(--elev); color: var(--fg); display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.btn { flex: 1 1 0; min-width: 0; white-space: nowrap; font-size: 11px; font-weight: 500; border-radius: 6px; padding: 5px 4px; cursor: pointer; border: 1px solid var(--border); background: var(--elev); color: var(--fg); display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+.btn svg { flex: 0 0 auto; }
 .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
 .btn.ghost { background: var(--elev); }
 .btn.wide { flex: 0 0 auto; font-size: 12px; padding: 7px 10px; border-radius: 7px; }
@@ -138,12 +142,11 @@ button, input, select { font-family: inherit; }
 .themeopt .tick { color: var(--accent); opacity: 0; flex: 0 0 auto; }
 .themeopt.sel .tick { opacity: 1; }
 
-/* ---- responsive ---- */
-@media (max-width: 860px) {
-  .app { grid-template-rows: 38px auto 26px; height: auto; min-height: 100vh; }
-  .body { grid-template-columns: 44px 1fr; }
-  .app.rail-open .body { grid-template-columns: 160px 1fr; }
-  .side { grid-column: 2; }
-  .toolbox, .output { grid-column: 1 / -1; border-right: 0; border-top: 1px solid var(--border); }
-  .editor-host { min-height: 220px; } .obody { min-height: 160px; }
+/* ---- narrow windows ----
+   The IDE keeps its single-screen layout at every size (no stacking, which
+   would make the app taller than the viewport and clip the status bar). The
+   flexible editor/output columns shrink; the rail and sidebar hold. */
+@media (max-width: 920px) {
+  .body { grid-template-columns: 48px 208px minmax(0, 1fr) minmax(0, 1fr); }
+  .app.rail-open .body { grid-template-columns: 168px 208px minmax(0, 1fr) minmax(0, 1fr); }
 }
