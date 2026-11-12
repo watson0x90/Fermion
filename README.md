@@ -211,7 +211,8 @@ A new hook starts with a handler that prints the first four arguments and the re
 Things to know:
 
 - Hooks live in their own helper script, so reloading or changing the script in the Editor does not remove them.
-- Hooks are remembered by module and offset. After a detach they wait, and are placed again when you attach, including to a new run of the program where the module sits at a different address. They are not yet saved when Fermion closes.
+- Hooks are remembered by module and offset. After a detach they wait, and are placed again when you attach, including to a new run of the program where the module sits at a different address.
+- Hooks are saved automatically, with their handlers and switches, and are there when Fermion is opened again. A hook whose module is not loaded in the process you attach to is shown as *not placed*; switch it off or remove it if it belongs to another program.
 - A hook on a very busy function cannot flood Fermion: lines are delivered in batches of at most 200 every 100 ms, and the rest are counted as *dropped*. The call count stays exact. Switching **Callers** off in the Handler view makes a busy hook much cheaper.
 - A handler that throws is reported as a red line, and the target carries on.
 - There can be up to 200 hooks.
@@ -252,8 +253,11 @@ Views of the attached process that only observe it. Nothing in the Inspector wri
 | **Open in Memory** | Shows it in the hex view. |
 | **Open in Disassembly** | Shows the instructions there. |
 | **Hook this address** | Places a hook there and opens it in the [Hooks](#hooks) tab. |
+| **Bookmark** | Saves the place under Inspector → Bookmarks. |
 
 The menu key on the keyboard opens it too, and the arrow keys move through it.
+
+**Bookmarks** are places you saved with the address menu. Each has a name and a note you can edit in place, and opens in Memory or Disassembly. A bookmark inside a module is kept as module and offset, so it points at the same code or data when the module is loaded at another address, in a later run or another process; the row shows where that is now, or says the module is not loaded in this process. Bookmarks are saved automatically and are listed with or without a session.
 
 **Threads** lists each thread with its state and where it is. Select one for its register values and a backtrace with symbol names. Click a register value or a frame to open that address in Memory. Register values are a snapshot from the last refresh.
 
@@ -359,6 +363,8 @@ The scripts in [`Examples`](Examples) have been updated to the Frida 17 export-l
   * **Q**: I want to build Fermion against a newer Electron or Frida. Do I need to match a specific Electron prebuild?
     * **A**: No. Frida 17's Node bindings ship runtime-agnostic N-API prebuilds, so bump the versions in `Fermion/package.json` and reinstall.
 
+  * **Q**: Where are my hooks and bookmarks kept?
+    * **A**: In `workspace.json` in Fermion's data folder (`%APPDATA%\fermion` on Windows, `~/.config/fermion` on Linux, `~/Library/Application Support/fermion` on macOS). It is written a moment after each change. Delete it to start clean.
   * **Q**: Where do the editor's type definitions, the REPL's `help` text and the Docs window come from?
     * **A**: All three come from `node_modules/@types/frida-gum/index.d.ts`, so they describe the Frida that is installed. The index behind `help` and the Docs window is generated from it during `npm run build`.
 
@@ -388,7 +394,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, attach) |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach) |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.

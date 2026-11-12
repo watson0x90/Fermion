@@ -48,6 +48,11 @@ function buildApi(ipcRenderer) {
 		// Recent scripts (the list is kept by the main process).
 		recentFiles: () => ipcRenderer.invoke('fermion:recentFiles'),
 		openRecent: (filePath) => ipcRenderer.invoke('fermion:openRecent', filePath),
+		// Saved hooks and bookmarks (the file is kept, and validated, by main).
+		workspace: {
+			load: () => ipcRenderer.invoke('fermion:workspaceLoad'),
+			save: (data) => ipcRenderer.invoke('fermion:workspaceSave', data),
+		},
 		messageBox: (options) => ipcRenderer.invoke('fermion:messageBox', options),
 		openExternal: (url) => ipcRenderer.invoke('fermion:openExternal', url),
 		openWindow: (page, dims) => ipcRenderer.invoke('fermion:openWindow', page, dims),

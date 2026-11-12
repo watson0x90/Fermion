@@ -18,6 +18,11 @@ const hooksSlice = createSlice({
   name: 'hooks',
   initialState,
   reducers: {
+    // Hooks saved from an earlier run of Fermion.
+    loaded(state, action: PayloadAction<Hook[]>) {
+      state.hooks = action.payload;
+      state.selected = action.payload[0]?.id ?? null;
+    },
     added(state, action: PayloadAction<Hook>) {
       state.hooks.push(action.payload);
       if (state.selected === null) state.selected = action.payload.id;

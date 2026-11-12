@@ -184,3 +184,11 @@ test('child catching uses the invoke channel, and onChild receives only child ev
   handler({}, 'child', { pid: 200 });
   assert.deepEqual(got, [{ pid: 200 }]);
 });
+
+test('workspace load/save use their own channels', async () => {
+  const sent = [];
+  const api = buildApi({ invoke: (...a) => { sent.push(a); return Promise.resolve({}); }, on: () => {} });
+  await api.workspace.load();
+  await api.workspace.save({ hooks: [] });
+  assert.deepEqual(sent, [['fermion:workspaceLoad'], ['fermion:workspaceSave', { hooks: [] }]]);
+});

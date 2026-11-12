@@ -4,9 +4,10 @@ import session from './store/sessionSlice';
 import output from './store/outputSlice';
 import ui from './store/uiSlice';
 import hooks from './store/hooksSlice';
+import bookmarks from './store/bookmarksSlice';
 
 export const store = configureStore({
-  reducer: { session, output, ui, hooks },
+  reducer: { session, output, ui, hooks, bookmarks },
 });
 
 export type RootState = ReturnType<typeof store.getState>;

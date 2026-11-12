@@ -5,13 +5,15 @@ import { ModulesTab } from './inspector/ModulesTab';
 import { MemoryTab, Goto } from './inspector/MemoryTab';
 import { ThreadsTab } from './inspector/ThreadsTab';
 import { CodeTab } from './inspector/CodeTab';
+import { BookmarksTab } from './inspector/BookmarksTab';
 
-type Sub = 'modules' | 'memory' | 'code' | 'threads';
+type Sub = 'modules' | 'memory' | 'code' | 'threads' | 'bookmarks';
 const SUBS: { id: Sub; label: string }[] = [
   { id: 'modules', label: 'Modules' },
   { id: 'memory', label: 'Memory' },
   { id: 'code', label: 'Disassembly' },
   { id: 'threads', label: 'Threads' },
+  { id: 'bookmarks', label: 'Bookmarks' },
 ];
 
 // Inspector: read-only views of the attached process — its loaded modules
@@ -43,6 +45,9 @@ export function InspectorPanel() {
 
   // "Open in Memory" from the Modules and Threads tabs.
   const viewMemory = (address: string) => dispatch(uiActions.openAddress({ view: 'memory', address }));
+  const openAddress = (view: AddressView, address: string) => dispatch(uiActions.openAddress({ view, address }));
+  const bookmarksRequest = useAppSelector((s) => s.ui.bookmarksRequest);
+  useEffect(() => { if (bookmarksRequest) setSub('bookmarks'); }, [bookmarksRequest]);
   const gotoFor = (view: AddressView) => (goto && goto.view === view && goto.pid === currentPid ? goto : null);
 
   return (
@@ -54,7 +59,10 @@ export function InspectorPanel() {
           </button>
         ))}
       </div>
-      {!isAttached ? (
+      {sub === 'bookmarks' ? (
+        // Bookmarks are the operator's own and are there with or without a session.
+        <div className="insp-body"><div className="insp-slot"><BookmarksTab active={panelActive} attached={isAttached} onOpen={openAddress} /></div></div>
+      ) : !isAttached ? (
         <div className="insp-empty big">Attach to a process to inspect its modules, memory, code and threads.</div>
       ) : (
         // Keyed by pid: a new session starts every view from scratch. All of them

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, KeyboardEvent } from 'rea
 import { useAppDispatch, useAppSelector } from '../store';
 import { uiActions } from '../store/uiSlice';
 import { hooksActions } from '../store/hooksSlice';
+import { bookmarksActions, newBookmarkId, samePlace } from '../store/bookmarksSlice';
 import { MenuRequest, onAddressMenu } from '../addressMenu';
 import { addTarget } from '../hooking/ops';
 import { Target, sameTarget } from '../hooking/model';
@@ -16,6 +17,7 @@ export function AddressMenu() {
   const dispatch = useAppDispatch();
   const isAttached = useAppSelector((s) => s.session.isAttached);
   const hooks = useAppSelector((s) => s.hooks?.hooks ?? []);
+  const bookmarks = useAppSelector((s) => s.bookmarks?.items ?? []);
   const [request, setRequest] = useState<MenuRequest | null>(null);
   const [pos, setPos] = useState({ left: 0, top: 0 });
   const ref = useRef<HTMLDivElement>(null);
@@ -75,6 +77,25 @@ export function AddressMenu() {
     }
   };
 
+  const bookmark = async () => {
+    try {
+      // The target says which module the address is in, so the bookmark can
+      // be found again in a later run.
+      const found = await api().hooks.search('exports', address);
+      const target: Target | undefined = found?.items?.[0];
+      if (!target) throw new Error('Nothing is known about ' + address);
+      if (bookmarks.some((b) => samePlace(b, target))) {
+        writeTerminal('STATUS', '[+] ' + target.name + ' is already bookmarked');
+      } else {
+        dispatch(bookmarksActions.added({ id: newBookmarkId(), label: target.name, module: target.module, offset: target.offset, address: target.address, view: 'memory', note: '' }));
+        writeTerminal('STATUS', '[+] Bookmarked ' + target.name);
+      }
+      dispatch(uiActions.showBookmarks());
+    } catch (e) {
+      writeTerminal('ERR', '[!] Could not bookmark ' + address + ': ' + cleanIpcError(e));
+    }
+  };
+
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
@@ -91,6 +112,7 @@ export function AddressMenu() {
       <button role="menuitem" data-testid="addr-menu-memory" disabled={!isAttached} title={needsTarget} onClick={done(() => open('memory'))}>Open in Memory</button>
       <button role="menuitem" data-testid="addr-menu-code" disabled={!isAttached} title={needsTarget} onClick={done(() => open('code'))}>Open in Disassembly</button>
       <button role="menuitem" data-testid="addr-menu-hook" disabled={!isAttached} title={needsTarget} onClick={done(hook)}>Hook this address</button>
+      <button role="menuitem" data-testid="addr-menu-bookmark" disabled={!isAttached} title={needsTarget} onClick={done(bookmark)}>Bookmark</button>
     </div>
   );
 }

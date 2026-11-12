@@ -494,3 +494,19 @@ button.vrow:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 6%, 
 .session-note .cmd { font-size: 11px; color: var(--fg); overflow-wrap: anywhere; }
 .session-note .chk { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .session-note .chk input { margin: 0; accent-color: var(--accent); }
+
+/* ---- Inspector: Bookmarks ---- */
+.bm-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.bm-list { flex: 1; min-height: 0; overflow: auto; }
+.bm-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 10px; align-items: center; padding: 7px 12px; border-bottom: 1px solid var(--border); }
+.bm-row:hover { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.bm-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bm-label, .bm-note { width: 100%; border: 1px solid transparent; border-radius: 5px; background: transparent; outline: 0; padding: 2px 5px; margin-left: -5px; color: var(--fg); }
+.bm-label { font-size: 12.5px; font-weight: 500; }
+.bm-note { font-size: 11.5px; color: var(--muted); }
+.bm-note::placeholder { color: var(--faint); }
+.bm-label:hover, .bm-note:hover { border-color: var(--border); }
+.bm-label:focus, .bm-note:focus { border-color: var(--accent); background: var(--elev); }
+.bm-where { font-size: 11px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-actions { display: flex; gap: 5px; align-items: center; }
+.bm-actions .pill { white-space: nowrap; }

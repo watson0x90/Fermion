@@ -4,6 +4,7 @@ import './styles/fonts.css';
 import { store } from './store';
 import { initBridge } from './bridge';
 import { exposeTestSurface } from './testSurface';
+import { initWorkspace } from './workspace';
 import { initOutputHost, initOutputClient } from './outputDetach';
 import { App } from './App';
 import { OutputWindow } from './components/OutputWindow';
@@ -21,6 +22,7 @@ if (isOutputWindow) {
   initBridge(store);
   initOutputHost(store);
   exposeTestSurface(store);
+  initWorkspace(store); // saved hooks and bookmarks: load, then keep saved
 }
 
 if (rootEl) {

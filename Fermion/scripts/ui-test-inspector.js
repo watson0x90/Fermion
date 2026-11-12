@@ -227,7 +227,7 @@ const T = { timeout: 20000 };
       await win.click('[data-testid="reg-pc"]', { button: 'right' });
       await win.waitForSelector('[data-testid="addr-menu"]', T);
       const items = await win.evaluate(() => [...document.querySelectorAll('[data-testid="addr-menu"] [role="menuitem"]')].map((b) => b.textContent));
-      if (items.join('|') !== 'Copy address|Open in Memory|Open in Disassembly|Hook this address') throw new Error('menu items: ' + items.join('|'));
+      if (items.join('|') !== 'Copy address|Open in Memory|Open in Disassembly|Hook this address|Bookmark') throw new Error('menu items: ' + items.join('|'));
       await win.click('[data-testid="addr-menu-code"]');
       await win.waitForFunction(() => document.querySelector('[data-testid="insp-code"]').getAttribute('aria-selected') === 'true'
         && document.querySelectorAll('[data-testid="code-row"]').length >= 10, undefined, T);
