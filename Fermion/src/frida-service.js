@@ -293,6 +293,11 @@ class FridaService extends EventEmitter {
 		// Turns the script as written into what is loaded (compiling it when
 		// it imports packages). Set by main; absent, scripts load as written.
 		this._prepareScript = null;
+		// The last coverage recording, as files ready to save: { drcov: Buffer,
+		// text, program }. Kept here so the window never holds the bytes.
+		this._coverage = null;
+		// Shows the Save dialog and writes the file. Set by main.
+		this._saveCoverage = null;
 		// Unload the active script on process termination (the old inject/start
 		// registered these per call; once is equivalent and avoids leaking a
 		// listener per attach).
@@ -619,6 +624,51 @@ class FridaService extends EventEmitter {
 		}
 	}
 	async inspectUnfollow() { return this._inspect('unfollow'); }
+
+	// ---- coverage ----
+	// Record which basic blocks run, on every thread ('all') or one, with the
+	// same scope as a follow. Bounded in the agent (10 minutes, 2M blocks).
+	async inspectCoverStart(threads, scope) {
+		const who = threads === 'all' ? 'all' : checkThreadId(threads);
+		const checked = checkFollowScope(scope);
+		let started;
+		try {
+			started = await this._inspect('coverStart', who, checked);
+		} catch (e) {
+			if (!/FERMION_RESCOPE/.test(String(e && e.message))) throw e;
+			await this._dropAgent('inspector');
+			started = await this._inspect('coverStart', who, checked);
+		}
+		this._coverage = null; // the agent has dropped the previous recording too
+		return started;
+	}
+	// Stop and return the summary. The drcov file and the text report are
+	// fetched now and kept here, so they can be saved even after the session
+	// has ended.
+	async inspectCoverStop() {
+		const summary = await this._inspect('coverStop');
+		if (summary && summary.recorded) {
+			const agent = await this._getAgent('inspector');
+			const drcov = Buffer.from(await agent.exports.coverData('drcov'));
+			const text = String(await agent.exports.coverData('text'));
+			const first = Array.isArray(summary.modules) && summary.modules[0] ? String(summary.modules[0].name || '') : '';
+			this._coverage = { drcov, text, program: first };
+		}
+		return summary;
+	}
+	setCoverageSaver(fn) {
+		this._saveCoverage = typeof fn === 'function' ? fn : null;
+	}
+	// Save the last recording. Main asks the operator where; resolves to
+	// { path } (null when the dialog was cancelled).
+	async inspectCoverSave(format) {
+		if (format !== 'drcov' && format !== 'text') throw new Error('the coverage format must be drcov or text');
+		if (!this._coverage) throw new Error('No coverage has been recorded');
+		if (!this._saveCoverage) throw new Error('Coverage cannot be saved here');
+		const data = format === 'text' ? this._coverage.text : this._coverage.drcov;
+		const path = await this._saveCoverage({ format, data, program: this._coverage.program });
+		return { path: path || null, format };
+	}
 
 	// ---- catching child processes ----
 	// With catching on, a process started by the attached process is held

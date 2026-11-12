@@ -11,6 +11,7 @@ const { createFileHandlers } = require('./src/file-ipc.js');
 const { RecentFiles } = require('./src/recent-files.js');
 const { createWorkspaceStore } = require('./src/workspace-store.js');
 const { createPackages, createPackageHandlers, createScriptPreparer } = require('./src/packages.js');
+const { createCoverageSaver } = require('./src/coverage-save.js');
 var bWin;
 
 // All frida-node interaction runs here in the main process. The renderer drives
@@ -80,6 +81,9 @@ const packages = createPackages({
   spawn: require('child_process').spawn,
 });
 fridaService.setScriptPreparer(createScriptPreparer(packages));
+// A coverage recording is saved from here: main shows the dialog and writes
+// the file, the window only asks.
+fridaService.setCoverageSaver(createCoverageSaver({ dialog, fs, getWindow: () => (bWin && !bWin.isDestroyed() ? bWin : null) }));
 const packageHandlers = createPackageHandlers({
   packages,
   confirm: async (spec) => {

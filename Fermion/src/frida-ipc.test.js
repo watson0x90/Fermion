@@ -47,9 +47,11 @@ test('the Inspector operations are allow-listed, and only inspectWrite writes', 
   const dispatch = createDispatch(svc);
   for (const n of names) assert.deepEqual(await dispatch(n, 'x'), [n, 'x']);
   // Exactly one inspect* operation writes to the target: inspectWrite
-  // (approved with memory editing). Anything else under that name reads.
+  // (approved with memory editing). The coverage three record which code
+  // runs and save that to a file main chooses with the operator. Anything
+  // else under that name reads.
   const { INVOKE_METHODS } = require('./frida-ipc.js');
-  assert.deepEqual([...INVOKE_METHODS].filter((m) => m.startsWith('inspect')).sort(), [...names, 'inspectWrite'].sort());
+  assert.deepEqual([...INVOKE_METHODS].filter((m) => m.startsWith('inspect')).sort(), [...names, 'inspectWrite', 'inspectCoverStart', 'inspectCoverStop', 'inspectCoverSave'].sort());
 });
 
 test('cancelEvaluate is allow-listed', async () => {

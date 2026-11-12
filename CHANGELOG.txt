@@ -216,3 +216,7 @@
 * Hooks: the handler is edited in the same editor as scripts, with syntax errors marked and Frida's API completed
 * TypeScript: a script saved as .ts is compiled with Frida's compiler, its types checked against Frida's definitions, each time it is loaded; a type error is reported with its line and the running script stays
 * Inspector, Memory: Edit mode writes bytes (hex or text) into data or code, showing what will be replaced before anything is written; Writes lists each write with the bytes it replaced, and Revert puts them back. With Edit off the Inspector still writes nothing
+
+-= Unreleased (after v2.1.1) =-
+
+* Inspector, Coverage: record which basic blocks run (all threads or one; everything, non-system modules, or one module) and save the result as a drcov file for Lighthouse or Dragondance, or as a plain-text report of the modules and functions that ran, written to be read by a person or a language model

@@ -34,6 +34,9 @@ const INVOKE_METHODS = new Set([
 	'inspectRead',
 	'inspectScan',
 	'inspectWrite',
+	'inspectCoverStart',
+	'inspectCoverStop',
+	'inspectCoverSave',
 	// Read-only: disassemble instructions at an address (validated, capped).
 	'inspectDisassemble',
 	// Roadmap — follow one thread with Stalker and count its calls.

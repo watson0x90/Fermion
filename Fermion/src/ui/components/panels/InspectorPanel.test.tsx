@@ -871,3 +871,91 @@ test('writes made in another process are not offered for revert', async () => {
   act(() => { store.dispatch(sessionActions.syncState({ isAttached: true, currentPid: '9999' })); });
   expect(screen.getByTestId('mem-mode-writes')).toHaveTextContent(/^Writes$/);
 });
+
+// ---- coverage ----
+const COVER = {
+  recorded: true, threads: 12, all: true, seconds: 4.2, blocks: 3138, bytes: 41220, unmapped: 7, overflow: false, endedBy: 'stop',
+  scope: { mode: 'app', module: '' }, moduleCount: 2, drcovBytes: 25300,
+  modules: [{ name: 'node.exe', path: 'C:\\node.exe', blocks: 3000, bytes: 40000 }, { name: 'uv.dll', path: 'C:\\uv.dll', blocks: 138, bytes: 1220 }],
+};
+function withCover(over: any = {}) {
+  inspect.coverStart = vi.fn(async (threads: any, scope: any) => ({ recording: true, threads: threads === 'all' ? 12 : 1, all: threads === 'all', maxSeconds: 600, maxBlocks: 2000000, scope, excluded: 40 }));
+  inspect.coverStop = vi.fn(async () => COVER);
+  inspect.coverSave = vi.fn(async (format: string) => ({ path: format === 'text' ? 'C:\\out\\node-coverage.md' : 'C:\\out\\node-coverage.drcov', format }));
+  Object.assign(inspect, over);
+}
+
+test('Coverage: Record starts on all threads outside system libraries by default; Stop shows what ran', async () => {
+  setup();
+  withCover();
+  open('coverage');
+  expect(screen.getByTestId('cover-empty')).toHaveTextContent('Record which code runs');
+  fireEvent.click(screen.getByTestId('cover-toggle'));
+  await waitFor(() => expect(inspect.coverStart).toHaveBeenCalledWith('all', { mode: 'app', module: '' }));
+  await waitFor(() => expect(screen.getByTestId('cover-status')).toHaveTextContent('Recording on 12 threads. Use the program now, then press Stop.'));
+  expect(screen.getByTestId('cover-status')).toHaveTextContent('after 10 minutes or 2,000,000 blocks');
+  expect(screen.getByTestId('cover-toggle')).toHaveTextContent('Stop');
+  expect(screen.getByTestId('cover-who')).toBeDisabled();
+  fireEvent.click(screen.getByTestId('cover-toggle'));
+  await waitFor(() => expect(screen.getByTestId('cover-line')).toHaveTextContent('3,138 basic blocks (40.3 KB of code) in 2 modules, on 12 threads over 4.2 s.'));
+  expect(screen.getByTestId('cover-line')).toHaveTextContent('7 more blocks ran outside every module');
+  const rows = screen.getAllByTestId('cover-row');
+  expect(rows.length).toBe(2);
+  expect(rows[0]).toHaveTextContent('node.exe');
+  expect(rows[0]).toHaveTextContent('3,000');
+  expect(screen.getByTestId('cover-toggle')).toHaveTextContent('Record');
+});
+
+test('Coverage: one thread and one module can be chosen; a module scope waits for a name', async () => {
+  setup();
+  withCover();
+  open('coverage');
+  await waitFor(() => expect(screen.getByTestId('cover-who').querySelectorAll('option').length).toBe(3)); // all + two threads
+  fireEvent.change(screen.getByTestId('cover-who'), { target: { value: '5156' } });
+  fireEvent.change(screen.getByTestId('cover-scope'), { target: { value: 'module' } });
+  expect(screen.getByTestId('cover-toggle')).toBeDisabled();
+  fireEvent.change(screen.getByTestId('cover-module'), { target: { value: ' ntdll.dll ' } });
+  fireEvent.click(screen.getByTestId('cover-toggle'));
+  await waitFor(() => expect(inspect.coverStart).toHaveBeenCalledWith(5156, { mode: 'module', module: 'ntdll.dll' }));
+});
+
+test('Coverage: the two Save buttons ask main for that format and show where it went; Cancel shows nothing', async () => {
+  setup();
+  withCover();
+  open('coverage');
+  fireEvent.click(screen.getByTestId('cover-toggle'));
+  await waitFor(() => expect(screen.getByTestId('cover-toggle')).toHaveTextContent('Stop'));
+  fireEvent.click(screen.getByTestId('cover-toggle'));
+  await waitFor(() => expect(screen.getByTestId('cover-save-drcov')).toBeInTheDocument());
+  fireEvent.click(screen.getByTestId('cover-save-drcov'));
+  await waitFor(() => expect(screen.getByTestId('cover-saved')).toHaveTextContent('Saved to C:\\out\\node-coverage.drcov'));
+  expect(inspect.coverSave).toHaveBeenLastCalledWith('drcov');
+  fireEvent.click(screen.getByTestId('cover-save-text'));
+  await waitFor(() => expect(screen.getByTestId('cover-saved')).toHaveTextContent('node-coverage.md'));
+  expect(inspect.coverSave).toHaveBeenLastCalledWith('text');
+  inspect.coverSave = vi.fn(async () => ({ path: null, format: 'drcov' }));
+  fireEvent.click(screen.getByTestId('cover-save-drcov'));
+  await waitFor(() => expect(inspect.coverSave).toHaveBeenCalled());
+  expect(screen.getByTestId('cover-saved')).toHaveTextContent('node-coverage.md'); // unchanged
+});
+
+test('Coverage: a recording that cannot start, or a save that fails, is reported', async () => {
+  setup();
+  withCover({ coverStart: vi.fn(async () => { throw new Error("Error invoking remote method 'fermion:invoke': Error: Module not found: nope.dll"); }) });
+  open('coverage');
+  fireEvent.click(screen.getByTestId('cover-toggle'));
+  await waitFor(() => expect(screen.getByTestId('cover-error')).toHaveTextContent('Module not found: nope.dll'));
+  expect(screen.getByTestId('cover-toggle')).toHaveTextContent('Record');
+  expect(screen.queryByTestId('cover-status')).toBeNull();
+});
+
+test('Coverage: nothing recorded says so and offers nothing to save', async () => {
+  setup();
+  withCover({ coverStop: vi.fn(async () => ({ recorded: false })) });
+  open('coverage');
+  fireEvent.click(screen.getByTestId('cover-toggle'));
+  await waitFor(() => expect(screen.getByTestId('cover-toggle')).toHaveTextContent('Stop'));
+  fireEvent.click(screen.getByTestId('cover-toggle'));
+  await waitFor(() => expect(screen.getByTestId('cover-error')).toHaveTextContent('Nothing was recorded.'));
+  expect(screen.queryByTestId('cover-save-drcov')).toBeNull();
+});
