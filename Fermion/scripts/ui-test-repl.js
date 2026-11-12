@@ -60,7 +60,33 @@ const shot = process.argv[2];
 
     step = 'object result';
     const mod = await entry('({ arch: Process.arch, n: Process.enumerateModules().length > 0 })');
-    if (mod.err || !/"arch": "/.test(mod.text) || !/"n": true/.test(mod.text)) throw new Error('object result: ' + JSON.stringify(mod));
+    if (mod.err || !/arch: "/.test(mod.text) || !/n: true/.test(mod.text)) throw new Error('object result: ' + JSON.stringify(mod));
+
+    step = 'expandable result with pointers';
+    {
+      const n0 = await win.evaluate(() => document.querySelectorAll('[data-testid="repl-entry"]').length);
+      const r = await entry('Process.enumerateModules().slice(0, 3)');
+      if (r.err || !/^Array\(3\)/.test(r.text)) throw new Error('array result: ' + JSON.stringify(r).slice(0, 200));
+      const result = win.locator('[data-testid="repl-result"]').nth(n0);
+      // The modules start closed, each summed up on one line; opening one shows its parts.
+      const closed = await result.locator('[data-testid="value-node"] [data-testid="value-node"] .vsum').first().textContent();
+      if (!/^Module \{name: "/.test(closed) && !/^Object \{name: "/.test(closed)) throw new Error('closed module preview: ' + closed);
+      if (await result.locator('[data-testid="value-pointer"]').count()) throw new Error('children should start closed');
+      await result.locator('[data-testid="value-node"] [data-testid="value-node"] button.vhead').first().click();
+      const pointer = result.locator('[data-testid="value-pointer"]').first();
+      const base = await pointer.textContent();
+      if (!/^0x[0-9a-f]+$/.test(base)) throw new Error('module base: ' + base);
+      // A pointer in a result is an address: its menu opens it in the Inspector.
+      await pointer.click();
+      await win.waitForSelector('[data-testid="addr-menu"]', { timeout: 10000 });
+      await win.click('[data-testid="addr-menu-memory"]');
+      await win.waitForFunction((a) => document.querySelector('[role="tab"][aria-selected="true"]')?.textContent.includes('Inspector')
+        && document.querySelector('[data-testid="mem-addr"]')?.value === a, base, { timeout: 20000 });
+      await win.click('role=tab[name="REPL"]');
+      // The printed form still goes to Output.
+      const outText = await win.evaluate(() => window.__fermion.terminal.getText());
+      if (!/"base": "0x/.test(outText)) throw new Error('the printed result did not reach Output');
+    }
 
     step = 'persistence';
     await entry('var kept = 20');
@@ -223,7 +249,7 @@ const shot = process.argv[2];
     await win.click('[data-testid="detach"]');
     await win.waitForFunction(() => document.querySelector('[data-testid="repl-input"]').disabled, undefined, { timeout: 15000 });
 
-    console.log('REPL_OK evaluate + objects + persistence + errors + own scope + Output mirror + survives reload + history + Tab completion + help + editor Reload + Cancel + timeout recovery');
+    console.log('REPL_OK evaluate + objects + expandable values + persistence + errors + own scope + Output mirror + survives reload + history + Tab completion + help + editor Reload + Cancel + timeout recovery');
     await app.close();
     done(0);
   } catch (e) {

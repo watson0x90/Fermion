@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { configureStore } from '@reduxjs/toolkit';
 import { vi } from 'vitest';
@@ -6,6 +6,7 @@ import session, { sessionActions } from '../../store/sessionSlice';
 import output from '../../store/outputSlice';
 import ui, { uiActions } from '../../store/uiSlice';
 import { setTerminalSink } from '../../bridge';
+import { onAddressMenu } from '../../addressMenu';
 import { ReplPanel } from './ReplPanel';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -178,4 +179,74 @@ test('Escape cancels a running entry too; with nothing running it does nothing',
   await screen.findByTestId('repl-cancel');
   fireEvent.keyDown(document, { key: 'Escape' });
   expect(cancelEvaluate).toHaveBeenCalledTimes(1);
+});
+
+// ---- expandable results ----
+// The placeholder shown while an entry runs is replaced when its tree arrives.
+const treeResult = async () => { await screen.findAllByTestId('value-node'); return screen.getByTestId('repl-result'); };
+const MODULE_TREE = {
+  t: 'obj', label: 'Object', n: 3, kids: [
+    { k: 'name', v: { t: 'str', v: 'kernel32.dll' } },
+    { k: 'base', v: { t: 'ptr', v: '0x7ff0' } },
+    { k: 'exports', v: { t: 'arr', n: 2, kids: [{ k: '0', v: { t: 'str', v: 'CreateFileW' } }, { k: '1', v: { t: 'str', v: 'ReadFile' } }], more: 498 } },
+  ],
+};
+
+test('a result with parts is shown as a tree: the top level open, containers inside it closed', async () => {
+  const { type, key } = setup();
+  evaluate.mockResolvedValueOnce({ ok: true, type: 'object', text: '{\n  "name": "kernel32.dll"\n}', tree: MODULE_TREE });
+  type('mod'); key('Enter');
+  const result = await treeResult();
+  await waitFor(() => expect(result).toHaveTextContent('name: "kernel32.dll"'));
+  expect(result).toHaveTextContent('base: 0x7ff0');
+  expect(result).toHaveTextContent('exports: Array(2) ["CreateFileW", "ReadFile", …]');
+  expect(result).not.toHaveTextContent('0: "CreateFileW"');
+  // The printed form is what goes to Output.
+  expect(lines).toContain('LOG {\n  "name": "kernel32.dll"\n}');
+});
+
+test('a closed container opens to show its children and how many were left out', async () => {
+  const { type, key } = setup();
+  evaluate.mockResolvedValueOnce({ ok: true, type: 'object', text: '{}', tree: MODULE_TREE });
+  type('mod'); key('Enter');
+  const result = await treeResult();
+  const inner = within(result).getAllByRole('button', { expanded: false })[0];
+  fireEvent.click(inner);
+  expect(result).toHaveTextContent('0: "CreateFileW"');
+  expect(result).toHaveTextContent('1: "ReadFile"');
+  expect(result).toHaveTextContent('… 498 more not shown');
+  fireEvent.click(within(result).getAllByRole('button', { expanded: true })[1]);
+  expect(result).not.toHaveTextContent('0: "CreateFileW"');
+});
+
+test('a pointer in a result is an address: clicking it opens the address menu', async () => {
+  const { type, key } = setup();
+  const opened: string[] = [];
+  const off = onAddressMenu((r) => { if (r) opened.push(r.address); });
+  evaluate.mockResolvedValueOnce({ ok: true, type: 'object', text: '{}', tree: MODULE_TREE });
+  type('mod'); key('Enter');
+  const pointer = await screen.findByTestId('value-pointer');
+  expect(pointer).toHaveTextContent('0x7ff0');
+  fireEvent.click(pointer);
+  fireEvent.contextMenu(pointer);
+  expect(opened).toEqual(['0x7ff0', '0x7ff0']);
+  off();
+});
+
+test('a tree the target sends in a shape we do not know is ignored: the text is shown', async () => {
+  const { type, key } = setup();
+  evaluate.mockResolvedValueOnce({ ok: true, type: 'object', text: 'plain text', tree: { t: 'html', v: '<img src=x>' } });
+  type('x'); key('Enter');
+  await waitFor(() => expect(screen.getByTestId('repl-result')).toHaveTextContent('plain text'));
+  expect(screen.queryByTestId('value-node')).toBeNull();
+});
+
+test('text inside a tree is shown as text, never as markup', async () => {
+  const { type, key } = setup();
+  evaluate.mockResolvedValueOnce({ ok: true, type: 'object', text: '{}', tree: { t: 'obj', label: 'Object', n: 1, kids: [{ k: '<b>k</b>', v: { t: 'str', v: '<img src=x onerror=alert(1)>' } }] } });
+  type('x'); key('Enter');
+  const result = await treeResult();
+  await waitFor(() => expect(result).toHaveTextContent('<b>k</b>: "<img src=x onerror=alert(1)>"'));
+  expect(result.querySelector('img')).toBeNull();
+  expect(result.querySelector('b')).toBeNull();
 });
