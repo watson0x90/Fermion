@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { useAppSelector } from '../store';
 import { KINDS } from '../store/outputSlice';
 import { setTerminalSink } from '../bridge';
+import { applyTheme, loadSavedTheme } from '../theme/themeEngine';
 import { OutputToolbar } from './OutputToolbar';
 // The existing xterm controller (reused, mounted imperatively).
 import { createTerminal } from '../../terminal.js';
@@ -24,6 +25,8 @@ export function OutputPane() {
     // Expose the controller for the Playwright test surface.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).__fermion = { ...(window as any).__fermion, terminal: ctrl };
+    // Theme the freshly-created terminal to match the active app theme.
+    applyTheme(loadSavedTheme());
     ctrl.fit();
     const onResize = () => ctrl.fit();
     window.addEventListener('resize', onResize);

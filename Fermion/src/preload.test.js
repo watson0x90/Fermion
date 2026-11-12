@@ -29,6 +29,33 @@ test('onMessage routes only message events; onLog only log events', () => {
   assert.deepEqual(logs, [['info', 'hi']]);
 });
 
+test('win controls invoke fermion:win with the action', async () => {
+  const sent = [];
+  const fake = { invoke: (...a) => { sent.push(a); return Promise.resolve(true); }, on: () => {} };
+  const api = buildApi(fake);
+  await api.win.minimize();
+  await api.win.toggleMaximize();
+  await api.win.close();
+  await api.win.isMaximized();
+  assert.deepEqual(sent, [
+    ['fermion:win', 'minimize'],
+    ['fermion:win', 'toggleMaximize'],
+    ['fermion:win', 'close'],
+    ['fermion:win', 'isMaximized'],
+  ]);
+});
+
+test('onMaximizeChange subscribes to the win-state relay channel', () => {
+  let ch; let cb;
+  const fake = { invoke: () => {}, on: (c, f) => { ch = c; cb = f; }, removeListener: () => {} };
+  const api = buildApi(fake);
+  const got = [];
+  api.onMaximizeChange((m) => got.push(m));
+  assert.equal(ch, 'fermion:win-state');
+  cb({}, true);
+  assert.deepEqual(got, [true]);
+});
+
 test('subscribe returns an unsubscribe that stops delivery', () => {
   let handler;
   const fake = { invoke: () => {}, on: (ch, cb) => { handler = cb; } };

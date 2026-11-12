@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { applyTheme, loadSavedTheme } from '../theme/themeEngine';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -22,7 +23,6 @@ export function useMonaco(initialValue: string) {
     amd(['vs/editor/editor.main'], () => {
       if (disposed || !hostRef.current) return;
       const monaco = (window as any).monaco;
-      const themes = (window as any).FermionThemes || {};
 
       monaco.languages.typescript.javascriptDefaults.setDiagnosticsOptions({
         noSemanticValidation: true,
@@ -46,10 +46,8 @@ export function useMonaco(initialValue: string) {
         req.send();
       } catch { /* defs are a nicety */ }
 
-      if (themes.Kuroir) {
-        monaco.editor.defineTheme('Kuroir', themes.Kuroir);
-        monaco.editor.setTheme('Kuroir');
-      }
+      // Define + select the active app theme on Monaco (and set the app tokens).
+      applyTheme(loadSavedTheme());
 
       const editor = monaco.editor.create(hostRef.current, {
         value: initialValue,

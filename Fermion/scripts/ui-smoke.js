@@ -91,6 +91,38 @@ function launch(pageErrors) {
     }
     console.log('SMOKE_STYLE_OK renderer.bundle.css applied (body bg ' + styled + ')');
 
+    // The custom title bar must render with the original wordmark image loaded.
+    const tb = await win.evaluate(() => {
+      const bar = document.querySelector('[data-testid="titlebar"]');
+      const img = document.querySelector('.titlebar .wordmark');
+      return { bar: !!bar, wordmark: !!img && img.complete && img.naturalWidth > 0, controls: !!document.querySelector('[data-testid="win-close"]') };
+    });
+    if (!tb.bar || !tb.wordmark || !tb.controls) throw new Error('title bar incomplete: ' + JSON.stringify(tb));
+    console.log('SMOKE_TITLEBAR_OK wordmark + window controls present');
+
+    // Seed a non-default (dark) theme, relaunch, and prove the whole app is
+    // restored to it: dark chrome tokens AND a dark Monaco editor.
+    await win.evaluate(() => { try { localStorage.setItem('fermion.theme', 'Monokai'); } catch (e) { /* ignore */ } });
+    await app.close();
+
+    app = await launch(pageErrors);
+    win = await app.firstWindow();
+    await win.waitForLoadState('domcontentloaded');
+    await win.waitForSelector('.monaco-editor', { timeout: 60000 });
+    await win.waitForFunction(() => !!window.MonacoCodeEditor, { timeout: 60000 });
+    await new Promise((r) => setTimeout(r, 1500));
+    const themed = await win.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const ed = document.querySelector('.monaco-editor .monaco-editor-background') || document.querySelector('.monaco-editor');
+      return { saved: (() => { try { return localStorage.getItem('fermion.theme'); } catch (e) { return null; } })(), bg: root.getPropertyValue('--bg').trim(), editorBg: ed ? getComputedStyle(ed).backgroundColor : '' };
+    });
+    // Monokai is dark: editor background ~ rgb(39,40,34).
+    if (themed.saved !== 'Monokai' || !/rgb\(3[0-9], 4[0-9], 3[0-9]\)/.test(themed.editorBg)) {
+      throw new Error('saved theme not restored whole-app: ' + JSON.stringify(themed));
+    }
+    if (pageErrors.length) throw new Error('uncaught renderer error: ' + pageErrors[0]);
+    console.log('SMOKE_THEME_OK saved theme (Monokai) re-skins chrome + editor after restart');
+
     await app.close();
     process.exit(0);
   } catch (e) {

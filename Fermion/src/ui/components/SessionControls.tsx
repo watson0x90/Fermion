@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
 import { sessionActions } from '../store/sessionSlice';
+import { Icon } from './Icon';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion;
@@ -55,26 +56,36 @@ export function SessionControls() {
 
   return (
     <div className="session">
-      <h4>Session</h4>
-      <select className="sel" aria-label="device" onChange={(e) => onDevice(e.target.value)}>
-        {devices.map((d) => <option key={d.id} value={d.id}>{d.id}</option>)}
-      </select>
-      <div className="row">
-        <select className="sel" aria-label="process" value={pid} onFocus={loadProcs} onChange={(e) => setPid(e.target.value)}>
-          <option value="">select process…</option>
-          {procs.map((p) => <option key={p.pid} value={p.pid}>{p.name} · {p.pid}</option>)}
-        </select>
-        <button title="refresh" onClick={loadProcs}>⟳</button>
+      <div className="group">
+        <h4>Session</h4>
+        <div className="field">
+          <label>Device</label>
+          <select className="sel" aria-label="device" onChange={(e) => onDevice(e.target.value)}>
+            {devices.map((d) => <option key={d.id} value={d.id}>{d.id}</option>)}
+          </select>
+        </div>
+        <div className="field">
+          <label>Process</label>
+          <div className="row">
+            <select className="sel" aria-label="process" value={pid} onFocus={loadProcs} onChange={(e) => setPid(e.target.value)}>
+              <option value="">select process…</option>
+              {procs.map((p) => <option key={p.pid} value={p.pid}>{p.name} · {p.pid}</option>)}
+            </select>
+            <button className="iconbtn" title="Refresh processes" onClick={loadProcs}><Icon name="refresh" size={15} /></button>
+          </div>
+        </div>
+        <div className="btns">
+          <button className="btn primary" data-testid="attach" onClick={onAttach} disabled={isAttached}><Icon name="play" size={13} />Attach</button>
+          <button className="btn ghost" data-testid="reload" onClick={onReload} disabled={!hasScript}><Icon name="reload" size={13} />Reload</button>
+          <button className="btn ghost" data-testid="detach" onClick={onDetach} disabled={!isAttached}><Icon name="stop" size={13} />Detach</button>
+        </div>
       </div>
-      <div className="btns">
-        <button className="btn" data-testid="attach" onClick={onAttach} disabled={isAttached}>Attach</button>
-        <button className="btn ghost" data-testid="reload" onClick={onReload} disabled={!hasScript}>Reload</button>
-        <button className="btn ghost" data-testid="detach" onClick={onDetach} disabled={!isAttached}>Detach</button>
+      <div className="group">
+        <h4>Spawn new</h4>
+        <div className="field"><input className="sel" aria-label="spawn path" placeholder="Executable path" value={spawnPath} onChange={(e) => setSpawnPath(e.target.value)} /></div>
+        <div className="field"><input className="sel" aria-label="spawn args" placeholder="Arguments (optional)" value={spawnArgs} onChange={(e) => setSpawnArgs(e.target.value)} /></div>
+        <button className="btn wide" onClick={onSpawn} disabled={!spawnPath || isAttached}><Icon name="play" size={14} />Spawn &amp; suspend</button>
       </div>
-      <h4 style={{ marginTop: 12 }}>Spawn new…</h4>
-      <input className="sel" aria-label="spawn path" placeholder="path" value={spawnPath} onChange={(e) => setSpawnPath(e.target.value)} />
-      <input className="sel" aria-label="spawn args" placeholder="args" value={spawnArgs} onChange={(e) => setSpawnArgs(e.target.value)} />
-      <button className="btn" onClick={onSpawn} disabled={!spawnPath || isAttached}>Spawn</button>
     </div>
   );
 }

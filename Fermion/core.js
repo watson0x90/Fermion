@@ -103,6 +103,20 @@ app.commandLine.appendSwitch('disable-features', 'CrossOriginOpenerPolicy');
 const { graphviz } = require('node-graphviz');
 ipcMain.handle('fermion:renderGraph', (_event, dot) => graphviz.dot(dot, 'svg'));
 
+// Custom-title-bar window controls for the frameless window. Additive only:
+// acts on the sender's own window; no change to the security model.
+ipcMain.handle('fermion:win', (event, action) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win) return false;
+  switch (action) {
+    case 'minimize': win.minimize(); return true;
+    case 'toggleMaximize': win.isMaximized() ? win.unmaximize() : win.maximize(); return win.isMaximized();
+    case 'close': win.close(); return true;
+    case 'isMaximized': return win.isMaximized();
+    default: return false;
+  }
+});
+
 function createWindow() {
   // Create the browser window.
   bWin = new BrowserWindow({
@@ -126,6 +140,12 @@ function createWindow() {
   });
 
   hardenWindow(bWin);
+
+  // Notify the custom title bar when the maximize state changes (so its
+  // maximize/restore glyph can follow).
+  for (const ev of ['maximize', 'unmaximize']) {
+    bWin.on(ev, () => { if (bWin && !bWin.isDestroyed()) bWin.webContents.send('fermion:win-state', bWin.isMaximized()); });
+  }
 
   // and load the index.html of the app.
   bWin.loadFile(path.join(__dirname, '/pages/index.html'));

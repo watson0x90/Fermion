@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMonaco } from '../hooks/useMonaco';
 import { writeTerminal } from '../bridge';
+import { Icon } from './Icon';
 
 function makeBanner(fermion: string, frida: string): string {
   return [
@@ -46,9 +47,10 @@ export function EditorPane() {
   if (value == null) return <div className="stub">loading editor…</div>;
 
   return (
-    <div className="editorpane" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div className="editorpane">
       <div className="ptool">
-        <button className="pill" onClick={toggleWrap}>Wrap</button>
+        <span className="grow">script.js — JavaScript</span>
+        <button className="pill" onClick={toggleWrap}><Icon name="wrap" size={12} />Wrap</button>
       </div>
       <MonacoHost value={value} />
     </div>

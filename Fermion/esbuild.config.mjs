@@ -12,6 +12,7 @@ const config = {
   target: 'chrome128',
   jsx: 'automatic',
   external: ['../node_modules/monaco-editor/min/vs/loader.js'],
+  loader: { '.woff2': 'dataurl' }, // IBM Plex faces inline as data URIs (offline)
   logLevel: 'info',
   sourcemap: 'inline',
 };

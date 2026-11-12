@@ -38,11 +38,16 @@ test('outputSlice: toggleFilter flips a kind; counted increments; clear resets c
   expect(s.count).toBe(0);
 });
 
-test('uiSlice: setActiveTab + setVertical', () => {
+test('uiSlice: setActiveTab + setTheme + toggleRail/Settings', () => {
   let s = uiReducer(undefined, { type: '@@init' });
   expect(s.activeTab).toBe('editor');
+  expect(s.theme).toBe('Kuroir'); // default = original Fermion
   s = uiReducer(s, uiActions.setActiveTab('graph'));
   expect(s.activeTab).toBe('graph');
-  s = uiReducer(s, uiActions.setVertical(false));
-  expect(s.vertical).toBe(false);
+  s = uiReducer(s, uiActions.setTheme('Monokai'));
+  expect(s.theme).toBe('Monokai');
+  s = uiReducer(s, uiActions.toggleRail());
+  expect(s.railOpen).toBe(true);
+  s = uiReducer(s, uiActions.toggleSettings(true));
+  expect(s.settingsOpen).toBe(true);
 });

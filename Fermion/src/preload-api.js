@@ -46,6 +46,14 @@ function buildApi(ipcRenderer) {
 		openExternal: (url) => ipcRenderer.invoke('fermion:openExternal', url),
 		openWindow: (page, dims) => ipcRenderer.invoke('fermion:openWindow', page, dims),
 		renderGraph: (dot) => ipcRenderer.invoke('fermion:renderGraph', dot),
+		// Custom-title-bar window controls (frameless main window).
+		win: {
+			minimize: () => ipcRenderer.invoke('fermion:win', 'minimize'),
+			toggleMaximize: () => ipcRenderer.invoke('fermion:win', 'toggleMaximize'),
+			close: () => ipcRenderer.invoke('fermion:win', 'close'),
+			isMaximized: () => ipcRenderer.invoke('fermion:win', 'isMaximized'),
+		},
+		onMaximizeChange: (cb) => onChannel('fermion:win-state', cb),
 		// Child windows -> main -> main window (relays).
 		sendNewDevice: (msg) => ipcRenderer.send('new-device', msg),
 		sendAttachProcess: (msg) => ipcRenderer.send('attach-process', msg),
