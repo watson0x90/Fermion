@@ -46,10 +46,11 @@ function load(over = {}) {
     { id: 11, state: 'waiting', context: cpuContext({ pc: new Ptr(0x7ff123), sp: new Ptr(0x10000), rax: new Ptr(1) }) },
     { id: 12, state: 'running', name: 'worker', context: { pc: new Ptr(0x500), sp: new Ptr(0x20000) } },
   ];
+  const mods = () => [kernel, ...(over.modules || [])]; // read each time: modules can load later
   const Process = {
-    enumerateModules: () => [kernel],
-    findModuleByName: (n) => (n === 'kernel32.dll' ? kernel : null),
-    findModuleByAddress: (a) => (a.v >= 0x7ff000n && a.v < 0x800000n ? kernel : null),
+    enumerateModules: () => mods(),
+    findModuleByName: (n) => mods().find((m) => m.name.toLowerCase() === String(n).toLowerCase()) || null,
+    findModuleByAddress: (a) => mods().find((m) => a.v >= m.base.v && a.v < m.base.v + BigInt(m.size)) || null,
     // By default every address is inside one big readable range.
     findRangeByAddress: () => ({ base: new Ptr(0), size: 2 ** 40, protection: 'rw-' }),
     enumerateThreads: () => threads,
@@ -64,7 +65,8 @@ function load(over = {}) {
   const scans = [];
   const timers = [];
   const stalker = {
-    followed: [], unfollowed: [], opts: null, flushed: 0,
+    followed: [], unfollowed: [], opts: null, flushed: 0, excluded: [],
+    exclude: (range) => { stalker.excluded.push(range.base.toString() + '+' + range.size); },
     follow: (tid, opts) => { if (over.followThrows) throw new Error('unable to follow'); stalker.followed.push(tid); stalker.opts = opts; },
     unfollow: (tid) => { stalker.unfollowed.push(tid); },
     flush: () => { stalker.flushed++; },
@@ -242,7 +244,8 @@ test('scan: chunks overlap by pattern length - 1 so a match across a chunk bound
 // ---- following a thread with Stalker ----
 test('follow: starts Stalker on the thread, asking only for a summary of calls', () => {
   const a = load();
-  assert.deepEqual(j(a.follow(11)), { following: true, threadId: 11, maxSeconds: 15 });
+  assert.deepEqual(j(a.follow(11)), { following: true, threadId: 11, maxSeconds: 15, scope: { mode: 'all', module: '' }, excluded: 0 });
+  assert.deepEqual(a.stalker.excluded, []);
   assert.deepEqual(a.stalker.followed, [11]);
   assert.deepEqual(j(a.stalker.opts.events), { call: true });
   assert.equal(typeof a.stalker.opts.onCallSummary, 'function');
@@ -263,10 +266,13 @@ test('unfollow: stops, and returns the functions called, most-called first, with
   assert.equal(r.total, 3);
   assert.equal(r.truncated, false);
   assert.deepEqual(r.items, [
-    { address: '0x7ff123', name: 'kernel32.dll!CreateFileW', count: 7 },
-    { address: '0x7ff200', name: 'kernel32.dll!CreateFileW', count: 2 },
-    { address: '0x500', name: '0x500', count: 1 },
+    { address: '0x7ff123', name: 'kernel32.dll!CreateFileW', module: 'kernel32.dll', count: 7 },
+    { address: '0x7ff200', name: 'kernel32.dll!CreateFileW', module: 'kernel32.dll', count: 2 },
+    { address: '0x500', name: '0x500', module: '', count: 1 },
   ]);
+  // Totals per module, most calls first; '' is code that belongs to no module.
+  assert.deepEqual(r.modules, [{ name: 'kernel32.dll', calls: 9, functions: 2 }, { name: '', calls: 1, functions: 1 }]);
+  assert.deepEqual(r.scope, { mode: 'all', module: '' });
 });
 
 test('follow: one thread at a time; an unknown thread and the agent\'s own thread are refused', () => {
@@ -280,7 +286,7 @@ test('follow: one thread at a time; an unknown thread and the agent\'s own threa
 });
 
 test('unfollow with nothing being followed returns an empty result instead of throwing', () => {
-  assert.deepEqual(j(load().unfollow()), { following: false, threadId: null, calls: 0, total: 0, truncated: false, items: [], endedBy: 'none' });
+  assert.deepEqual(j(load().unfollow()), { following: false, threadId: null, calls: 0, total: 0, truncated: false, items: [], modules: [], scope: null, endedBy: 'none' });
 });
 
 test('follow: a failure to start leaves nothing being followed', () => {
@@ -317,4 +323,87 @@ test('follow: a thread calling thousands of distinct functions is capped and say
   assert.equal(r.truncated, true);
   assert.ok(r.items.length <= 300, 'items ' + r.items.length);
   assert.equal(r.calls, 6000);
+});
+
+// ---- limiting what a follow covers ----
+const APP = [
+  { name: 'target.exe', base: new Ptr(0x400000), size: 0x10000, path: 'C:\\Tools\\target.exe' },
+  // A folder merely named "windows" somewhere in the path is not the system directory.
+  { name: 'plugin.dll', base: new Ptr(0x500000), size: 0x1000, path: 'C:/Tools/windows/plugin.dll' },
+  { name: 'ntdll.dll', base: new Ptr(0x600000), size: 0x1000, path: 'C:\\WINDOWS\\SYSTEM32\\ntdll.dll' },
+  { name: 'libc.so.6', base: new Ptr(0x700000), size: 0x1000, path: '/usr/lib/x86_64-linux-gnu/libc.so.6' },
+  { name: 'libSystem.B.dylib', base: new Ptr(0x710000), size: 0x1000, path: '/usr/lib/libSystem.B.dylib' },
+  { name: 'Foundation', base: new Ptr(0x720000), size: 0x1000, path: '/System/Library/Frameworks/Foundation.framework/Foundation' },
+];
+
+test('follow, skipping system libraries: only those are excluded from Stalker', () => {
+  const a = load({ modules: APP });
+  const r = j(a.follow(11, { mode: 'app', module: '' }));
+  assert.deepEqual(r.scope, { mode: 'app', module: '' });
+  assert.equal(r.excluded, 5);
+  assert.deepEqual(a.stalker.excluded, ['0x7ff000+4096', '0x600000+4096', '0x700000+4096', '0x710000+4096', '0x720000+4096']);
+  assert.deepEqual(a.stalker.followed, [11]);
+  assert.deepEqual(j(a.unfollow()).scope, { mode: 'app', module: '' });
+});
+
+test('follow, one module only: every other module is excluded; the name is matched as the target does', () => {
+  const a = load({ modules: APP });
+  const r = j(a.follow(11, { mode: 'module', module: 'TARGET.EXE' }));
+  assert.deepEqual(r.scope, { mode: 'module', module: 'target.exe' });
+  assert.equal(r.excluded, 6);
+  assert.ok(!a.stalker.excluded.includes('0x400000+65536'));
+  assert.equal(a.stalker.excluded.length, 6);
+});
+
+test('follow, one module only: a module that is not loaded is refused before anything is excluded or followed', () => {
+  const a = load({ modules: APP });
+  assert.throws(() => a.follow(11, { mode: 'module', module: 'nope.dll' }), /Module not found: nope\.dll/);
+  assert.deepEqual(a.stalker.excluded, []);
+  assert.deepEqual(a.stalker.followed, []);
+});
+
+// Stalker cannot un-exclude a range, so a script that has excluded for one
+// scope must not be used for a different one: it asks to be replaced.
+test('follow: the same scope again excludes nothing twice; a different scope asks for a fresh agent', () => {
+  const a = load({ modules: APP });
+  a.follow(11, { mode: 'app', module: '' });
+  a.unfollow();
+  assert.equal(j(a.follow(11, { mode: 'app', module: '' })).excluded, 5);
+  assert.equal(a.stalker.excluded.length, 5);
+  a.unfollow();
+  for (const other of [{ mode: 'all', module: '' }, { mode: 'module', module: 'target.exe' }, undefined]) {
+    assert.throws(() => a.follow(11, other), /FERMION_RESCOPE/);
+  }
+  assert.deepEqual(a.stalker.followed, [11, 11]);
+  assert.equal(a.stalker.excluded.length, 5);
+  assert.equal(j(a.unfollow()).threadId, null); // nothing was left being followed
+});
+
+test('follow: everything first, then a narrower scope, needs no fresh agent', () => {
+  const a = load({ modules: APP });
+  a.follow(11);
+  a.unfollow();
+  assert.equal(j(a.follow(11, { mode: 'module', module: 'plugin.dll' })).excluded, 6);
+});
+
+test('follow: a module loaded since the last follow of the same scope is excluded too', () => {
+  const mods = APP.slice(0, 3);
+  const a = load({ modules: mods });
+  a.follow(11, { mode: 'app', module: '' });
+  a.unfollow();
+  mods.push(APP[3]);
+  assert.equal(j(a.follow(11, { mode: 'app', module: '' })).excluded, 3);
+  assert.deepEqual(a.stalker.excluded, ['0x7ff000+4096', '0x600000+4096', '0x700000+4096']);
+});
+
+test('unfollow: module totals cover every function counted, not only the ones listed', () => {
+  const a = load({ modules: APP });
+  a.follow(11);
+  const many = {};
+  for (let i = 0; i < 500; i++) many['0x' + (0x400000 + i * 16).toString(16)] = 2;
+  many['0x600010'] = 5000;
+  a.stalker.opts.onCallSummary(many);
+  const r = j(a.unfollow());
+  assert.equal(r.items.length, 300);
+  assert.deepEqual(r.modules, [{ name: 'ntdll.dll', calls: 5000, functions: 1 }, { name: 'target.exe', calls: 1000, functions: 500 }]);
 });

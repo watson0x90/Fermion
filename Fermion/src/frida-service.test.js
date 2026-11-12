@@ -366,7 +366,98 @@ test('inspectFollow / inspectUnfollow: the thread id is validated; unfollow take
   await svc.attach(1);
   await svc.inspectFollow(4242);
   await svc.inspectUnfollow('ignored', { also: 'ignored' });
-  assert.deepEqual(calls, [['follow', 4242], ['unfollow']]);
+  assert.deepEqual(calls, [['follow', 4242, { mode: 'all', module: '' }], ['unfollow']]);
   for (const bad of [-1, 1.5, '12', null, undefined, {}]) await assert.rejects(() => svc.inspectFollow(bad), /invalid thread id/i);
   assert.equal(calls.length, 2);
+});
+
+// ---- follow scope ----
+test('inspectFollow: the scope is validated and passed on as a clean object', async () => {
+  const { svc, calls } = inspectorService();
+  await svc.attach(1);
+  await svc.inspectFollow(7, { mode: 'app' });
+  await svc.inspectFollow(7, { mode: 'module', module: 'target.exe', extra: 'dropped', __proto__: { polluted: true } });
+  await svc.inspectFollow(7, { mode: 'all', module: 'ignored.dll' });
+  assert.deepEqual(calls, [
+    ['follow', 7, { mode: 'app', module: '' }],
+    ['follow', 7, { mode: 'module', module: 'target.exe' }],
+    ['follow', 7, { mode: 'all', module: '' }],
+  ]);
+  for (const c of calls) assert.deepEqual(Object.keys(c[2]), ['mode', 'module']);
+  const bad = ['app', 5, [], { mode: 'everything' }, { mode: 'module' }, { mode: 'module', module: '' }, { mode: 'module', module: 7 }, { mode: 'module', module: 'x'.repeat(2000) }, { module: 'a.dll' }];
+  for (const scope of bad) await assert.rejects(() => svc.inspectFollow(7, scope), /scope|module name/i, JSON.stringify(scope));
+  assert.equal(calls.length, 3);
+});
+
+// Stalker exclusions cannot be undone inside a loaded agent, so a follow with
+// a different scope gets a fresh copy of the agent.
+function rescopeService() {
+  const { FridaService } = require('./frida-service.js');
+  const svc = new FridaService();
+  const session = fakeSession();
+  const create = session.createScript;
+  const agents = [];
+  session.createScript = async (src) => {
+    const s = await create(src);
+    if (/Inspector agent/.test(src)) {
+      const n = agents.length;
+      s.calls = [];
+      s.exports = {
+        follow: async (id, scope) => { s.calls.push(scope.mode); if (s.rescope) throw new Error('FERMION_RESCOPE'); return { following: true, threadId: id, agent: n }; },
+        threads: async () => { if (s.unloaded) throw new Error('Script is destroyed'); if (s.gate) await s.gate; if (s.unloaded) throw new Error('Script is destroyed'); return { items: [], total: 0, truncated: false, agent: n }; },
+      };
+      agents.push(s);
+    }
+    return s;
+  };
+  svc._frida = { getDevice: async () => ({ attach: async () => session }) };
+  return { svc, agents };
+}
+
+test('inspectFollow: an agent that asks to be replaced is unloaded and the follow retried on a fresh one', async () => {
+  const { svc, agents } = rescopeService();
+  await svc.attach(1);
+  assert.equal((await svc.inspectFollow(7, { mode: 'app' })).agent, 0);
+  agents[0].rescope = true;
+  const r = await svc.inspectFollow(7, { mode: 'all' });
+  assert.equal(r.agent, 1);
+  assert.equal(agents.length, 2);
+  assert.equal(agents[0].unloaded, true);
+  assert.equal(agents[1].loaded, true);
+  assert.deepEqual(agents[1].calls, ['all']);
+  // Later inspector calls use the fresh agent.
+  assert.equal((await svc.inspectThreads()).agent, 1);
+});
+
+test('inspectFollow: a fresh agent that still refuses is an error, not a loop', async () => {
+  const { svc, agents } = rescopeService();
+  await svc.attach(1);
+  await svc.inspectFollow(7, { mode: 'app' });
+  agents[0].rescope = true;
+  const create = svc._session.createScript;
+  svc._session.createScript = async (src) => { const s = await create(src); s.rescope = true; return s; };
+  await assert.rejects(() => svc.inspectFollow(7, { mode: 'all' }), /FERMION_RESCOPE/);
+  assert.equal(agents.length, 2);
+});
+
+test('an inspector call in flight while the agent is replaced is answered by the new agent', async () => {
+  const { svc, agents } = rescopeService();
+  await svc.attach(1);
+  await svc.inspectFollow(7, { mode: 'app' });
+  let release;
+  agents[0].gate = new Promise((r) => { release = r; });
+  const pending = svc.inspectThreads();           // waits inside the old agent
+  agents[0].rescope = true;
+  await svc.inspectFollow(7, { mode: 'all' });      // replaces the agent
+  release();
+  assert.equal((await pending).agent, 1);
+});
+
+test('an inspector error is not retried when the agent was not replaced', async () => {
+  const { svc, agents } = rescopeService();
+  await svc.attach(1);
+  await svc.inspectFollow(7, { mode: 'app' });
+  agents[0].exports.threads = async () => { throw new Error('boom'); };
+  await assert.rejects(() => svc.inspectThreads(), /boom/);
+  assert.equal(agents.length, 1);
 });

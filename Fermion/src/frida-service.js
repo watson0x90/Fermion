@@ -40,6 +40,16 @@ function checkThreadId(id) {
 	if (!Number.isSafeInteger(id) || id < 0) throw new Error('invalid thread id');
 	return id;
 }
+// What a follow covers: everything, everything but system libraries, or one
+// module. Returns a fresh object holding only the two known fields.
+const FOLLOW_MODES = ['all', 'app', 'module'];
+function checkFollowScope(scope) {
+	if (scope === undefined || scope === null) return { mode: 'all', module: '' };
+	if (typeof scope !== 'object' || Array.isArray(scope)) throw new Error('invalid follow scope');
+	const mode = scope.mode;
+	if (typeof mode !== 'string' || !FOLLOW_MODES.includes(mode)) throw new Error('invalid follow scope (expected all, app or module)');
+	return { mode, module: mode === 'module' ? checkModuleName(scope.module) : '' };
+}
 function checkProtection(protection) {
 	if (typeof protection !== 'string' || !/^[r-][w-][x-]$/.test(protection)) throw new Error('invalid protection (expected e.g. "r--" or "rw-")');
 	return protection;
@@ -343,8 +353,25 @@ class FridaService extends EventEmitter {
 	// An error raised in the target (unknown module, unreadable memory) rejects
 	// with its message.
 	async _inspect(method, ...args) {
-		const script = await this._getAgent('inspector');
-		return toPlain(await script.exports[method](...args));
+		const loading = this._getAgent('inspector');
+		const script = await loading;
+		try {
+			return toPlain(await script.exports[method](...args));
+		} catch (e) {
+			// The agent was replaced while this call was in flight (a follow
+			// with a different scope, below): ask the new one, once.
+			const current = this._session ? this._agents.get('inspector') : null;
+			if (!current || current === loading) throw e;
+			return toPlain(await (await current).exports[method](...args));
+		}
+	}
+
+	// Unload a helper agent so the next call loads a fresh copy of it.
+	async _dropAgent(name) {
+		const loading = this._agents.get(name);
+		this._agents.delete(name);
+		if (!loading) return;
+		try { await (await loading).unload(); } catch { /* already gone */ }
 	}
 	async inspectModules() { return this._inspect('modules'); }
 	async inspectExports(moduleName) { return this._inspect('exports', checkModuleName(moduleName)); }
@@ -356,7 +383,20 @@ class FridaService extends EventEmitter {
 	async inspectScan(pattern, protection) { return this._inspect('scan', checkPattern(pattern), checkProtection(protection)); }
 	// Follow one thread with Stalker and count the calls it makes; unfollow
 	// stops and returns the counts. (Bounded in the agent: 15 s, one thread.)
-	async inspectFollow(threadId) { return this._inspect('follow', checkThreadId(threadId)); }
+	// The scope limits which modules Stalker goes into. Stalker cannot undo an
+	// exclusion, so an agent that has excluded for another scope refuses with
+	// FERMION_RESCOPE; it is then replaced by a fresh copy and asked again.
+	async inspectFollow(threadId, scope) {
+		const id = checkThreadId(threadId);
+		const checked = checkFollowScope(scope);
+		try {
+			return await this._inspect('follow', id, checked);
+		} catch (e) {
+			if (!/FERMION_RESCOPE/.test(String(e && e.message))) throw e;
+			await this._dropAgent('inspector');
+			return this._inspect('follow', id, checked);
+		}
+	}
 	async inspectUnfollow() { return this._inspect('unfollow'); }
 
 	// Unload the user's script (the helper agents stay). A no-op when none is loaded.

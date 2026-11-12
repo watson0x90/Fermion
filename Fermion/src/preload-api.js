@@ -105,7 +105,7 @@ function buildApi(ipcRenderer) {
 			ranges: (protection) => invoke('inspectRanges', protection),
 			read: (address, size) => invoke('inspectRead', address, size),
 			scan: (pattern, protection) => invoke('inspectScan', pattern, protection),
-			follow: (threadId) => invoke('inspectFollow', threadId),
+			follow: (threadId, scope) => invoke('inspectFollow', threadId, scope),
 			unfollow: () => invoke('inspectUnfollow'),
 		},
 		onMessage: (cb) => on('message', cb),

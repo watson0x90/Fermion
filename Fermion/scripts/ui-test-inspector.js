@@ -139,6 +139,77 @@ const T = { timeout: 20000 };
       const again = await win.evaluate(() => window.fermion.inspect.unfollow());
       if (again.threadId !== null) throw new Error('a thread was still being followed after Stop');
       await snap('follow');
+
+      // ---- working with the result: filter, group by module ----
+      const groupsNow = () => win.evaluate(() => [...document.querySelectorAll('[data-testid="follow-group"]')].map((g) => {
+        const m = /([\d,]+) calls? · ([\d,]+) functions?/.exec(g.querySelector('.gt').textContent);
+        return { name: g.querySelector('.gn').textContent, calls: Number(m[1].replace(/,/g, '')), functions: Number(m[2].replace(/,/g, '')) };
+      }));
+      const followOnce = async () => {
+        await win.click('[data-testid="thr-follow"]');
+        await win.waitForFunction(() => /Stop/.test(document.querySelector('[data-testid="thr-follow"]').textContent), undefined, T);
+        await new Promise((r) => setTimeout(r, 1800));
+        await win.click('[data-testid="thr-follow"]');
+        await win.waitForSelector('[data-testid="follow-row"]', T);
+        const status = await win.evaluate(() => document.querySelector('[data-testid="thr-follow-status"]').textContent);
+        await win.click('[data-testid="follow-bymodule"]');
+        await win.waitForSelector('[data-testid="follow-group"]', T);
+        return { status, groups: await groupsNow() };
+      };
+      await win.fill('[data-testid="follow-filter"]', 'ntdll');
+      const filtered = await win.evaluate(() => ({
+        rows: [...document.querySelectorAll('[data-testid="follow-row"] .fsym')].map((b) => b.textContent),
+        shown: document.querySelector('[data-testid="follow-shown"]').textContent,
+      }));
+      if (!filtered.rows.length || filtered.rows.length >= fol.rows || !filtered.rows.every((t) => /ntdll/i.test(t))) throw new Error('filter: ' + JSON.stringify(filtered).slice(0, 300));
+      if (!/^\d+ of \d+$/.test(filtered.shown)) throw new Error('filter count: ' + filtered.shown);
+      await win.fill('[data-testid="follow-filter"]', '');
+      await win.click('[data-testid="follow-bymodule"]');
+      await win.waitForSelector('[data-testid="follow-group"]', T);
+      const everything = await groupsNow();
+      const sum = everything.reduce((n, g) => n + g.calls, 0);
+      const stated = Number(/([\d,]+) calls to/.exec(fol.status)[1].replace(/,/g, ''));
+      if (everything.length < 3 || sum !== stated) throw new Error('module totals ' + sum + ' do not add up to ' + stated + ': ' + JSON.stringify(everything).slice(0, 300));
+      for (let i = 1; i < everything.length; i++) if (everything[i].calls > everything[i - 1].calls) throw new Error('groups are not ordered by calls');
+      if (await win.evaluate(() => document.querySelectorAll('[data-testid="follow-row"]').length) !== 0) throw new Error('groups should start closed');
+      await win.click('[data-testid="follow-group"]');
+      await win.waitForSelector('[data-testid="follow-row"]', T);
+      await snap('follow-by-module');
+      const ntdllAll = everything.find((g) => /^ntdll/i.test(g.name));
+      if (!ntdllAll) throw new Error('no ntdll group in a follow of everything');
+
+      // ---- limiting the follow to one module ----
+      step = 'follow one module only';
+      await win.selectOption('[data-testid="thr-follow-scope"]', 'module');
+      await win.waitForSelector('[data-testid="thr-follow-module"]', T);
+      if (!(await win.evaluate(() => document.querySelector('[data-testid="thr-follow"]').disabled))) throw new Error('Follow should wait for a module name');
+      await win.waitForFunction(() => document.querySelectorAll('#thr-follow-modules option').length > 5, undefined, T);
+      await win.fill('[data-testid="thr-follow-module"]', 'no-such-module.dll');
+      await win.click('[data-testid="thr-follow"]');
+      await win.waitForFunction(() => /Module not found: no-such-module\.dll/.test(document.querySelector('[data-testid="thr-detail"]').textContent), undefined, T);
+      const exeName = require('path').basename(process.execPath);
+      await win.fill('[data-testid="thr-follow-module"]', exeName);
+      const only = await followOnce();
+      if (!only.status.includes('only ' + exeName + ' followed')) throw new Error('scoped status: ' + only.status);
+      const ntdllOnly = only.groups.find((g) => /^ntdll/i.test(g.name)) || { functions: 0, calls: 0 };
+      // Stalker stayed out of ntdll: only the functions the program calls
+      // directly are seen, not everything ntdll calls inside itself.
+      if (ntdllOnly.functions >= ntdllAll.functions) throw new Error('ntdll was still followed: ' + JSON.stringify({ ntdllOnly, ntdllAll }));
+      await snap('follow-one-module');
+
+      // ---- and back to everything: the exclusions are really gone ----
+      step = 'follow everything again';
+      await win.selectOption('[data-testid="thr-follow-scope"]', 'all');
+      const back = await followOnce();
+      if (/followed/.test(back.status.replace(/^Following/, ''))) throw new Error('status still names a scope: ' + back.status);
+      const ntdllBack = back.groups.find((g) => /^ntdll/i.test(g.name)) || { functions: 0 };
+      if (ntdllBack.functions <= ntdllOnly.functions) throw new Error('the earlier exclusions still apply: ' + JSON.stringify({ ntdllBack, ntdllOnly, ntdllAll }));
+      console.log('FOLLOW_SCOPE ntdll functions: everything ' + ntdllAll.functions + ', one module ' + ntdllOnly.functions + ', everything again ' + ntdllBack.functions);
+      // The other views still work on the fresh agent.
+      await win.click('[data-testid="thr-refresh"]');
+      await win.waitForFunction(() => /\d+ threads/.test(document.querySelector('[data-testid="thr-count"]').textContent), undefined, T);
+
+      step = 'follow a thread';
       await win.click('[data-testid="thr-follow-dismiss"]');
       await win.waitForSelector('[data-testid="bt-row"]', T);
     }
@@ -154,7 +225,7 @@ const T = { timeout: 20000 };
     await win.click('[data-testid="detach"]');
     await win.waitForFunction(() => /Attach to a process/.test(document.querySelector('[data-testid="inspector-panel"]').textContent), undefined, T);
 
-    console.log('INSPECT_OK modules + exports/imports + hex view + paging + unreadable address + text scan (' + status.trim() + ') + threads/registers/backtrace + follow');
+    console.log('INSPECT_OK modules + exports/imports + hex view + paging + unreadable address + text scan (' + status.trim() + ') + threads/registers/backtrace + follow (scope, filter, by module)');
     await app.close();
     done(0);
   } catch (e) {

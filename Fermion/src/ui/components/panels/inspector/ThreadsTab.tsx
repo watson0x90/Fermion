@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../../Icon';
 import { parseAddress, cleanIpcError } from '../../../inspector/format';
 import { inspectApi, useInspect, Listing } from '../../../inspector/useInspect';
+import { FollowItem, FollowModule, FollowMode, FollowScope, scopeText } from '../../../inspector/follow';
+import { FollowResults } from './FollowResults';
 
 interface Thr { id: number; name: string; state: string; pc: string | null; where: string; registers: Record<string, string>; }
 const AUTO_MS = 2000;
 
-interface FollowItem { address: string; name: string; count: number; }
-interface FollowResult { threadId: number | null; calls: number; total: number; truncated: boolean; endedBy: string; items: FollowItem[]; }
+interface FollowResult { threadId: number | null; calls: number; total: number; truncated: boolean; endedBy: string; items: FollowItem[]; modules?: FollowModule[]; scope?: FollowScope | null; }
+interface Mod { name: string; }
 interface Frame { address: string; where: string; symbol: string; }
 
 // Threads of the target with where each one is; selecting a thread shows its
@@ -29,6 +31,14 @@ export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMe
   const [followBusy, setFollowBusy] = useState(false);
   const [followRes, setFollowRes] = useState<FollowResult | null>(null);
   const [followErr, setFollowErr] = useState('');
+  // What the follow covers: everything, everything but system libraries, or
+  // one module. Stalker does not go into what is left out.
+  const [scopeMode, setScopeMode] = useState<FollowMode>('all');
+  const [scopeModule, setScopeModule] = useState('');
+  const [activeScope, setActiveScope] = useState<FollowScope | null>(null);
+  const [run, setRun] = useState(0); // a new result view (filter cleared) per follow
+  const moduleNames = useInspect<Listing<Mod>>(() => inspectApi().modules(), 'follow-modules', active && scopeMode === 'module');
+  const scopeReady = scopeMode !== 'module' || scopeModule.trim() !== '';
   const maxSeconds = useRef(15);
   const limitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const followingRef = useRef<number | null>(null);
@@ -52,8 +62,11 @@ export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMe
     setFollowErr('');
     setFollowRes(null);
     try {
-      const r = await inspectApi().follow(id);
+      const asked: FollowScope = { mode: scopeMode, module: scopeMode === 'module' ? scopeModule.trim() : '' };
+      const r = await inspectApi().follow(id, asked);
       maxSeconds.current = Number(r?.maxSeconds) || 15;
+      setActiveScope(r?.scope ?? asked);
+      setRun((n) => n + 1);
       setFollowing(id);
       // The agent stops by itself at the limit; collect the result then.
       limitTimer.current = setTimeout(() => { if (followingRef.current !== null) stopFollow(); }, maxSeconds.current * 1000 + 300);
@@ -69,10 +82,12 @@ export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMe
     if (followingRef.current !== null) inspectApi()?.unfollow?.().catch(() => {});
   }, []);
 
+  const dash = (text: string) => (text ? ' — ' + text : '');
   const followStatus = following !== null
-    ? `Following thread ${following} — counting the calls it makes (up to ${maxSeconds.current} seconds).`
+    ? `Following thread ${following} — counting the calls it makes (up to ${maxSeconds.current} seconds)` + dash(scopeText(activeScope)) + '.'
     : followRes
       ? `${followRes.calls.toLocaleString()} calls to ${followRes.total.toLocaleString()} functions`
+        + dash(scopeText(followRes.scope ?? activeScope))
         + (followRes.endedBy === 'limit' ? ` — stopped at the ${maxSeconds.current} second limit` : '')
         + (followRes.truncated ? ` — showing the ${followRes.items.length} most-called` : '')
       : '';
@@ -112,13 +127,46 @@ export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMe
             <strong className="insp-title">Thread {thread.id}{thread.name ? ' · ' + thread.name : ''}</strong>
             <span className="grow" />
             <span className="count">{trace.loading ? 'unwinding…' : `${trace.data?.items.length ?? 0} frames`}</span>
+            <select
+              className="mini"
+              data-testid="thr-follow-scope"
+              aria-label="What to follow"
+              value={scopeMode}
+              disabled={following !== null || followBusy}
+              title="What Follow covers. Leaving code out makes the thread run faster while followed: calls into it are still counted, what happens inside it is not."
+              onChange={(e) => setScopeMode(e.target.value as FollowMode)}
+            >
+              <option value="all">Follow everything</option>
+              <option value="app">Skip system libraries</option>
+              <option value="module">Only one module</option>
+            </select>
+            {scopeMode === 'module' && (
+              <>
+                <input
+                  className="mini follow-module"
+                  data-testid="thr-follow-module"
+                  aria-label="Module to follow"
+                  placeholder="module name"
+                  list="thr-follow-modules"
+                  spellCheck={false}
+                  value={scopeModule}
+                  disabled={following !== null || followBusy}
+                  onChange={(e) => setScopeModule(e.target.value)}
+                />
+                <datalist id="thr-follow-modules">
+                  {(moduleNames.data?.items ?? []).map((m) => <option key={m.name} value={m.name} />)}
+                </datalist>
+              </>
+            )}
             <button
               className={'pill' + (following !== null ? ' on' : '')}
               data-testid="thr-follow"
-              disabled={followBusy}
+              disabled={followBusy || (following === null && !scopeReady)}
               title={following !== null
                 ? 'Stop following and show the calls counted'
-                : 'Follow this thread with Stalker and count the calls it makes. Heavier than the other views: it slows the thread while it runs.'}
+                : !scopeReady
+                  ? 'Enter the name of the module to follow'
+                  : 'Follow this thread with Stalker and count the calls it makes. Heavier than the other views: it slows the thread while it runs.'}
               onClick={() => (following !== null ? stopFollow() : startFollow(thread.id))}
             >
               <Icon name={following !== null ? 'stop' : 'play'} size={11} />{following !== null ? 'Stop' : 'Follow'}
@@ -147,15 +195,7 @@ export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMe
               {!Object.keys(thread.registers).length && <div className="insp-empty">No register context for this thread.</div>}
             </div>
             {following === null && followRes ? (
-              <div className="frames" data-testid="follow-results">
-                {followRes.items.map((f) => (
-                  <div className="frame follow" key={f.address} data-testid="follow-row">
-                    <span className="fc">{f.count.toLocaleString()}</span>
-                    <button className="fsym mono" title={f.address + ' — open in the Memory tab'} onClick={() => onViewMemory(f.address)}>{f.name}</button>
-                  </div>
-                ))}
-                {!followRes.items.length && <div className="insp-empty">The thread made no calls while it was followed (it may have been waiting).</div>}
-              </div>
+              <FollowResults key={run} threadId={followRes.threadId} items={followRes.items} modules={followRes.modules} onViewMemory={onViewMemory} />
             ) : (
             <div className="frames">
               {trace.error && <div className="insp-note err" role="alert">Could not unwind: {trace.error}</div>}

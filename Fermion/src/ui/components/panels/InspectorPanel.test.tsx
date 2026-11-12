@@ -20,6 +20,7 @@ const THREADS = [
 const HEX256 = '4d5a9000' + '00'.repeat(252);
 
 let inspect: any;
+let exportFile: any;
 function setup({ attached = true, active = true } = {}) {
   inspect = {
     modules: vi.fn(async () => list(MODS)),
@@ -30,10 +31,11 @@ function setup({ attached = true, active = true } = {}) {
     ranges: vi.fn(async (p: string) => list([{ base: '0x1000', size: 4096, protection: p, file: 'C:\\Windows\\a.dll' }, { base: '0x9000', size: 8192, protection: p, file: '' }])),
     read: vi.fn(async (address: string, size: number) => ({ address, size, requested: size, hex: HEX256 })),
     scan: vi.fn(async () => ({ ...list([{ address: '0x1010', size: 2, where: 'a.dll+0x10' }]), stopped: '', rangesScanned: 2, rangesTotal: 2 })),
-    follow: vi.fn(async (id: number) => ({ following: true, threadId: id, maxSeconds: 15 })),
-    unfollow: vi.fn(async () => ({ following: false, threadId: 5156, calls: 1234, total: 2, truncated: false, endedBy: 'stop', items: [{ address: '0x7fff96125a70', name: 'ntdll.dll!RtlSizeHeap', count: 1000 }, { address: '0x500', name: '0x500', count: 234 }] })),
+    follow: vi.fn(async (id: number, scope: any) => ({ following: true, threadId: id, maxSeconds: 15, scope, excluded: scope?.mode === 'all' ? 0 : 40 })),
+    unfollow: vi.fn(async () => ({ following: false, threadId: 5156, calls: 1234, total: 2, truncated: false, endedBy: 'stop', scope: { mode: 'all', module: '' }, modules: [{ name: 'ntdll.dll', calls: 1000, functions: 1 }, { name: '', calls: 234, functions: 1 }], items: [{ address: '0x7fff96125a70', name: 'ntdll.dll!RtlSizeHeap', module: 'ntdll.dll', count: 1000 }, { address: '0x500', name: '0x500', module: '', count: 234 }] })),
   };
-  (window as any).fermion = { inspect };
+  exportFile = vi.fn(async () => 'C:/calls.csv');
+  (window as any).fermion = { inspect, exportFile };
   const store = configureStore({ reducer: { session, output, ui } });
   if (attached) store.dispatch(sessionActions.syncState({ isAttached: true, currentPid: '4821' }));
   if (active) store.dispatch(uiActions.setActiveTab('inspector'));
@@ -384,7 +386,7 @@ test('Threads: Follow counts the calls a thread makes; Stop shows them, most-cal
   const follow = await screen.findByTestId('thr-follow');
   expect(follow).toHaveTextContent('Follow');
   fireEvent.click(follow);
-  await waitFor(() => expect(inspect.follow).toHaveBeenCalledWith(5156));
+  await waitFor(() => expect(inspect.follow).toHaveBeenCalledWith(5156, { mode: 'all', module: '' }));
   await waitFor(() => expect(screen.getByTestId('thr-follow')).toHaveTextContent('Stop'));
   expect(screen.getByTestId('thr-follow-status')).toHaveTextContent(/Following thread 5156/);
   // Another thread cannot be followed meanwhile.
@@ -435,4 +437,142 @@ test('Threads: clicking a followed function opens it in Memory', async () => {
   fireEvent.click(within(rows[0]).getByRole('button'));
   expect(screen.getByTestId('insp-memory')).toHaveAttribute('aria-selected', 'true');
   await waitFor(() => expect(inspect.read).toHaveBeenCalledWith('0x7fff96125a70', 256));
+});
+
+// ---- limiting what a follow covers ----
+async function selectThread() {
+  setup();
+  open('threads');
+  fireEvent.click(await screen.findByTestId('thr-row-5156'));
+  return screen.findByTestId('thr-follow');
+}
+async function followAndStop() {
+  const follow = await selectThread();
+  fireEvent.click(follow);
+  await waitFor(() => expect(screen.getByTestId('thr-follow')).toHaveTextContent('Stop'));
+  fireEvent.click(screen.getByTestId('thr-follow'));
+  await screen.findAllByTestId('follow-row');
+}
+
+test('Threads: a follow can skip system libraries; the choice is fixed while following and named in the result', async () => {
+  const follow = await selectThread();
+  const scope = screen.getByTestId('thr-follow-scope') as HTMLSelectElement;
+  expect(scope.value).toBe('all');
+  expect(screen.queryByTestId('thr-follow-module')).toBeNull();
+  fireEvent.change(scope, { target: { value: 'app' } });
+  inspect.unfollow.mockResolvedValueOnce({ following: false, threadId: 5156, calls: 10, total: 1, truncated: false, endedBy: 'stop', scope: { mode: 'app', module: '' }, modules: [], items: [{ address: '0x1', name: 'a!b', module: 'a', count: 10 }] });
+  fireEvent.click(follow);
+  await waitFor(() => expect(inspect.follow).toHaveBeenCalledWith(5156, { mode: 'app', module: '' }));
+  await waitFor(() => expect(screen.getByTestId('thr-follow')).toHaveTextContent('Stop'));
+  expect(screen.getByTestId('thr-follow-status')).toHaveTextContent(/system libraries not followed/);
+  expect(screen.getByTestId('thr-follow-scope')).toBeDisabled();
+  fireEvent.click(screen.getByTestId('thr-follow'));
+  await waitFor(() => expect(screen.getByTestId('thr-follow-status')).toHaveTextContent('10 calls to 1 functions — system libraries not followed'));
+  expect(screen.getByTestId('thr-follow-scope')).not.toBeDisabled();
+});
+
+test('Threads: following one module needs its name, offered from the loaded modules', async () => {
+  const follow = await selectThread();
+  const before = inspect.modules.mock.calls.length; // the Modules view loaded its own list
+  fireEvent.change(screen.getByTestId('thr-follow-scope'), { target: { value: 'module' } });
+  const name = await screen.findByTestId('thr-follow-module');
+  expect(follow).toBeDisabled();
+  await waitFor(() => expect(inspect.modules).toHaveBeenCalledTimes(before + 1)); // fetched for the suggestions
+  await waitFor(() => expect(document.querySelectorAll('#thr-follow-modules option').length).toBe(2));
+  expect([...document.querySelectorAll('#thr-follow-modules option')].map((o) => (o as HTMLOptionElement).value)).toEqual(['node.exe', 'ntdll.dll']);
+  fireEvent.change(name, { target: { value: '  node.exe ' } });
+  expect(follow).not.toBeDisabled();
+  fireEvent.click(follow);
+  await waitFor(() => expect(inspect.follow).toHaveBeenCalledWith(5156, { mode: 'module', module: 'node.exe' }));
+  await waitFor(() => expect(screen.getByTestId('thr-follow-status')).toHaveTextContent(/only node\.exe followed/));
+  expect(screen.getByTestId('thr-follow-module')).toBeDisabled();
+});
+
+test('Threads: a module that is not loaded is reported and nothing is followed', async () => {
+  const follow = await selectThread();
+  fireEvent.change(screen.getByTestId('thr-follow-scope'), { target: { value: 'module' } });
+  fireEvent.change(await screen.findByTestId('thr-follow-module'), { target: { value: 'nope.dll' } });
+  inspect.follow.mockRejectedValueOnce(new Error("Error invoking remote method 'fermion:invoke': Error: Module not found: nope.dll"));
+  fireEvent.click(follow);
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Module not found: nope.dll'));
+  expect(screen.getByTestId('thr-follow')).toHaveTextContent('Follow');
+});
+
+// ---- working with the result ----
+test('Follow results: the filter narrows the functions by name, module or address', async () => {
+  await followAndStop();
+  expect(screen.getByTestId('follow-shown')).toHaveTextContent('2 functions');
+  fireEvent.change(screen.getByTestId('follow-filter'), { target: { value: 'sizeheap' } });
+  expect(screen.getAllByTestId('follow-row').length).toBe(1);
+  expect(screen.getByTestId('follow-shown')).toHaveTextContent('1 of 2');
+  fireEvent.change(screen.getByTestId('follow-filter'), { target: { value: 'zzz' } });
+  expect(screen.queryAllByTestId('follow-row').length).toBe(0);
+  expect(screen.getByTestId('follow-results')).toHaveTextContent('No function matches the filter.');
+});
+
+test('Follow results: grouped by module with totals; a group opens to show its functions', async () => {
+  await followAndStop();
+  const toggle = screen.getByTestId('follow-bymodule');
+  expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  fireEvent.click(toggle);
+  expect(toggle).toHaveAttribute('aria-pressed', 'true');
+  const groups = screen.getAllByTestId('follow-group');
+  expect(groups.length).toBe(2);
+  expect(groups[0]).toHaveTextContent('ntdll.dll');
+  expect(groups[0]).toHaveTextContent('1,000 calls');
+  expect(groups[0]).toHaveTextContent('1 function');
+  expect(groups[1]).toHaveTextContent('(no module)');
+  expect(groups[1]).toHaveTextContent('234 calls');
+  expect(screen.queryAllByTestId('follow-row').length).toBe(0); // closed to start with: an overview
+  fireEvent.click(groups[0]);
+  expect(groups[0]).toHaveAttribute('aria-expanded', 'true');
+  expect(screen.getAllByTestId('follow-row').length).toBe(1);
+  expect(screen.getByTestId('follow-row')).toHaveTextContent('ntdll.dll!RtlSizeHeap');
+  fireEvent.click(groups[0]);
+  expect(screen.queryAllByTestId('follow-row').length).toBe(0);
+});
+
+test('Follow results: filtering while grouped opens the groups that match and hides the rest', async () => {
+  await followAndStop();
+  fireEvent.click(screen.getByTestId('follow-bymodule'));
+  fireEvent.change(screen.getByTestId('follow-filter'), { target: { value: '0x500' } });
+  const groups = screen.getAllByTestId('follow-group');
+  expect(groups.length).toBe(1);
+  expect(groups[0]).toHaveTextContent('(no module)');
+  expect(screen.getAllByTestId('follow-row').length).toBe(1);
+});
+
+test('Follow results: a module whose functions did not make the list says so when opened', async () => {
+  const follow = await selectThread();
+  inspect.unfollow.mockResolvedValueOnce({ following: false, threadId: 5156, calls: 50, total: 9, truncated: true, endedBy: 'stop', scope: { mode: 'all', module: '' },
+    modules: [{ name: 'a.dll', calls: 40, functions: 1 }, { name: 'rare.dll', calls: 10, functions: 8 }], items: [{ address: '0x1', name: 'a.dll!f', module: 'a.dll', count: 40 }] });
+  fireEvent.click(follow);
+  await waitFor(() => expect(screen.getByTestId('thr-follow')).toHaveTextContent('Stop'));
+  fireEvent.click(screen.getByTestId('thr-follow'));
+  await screen.findAllByTestId('follow-row');
+  fireEvent.click(screen.getByTestId('follow-bymodule'));
+  const rare = screen.getAllByTestId('follow-group')[1];
+  expect(rare).toHaveTextContent('8 functions');
+  fireEvent.click(rare);
+  expect(screen.getByTestId('follow-results')).toHaveTextContent('None of its functions are among the most-called listed.');
+});
+
+test('Follow results: Save writes the functions shown as CSV, without becoming the script file', async () => {
+  await followAndStop();
+  fireEvent.change(screen.getByTestId('follow-filter'), { target: { value: 'ntdll' } });
+  fireEvent.click(screen.getByTestId('follow-save'));
+  expect(exportFile).toHaveBeenCalledTimes(1);
+  const [csv, opts] = exportFile.mock.calls[0];
+  expect(csv).toBe('calls,module,function,address\r\n1000,ntdll.dll,ntdll.dll!RtlSizeHeap,0x7fff96125a70\r\n');
+  expect(opts).toEqual(expect.objectContaining({ defaultPath: 'thread-5156-calls.csv' }));
+});
+
+test('Follow results: a new follow starts with the filter cleared', async () => {
+  await followAndStop();
+  fireEvent.change(screen.getByTestId('follow-filter'), { target: { value: 'zzz' } });
+  fireEvent.click(screen.getByTestId('thr-follow'));
+  await waitFor(() => expect(screen.getByTestId('thr-follow')).toHaveTextContent('Stop'));
+  fireEvent.click(screen.getByTestId('thr-follow'));
+  expect((await screen.findAllByTestId('follow-row')).length).toBe(2);
+  expect((screen.getByTestId('follow-filter') as HTMLInputElement).value).toBe('');
 });
