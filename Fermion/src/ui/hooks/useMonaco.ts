@@ -7,9 +7,11 @@ import { applyTheme, loadSavedTheme } from '../theme/themeEngine';
 // (window.require, from the loader.js <script> in index.html). Ported from the
 // vanilla editor.js. Exposes the editor on window.MonacoCodeEditor (used by the
 // attach/reload thunks + the Playwright test surface) and disposes on unmount.
-export function useMonaco(initialValue: string) {
+export function useMonaco(initialValue: string, onEdit?: () => void) {
   const hostRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<any>(null);
+  const onEditRef = useRef(onEdit);
+  onEditRef.current = onEdit;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -57,6 +59,8 @@ export function useMonaco(initialValue: string) {
       });
       editorRef.current = editor;
       (window as any).MonacoCodeEditor = editor;
+      // Any change to the text (typing, paste, undo) counts as an edit.
+      editor.onDidChangeModelContent?.(() => onEditRef.current?.());
     });
 
     return () => {

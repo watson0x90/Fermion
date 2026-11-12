@@ -82,6 +82,9 @@ jobs:
       - name: Child windows open isolated
         run: xvfb-run -a node scripts/ui-test-child-windows.js
 
+      - name: Editor file handling (open, save, recent)
+        run: xvfb-run -a node scripts/ui-test-editor-files.js
+
       - name: Output pane detaches and docks
         run: xvfb-run -a node scripts/ui-test-detach-output.js
 

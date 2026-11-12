@@ -3,6 +3,8 @@ import { useAppDispatch, useAppSelector } from '../store';
 import { outputActions } from '../store/outputSlice';
 import { writeTerminal, clearTerminal } from '../bridge';
 import { reloadFromEditor } from '../sessionOps';
+import { openScript, saveScript } from '../fileOps';
+import { useStore } from 'react-redux';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion;
@@ -19,7 +21,7 @@ export function useKeybinds() {
   // the current value without rebinding on every change.
   const attachedRef = useRef(isAttached);
   attachedRef.current = isAttached;
-  const currentPath = useRef<string | null>(null);
+  const store = useStore();
 
   useEffect(() => {
     const isMac = /Mac/.test(window.navigator.platform);
@@ -33,12 +35,12 @@ export function useKeybinds() {
       }
       if (mod(e) && (e.key === 's' || e.key === 'S')) {
         e.preventDefault();
-        saveScript();
+        saveScript(dispatch, store.getState);
         return;
       }
       if (mod(e) && (e.key === 'o' || e.key === 'O')) {
         e.preventDefault();
-        openScript();
+        openScript(dispatch, store.getState);
         return;
       }
       if (mod(e) && (e.key === 't' || e.key === 'T')) {
@@ -52,34 +54,6 @@ export function useKeybinds() {
         dispatch(outputActions.clear());
       }
     };
-
-    function saveScript() {
-      const content: string = editor()?.getValue?.() ?? '';
-      const f = api();
-      if (!f) return;
-      const known = currentPath.current;
-      const p = known
-        ? f.saveCurrentFile(content)
-        : f.saveFile(content, { title: 'Fermion Save File' });
-      Promise.resolve(p).then((savedPath: string | null | undefined) => {
-        if (!savedPath) return;
-        currentPath.current = savedPath;
-        writeTerminal('STATUS', '[+] File saved..');
-        writeTerminal('STATUS', '    |-> Path: ' + savedPath);
-      }).catch((err: unknown) => writeTerminal('ERR', '[!] Error saving file: ' + err));
-    }
-
-    function openScript() {
-      const f = api();
-      if (!f) return;
-      Promise.resolve(f.openFile()).then((result: { path: string; content: string } | null) => {
-        if (!result) return;
-        editor()?.setValue?.(result.content);
-        currentPath.current = result.path;
-        writeTerminal('STATUS', '[+] File opened..');
-        writeTerminal('STATUS', '    |-> Path: ' + result.path);
-      }).catch((err: unknown) => writeTerminal('ERR', '[!] Error opening file: ' + err));
-    }
 
     function reloadScript() {
       if (!attachedRef.current) return; // nothing to reload without a session

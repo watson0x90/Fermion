@@ -9,6 +9,8 @@ export interface UiState {
   railOpen: boolean;   // activity rail expanded (icons + labels)
   settingsOpen: boolean;
   outputDetached: boolean; // Output pane lives in its own window
+  filePath: string | null; // the script file in the editor (null = never saved)
+  dirty: boolean;          // the editor has changes that are not saved
 }
 
 const initialState: UiState = {
@@ -17,6 +19,8 @@ const initialState: UiState = {
   railOpen: false,
   settingsOpen: false,
   outputDetached: false,
+  filePath: null,
+  dirty: false,
 };
 
 const uiSlice = createSlice({
@@ -37,6 +41,17 @@ const uiSlice = createSlice({
     },
     setOutputDetached(state, action: PayloadAction<boolean>) {
       state.outputDetached = action.payload;
+    },
+    edited(state) {
+      state.dirty = true;
+    },
+    fileOpened(state, action: PayloadAction<string>) {
+      state.filePath = action.payload;
+      state.dirty = false;
+    },
+    fileSaved(state, action: PayloadAction<string>) {
+      state.filePath = action.payload;
+      state.dirty = false;
     },
   },
 });

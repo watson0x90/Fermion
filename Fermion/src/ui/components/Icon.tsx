@@ -5,7 +5,7 @@
 export type IconName =
   | 'mark' | 'session' | 'graph' | 'tree' | 'inspect' | 'docs' | 'info' | 'gear'
   | 'refresh' | 'play' | 'reload' | 'stop' | 'follow' | 'clear' | 'save' | 'floppy'
-  | 'search' | 'wrap' | 'expand' | 'popout' | 'dock' | 'chevron' | 'plus' | 'tick' | 'min' | 'max' | 'unmax' | 'close';
+  | 'search' | 'wrap' | 'expand' | 'popout' | 'dock' | 'chevron' | 'plus' | 'folder' | 'clock' | 'saveas' | 'tick' | 'min' | 'max' | 'unmax' | 'close';
 
 const P: Record<IconName, React.ReactNode> = {
   mark: (<><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none" /><ellipse cx="12" cy="12" rx="10" ry="4.3" /><ellipse cx="12" cy="12" rx="10" ry="4.3" transform="rotate(60 12 12)" /><ellipse cx="12" cy="12" rx="10" ry="4.3" transform="rotate(120 12 12)" /></>),
@@ -29,6 +29,9 @@ const P: Record<IconName, React.ReactNode> = {
   expand: (<path d="M4 6h16M4 12h16M4 18h16" />),
   popout: (<path d="M14 4h6v6M20 4l-8 8M18 14v4a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2h4" />),
   dock: (<path d="M20 4l-8 8M12 6v6h6M18 14v4a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2h4" />),
+  folder: (<path d="M3 7a2 2 0 012-2h4l2 2.5h8a2 2 0 012 2V18a2 2 0 01-2 2H5a2 2 0 01-2-2z" />),
+  clock: (<><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></>),
+  saveas: (<><path d="M5 4h9l3 3v5M5 4v16h7M8 4v5h6V4" /><path d="M18 14v7M14.5 17.5h7" /></>),
   plus: (<path d="M12 5v14M5 12h14" />),
   chevron: (<path d="M9 6l6 6-6 6" />),
   tick: (<path d="M5 12l5 5 9-10" />),

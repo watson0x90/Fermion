@@ -119,7 +119,7 @@ export function GraphPanel() {
   const imgStyle = zoom === null
     ? { maxWidth: '100%' }
     : natural ? { width: Math.round((natural * zoom) / 100) + 'px', maxWidth: 'none' } : { width: zoom + '%', maxWidth: 'none' };
-  const save = () => { if (svg) api()?.saveFile?.(svg, { title: 'Save Trace Graph', defaultPath: 'trace.svg' }); };
+  const save = () => { if (svg) api()?.exportFile?.(svg, { title: 'Save Trace Graph', defaultPath: 'trace.svg' }); };
 
   return (
     <div className="graphpanel" data-testid="graph-panel">
