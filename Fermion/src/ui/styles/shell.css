@@ -542,3 +542,14 @@ button.vrow:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 6%, 
 /* Which program's hooks and bookmarks are shown */
 .set-pick { display: inline-flex; align-items: center; gap: 6px; flex: none; color: var(--muted); font-size: 11.5px; }
 .set-pick select { max-width: 150px; }
+
+/* Memory editing */
+.pill.warn.on, .pill.warn:not(:disabled):hover { border-color: var(--err, #c0392b); color: var(--err, #c0392b); }
+.mem-editbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--err, #c0392b) 7%, var(--chrome)); font-size: 11.5px; color: var(--fg); }
+.mem-editbar .hint { color: var(--muted); }
+.mem-editbar .insp-filter { flex: 1; min-width: 140px; }
+.mem-editbar .preview { flex-basis: 100%; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hexrow .hb .pick { cursor: pointer; }
+.hexrow .hb .pick:hover { outline: 1px solid var(--muted); }
+.hexrow .hb .tgt { outline: 1px solid var(--err, #c0392b); background: color-mix(in srgb, var(--err, #c0392b) 14%, transparent); }
+.write-cols { display: grid; grid-template-columns: 150px 56px minmax(0, 1fr) auto; column-gap: 10px; align-items: center; }

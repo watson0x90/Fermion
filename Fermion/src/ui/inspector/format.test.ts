@@ -83,3 +83,39 @@ test('cleanIpcError strips the Electron IPC wrapper from an error message', () =
   expect(cleanIpcError(new Error('plain'))).toBe('plain');
   expect(cleanIpcError('str')).toBe('str');
 });
+
+// ---- writing memory ----
+import { parseBytes, spacedHex, overlaps } from './format';
+
+test('parseBytes: hex in the forms people type it, or text as UTF-8', () => {
+  expect(parseBytes('90 90', 'hex')).toEqual({ hex: '9090', error: '' });
+  expect(parseBytes('0xDE, 0xAD\tbe ef', 'hex')).toEqual({ hex: 'deadbeef', error: '' });
+  expect(parseBytes('c3', 'hex').hex).toBe('c3');
+  expect(parseBytes('Hi é', 'text')).toEqual({ hex: '486920c3a9', error: '' });
+  expect(parseBytes(' ', 'text').hex).toBe('20'); // a space is a byte of text
+});
+
+test('parseBytes: nothing typed is not an error; bad input says what is wrong', () => {
+  expect(parseBytes('', 'hex')).toEqual({ hex: '', error: '' });
+  expect(parseBytes('   ', 'hex')).toEqual({ hex: '', error: '' });
+  expect(parseBytes('', 'text')).toEqual({ hex: '', error: '' });
+  expect(parseBytes('9', 'hex').error).toMatch(/incomplete/);
+  expect(parseBytes('zz', 'hex').error).toMatch(/Hex bytes only/);
+  expect(parseBytes('4d ??', 'hex').error).toMatch(/Hex bytes only/); // no wildcards in a write
+  expect(parseBytes('00'.repeat(4097), 'hex').error).toMatch(/At most 4096/);
+  expect(parseBytes('00'.repeat(4096), 'hex').error).toBe('');
+});
+
+test('spacedHex spaces bytes and shortens long runs', () => {
+  expect(spacedHex('4d5a90')).toBe('4d 5a 90');
+  expect(spacedHex('00'.repeat(20), 4)).toBe('00 00 00 00 … (20 bytes)');
+  expect(spacedHex('')).toBe('');
+});
+
+test('overlaps: writes that share a byte', () => {
+  const w = (address: string, size: number) => ({ address, size });
+  expect(overlaps(w('0x1000', 4), w('0x1003', 1))).toBe(true);
+  expect(overlaps(w('0x1000', 4), w('0x1004', 4))).toBe(false);
+  expect(overlaps(w('0x1004', 4), w('0x1000', 4))).toBe(false);
+  expect(overlaps(w('0x1000', 1), w('0x1000', 1))).toBe(true);
+});

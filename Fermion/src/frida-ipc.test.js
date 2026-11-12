@@ -40,15 +40,16 @@ test('evaluate (REPL) is allow-listed and forwards its code argument', async () 
   assert.deepEqual(calls, ['Process.id']);
 });
 
-test('the Inspector read-only operations are allow-listed', async () => {
+test('the Inspector operations are allow-listed, and only inspectWrite writes', async () => {
   const names = ['inspectModules', 'inspectExports', 'inspectImports', 'inspectThreads', 'inspectBacktrace', 'inspectRanges', 'inspectRead', 'inspectScan', 'inspectFollow', 'inspectUnfollow', 'inspectDisassemble'];
   const svc = {};
   for (const n of names) svc[n] = async (...a) => [n, ...a];
   const dispatch = createDispatch(svc);
   for (const n of names) assert.deepEqual(await dispatch(n, 'x'), [n, 'x']);
-  // Nothing that writes to the target is exposed under an inspect* name.
+  // Exactly one inspect* operation writes to the target: inspectWrite
+  // (approved with memory editing). Anything else under that name reads.
   const { INVOKE_METHODS } = require('./frida-ipc.js');
-  assert.deepEqual([...INVOKE_METHODS].filter((m) => m.startsWith('inspect')).sort(), names.slice().sort());
+  assert.deepEqual([...INVOKE_METHODS].filter((m) => m.startsWith('inspect')).sort(), [...names, 'inspectWrite'].sort());
 });
 
 test('cancelEvaluate is allow-listed', async () => {

@@ -118,6 +118,8 @@ function buildApi(ipcRenderer) {
 			ranges: (protection) => invoke('inspectRanges', protection),
 			read: (address, size) => invoke('inspectRead', address, size),
 			scan: (pattern, protection) => invoke('inspectScan', pattern, protection),
+			// bytes: hex pairs. Resolves to what was there before (`original`).
+			write: (address, bytes) => invoke('inspectWrite', address, bytes),
 			disassemble: (address, count) => invoke('inspectDisassemble', address, count),
 			follow: (threadId, scope) => invoke('inspectFollow', threadId, scope),
 			unfollow: () => invoke('inspectUnfollow'),

@@ -16,7 +16,7 @@ const SUBS: { id: Sub; label: string }[] = [
   { id: 'bookmarks', label: 'Bookmarks' },
 ];
 
-// Inspector: read-only views of the attached process — its loaded modules
+// Inspector: views of the attached process — its loaded modules
 // (exports/imports), memory (ranges, hex view, scan), disassembly and threads
 // (registers, backtrace). Each view loads when first shown and on Refresh; nothing here
 // writes to the target.

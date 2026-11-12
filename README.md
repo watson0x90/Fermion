@@ -2,7 +2,7 @@
 
 # Fermion
 
-Fermion is a desktop IDE for [Frida](https://frida.re). It wraps [frida-node](https://github.com/frida/frida-node) and the [Monaco editor](https://microsoft.github.io/monaco-editor/) in an Electron app, so you can write a Frida script, inject it into a process, and watch its output in one window. Around the editor it adds a live REPL, a process tree, a read-only inspector for the target's modules, memory and threads, and a call-graph tracer.
+Fermion is a desktop IDE for [Frida](https://frida.re). It wraps [frida-node](https://github.com/frida/frida-node) and the [Monaco editor](https://microsoft.github.io/monaco-editor/) in an Electron app, so you can write a Frida script, inject it into a process, and watch its output in one window. Around the editor it adds a live REPL, a process tree, an inspector for the target's modules, memory and threads, and a call-graph tracer.
 
 ![Fermion: a script hooking CreateFileW, with its output on the right](Images/fermion-overview.png)
 
@@ -275,17 +275,25 @@ The processes on the selected device as a parent → child tree, so you can tell
 
 ## Inspector
 
-Views of the attached process that only observe it. Nothing in the Inspector writes to the target's memory. Each view loads when you open it and again when you press **Refresh** or come back to it. **Auto**, on the Threads list and the Memory hex view, re-reads every 2 seconds while the view is open, which is handy for watching a buffer change.
+Views of the attached process. They only observe it, with one exception you have to switch on: **Edit** in the Memory view, which writes bytes (see below). With Edit off, nothing in the Inspector writes to the target's memory. Each view loads when you open it and again when you press **Refresh** or come back to it. **Auto**, on the Threads list and the Memory hex view, re-reads every 2 seconds while the view is open, which is handy for watching a buffer change.
 
 ![Inspector: a thread's registers and backtrace](Images/fermion-inspector.png)
 
 **Modules** lists every loaded module with its base address and size. Select one to list its **exports** or **imports**, with a filter. Click any address to open it in Memory.
 
-**Memory** has three parts:
+**Memory** has these parts:
 
 - A **hex view** of 256 bytes. Type an address and press Go, or page with ◀ ▶.
 - **Ranges**: the mapped memory ranges with at least the chosen protection (`r--`, `rw-`, `r-x`, `rwx`). Click one to view it.
 - **Scan**: search those ranges for hex bytes (`4d 5a ?? 00`, where `??` matches any byte) or for text. Click a result to see it in the hex view with the match marked. A pattern needs at least two concrete bytes. A scan stops after 500 matches or 8 seconds and says so.
+- **Edit** (off by default) lets you write bytes. Switch it on, click the byte where the write starts, and type the new bytes as hex (`90 90`, `0xc3`) or as text. The bytes that would be replaced are outlined in the view and shown beside the new ones; nothing is written until you press **Write**. Up to 4096 bytes go in one write, which must fit inside one mapped range.
+- **Writes** lists what you wrote in this process, with the bytes each write replaced. **Revert** puts them back. When two writes cover the same bytes, revert the later one first; Fermion says so if you try the other order. Output records every write and revert with both sets of bytes.
+
+Writing works on data and on code. Code is patched the way Frida patches it, so it works on pages that are not writable, and read-only data is made writable only for the moment of the write. Things to know:
+
+- A write takes effect at once in a running process. Overwriting code a thread is executing, or a pointer something is about to follow, can crash the target.
+- The list of writes is kept while Fermion is open and belongs to the process: it is not shown for another process and is not saved. The written bytes stay in the process after you detach.
+- Memory that Frida itself allocated (with `Memory.alloc` in a script, for example) is hidden from the Inspector by Frida and can be neither read nor written here.
 
 ![Inspector: a text scan and its match in the hex view](Images/fermion-memory.png)
 

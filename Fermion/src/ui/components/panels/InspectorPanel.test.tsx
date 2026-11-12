@@ -748,3 +748,126 @@ test('a request to show the bookmarks opens that view', async () => {
   act(() => { store.dispatch(uiActions.showBookmarks()); });
   await waitFor(() => expect(screen.getByTestId('insp-bookmarks')).toHaveAttribute('aria-selected', 'true'));
 });
+
+// ---- writing memory ----
+async function openMemoryAt1000() {
+  open('memory');
+  await waitFor(() => expect(screen.getAllByTestId('range-row').length).toBe(2));
+  fireEvent.click(screen.getAllByTestId('range-row')[0]);
+  await waitFor(() => expect(screen.getAllByTestId('hex-row').length).toBe(16));
+}
+function withWrite() {
+  inspect.write = vi.fn(async (address: string, bytes: string) => ({ address, size: bytes.length / 2, original: '4d5a9000'.slice(0, bytes.length), written: bytes, protection: 'rw-' }));
+}
+
+test('without Edit nothing in the Memory tab can write: bytes are not clickable and there is no write bar', async () => {
+  setup();
+  withWrite();
+  await openMemoryAt1000();
+  expect(screen.queryByTestId('mem-editbar')).toBeNull();
+  expect(screen.queryAllByTestId('hex-byte').length).toBe(0);
+  expect(screen.getByTestId('mem-edit')).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('Edit: pick a byte, type bytes, see what they replace, and Write sends exactly that', async () => {
+  setup();
+  withWrite();
+  await openMemoryAt1000();
+  fireEvent.click(screen.getByTestId('mem-edit'));
+  expect(screen.getByTestId('mem-editbar')).toHaveTextContent('Click a byte in the view');
+  expect(screen.queryByTestId('mem-write')).toBeNull();
+  fireEvent.click(screen.getAllByTestId('hex-byte')[1]); // 0x1001
+  expect(screen.getByTestId('mem-edit-at')).toHaveTextContent('0x1001');
+  expect(screen.getByTestId('mem-write')).toBeDisabled(); // nothing typed yet
+  fireEvent.change(screen.getByTestId('mem-edit-input'), { target: { value: 'de ad' } });
+  expect(screen.getByTestId('mem-edit-preview')).toHaveTextContent('5a 90 → de ad');
+  expect(screen.getByTestId('mem-write')).toHaveTextContent('Write 2 bytes');
+  expect(inspect.write).not.toHaveBeenCalled(); // typing writes nothing
+  const reads = inspect.read.mock.calls.length;
+  fireEvent.click(screen.getByTestId('mem-write'));
+  await waitFor(() => expect(inspect.write).toHaveBeenCalledWith('0x1001', 'dead'));
+  expect(inspect.write).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(inspect.read.mock.calls.length).toBeGreaterThan(reads)); // the view is read again
+  await waitFor(() => expect(screen.getByTestId('mem-mode-writes')).toHaveTextContent('Writes (1)'));
+  expect((screen.getByTestId('mem-edit-input') as HTMLInputElement).value).toBe('');
+});
+
+test('Edit: input that is not bytes cannot be written; text is written as its bytes', async () => {
+  setup();
+  withWrite();
+  await openMemoryAt1000();
+  fireEvent.click(screen.getByTestId('mem-edit'));
+  fireEvent.click(screen.getAllByTestId('hex-byte')[0]);
+  fireEvent.change(screen.getByTestId('mem-edit-input'), { target: { value: '9' } });
+  expect(screen.getByTestId('mem-edit-error')).toHaveTextContent(/incomplete/);
+  expect(screen.getByTestId('mem-write')).toBeDisabled();
+  fireEvent.change(screen.getByTestId('mem-edit-as'), { target: { value: 'text' } });
+  fireEvent.change(screen.getByTestId('mem-edit-input'), { target: { value: 'Hi' } });
+  fireEvent.click(screen.getByTestId('mem-write'));
+  await waitFor(() => expect(inspect.write).toHaveBeenCalledWith('0x1000', '4869'));
+});
+
+test('a write that fails is reported and not listed', async () => {
+  setup();
+  inspect.write = vi.fn(async () => { throw new Error("Error invoking remote method 'fermion:invoke': Error: Memory at 0x1000 is not in mapped memory"); });
+  await openMemoryAt1000();
+  fireEvent.click(screen.getByTestId('mem-edit'));
+  fireEvent.click(screen.getAllByTestId('hex-byte')[0]);
+  fireEvent.change(screen.getByTestId('mem-edit-input'), { target: { value: '00' } });
+  fireEvent.click(screen.getByTestId('mem-write'));
+  await waitFor(() => expect(screen.getByTestId('mem-edit-error')).toHaveTextContent('Memory at 0x1000 is not in mapped memory'));
+  expect(screen.getByTestId('mem-mode-writes')).toHaveTextContent(/^Writes$/);
+});
+
+test('Writes lists what was written; Revert writes the earlier bytes back and removes the entry', async () => {
+  setup();
+  withWrite();
+  await openMemoryAt1000();
+  fireEvent.click(screen.getByTestId('mem-edit'));
+  fireEvent.click(screen.getAllByTestId('hex-byte')[0]);
+  fireEvent.change(screen.getByTestId('mem-edit-input'), { target: { value: '9090' } });
+  fireEvent.click(screen.getByTestId('mem-write'));
+  await waitFor(() => expect(screen.getByTestId('mem-mode-writes')).toHaveTextContent('Writes (1)'));
+  fireEvent.click(screen.getByTestId('mem-mode-writes'));
+  const row = screen.getByTestId('write-row');
+  expect(row).toHaveTextContent('0x1000');
+  expect(row).toHaveTextContent('4d 5a → 90 90');
+  fireEvent.click(screen.getByTestId('write-revert'));
+  await waitFor(() => expect(inspect.write).toHaveBeenLastCalledWith('0x1000', '4d5a'));
+  await waitFor(() => expect(screen.queryByTestId('write-row')).toBeNull());
+});
+
+test('a write under a later, overlapping write is not reverted first', async () => {
+  setup();
+  withWrite();
+  await openMemoryAt1000();
+  fireEvent.click(screen.getByTestId('mem-edit'));
+  for (const [at, bytes] of [[0, '9090'], [1, 'cc']] as const) {
+    fireEvent.click(screen.getAllByTestId('hex-byte')[at]);
+    fireEvent.change(screen.getByTestId('mem-edit-input'), { target: { value: bytes } });
+    fireEvent.click(screen.getByTestId('mem-write'));
+    await waitFor(() => expect(inspect.write).toHaveBeenCalledTimes(at + 1));
+  }
+  await waitFor(() => expect(screen.getByTestId('mem-mode-writes')).toHaveTextContent('Writes (2)'));
+  fireEvent.click(screen.getByTestId('mem-mode-writes'));
+  fireEvent.click(screen.getAllByTestId('write-revert')[0]); // the older one
+  expect(screen.getByTestId('mem-revert-error')).toHaveTextContent('The write at 0x1001 was made later over the same bytes. Revert that one first.');
+  expect(inspect.write).toHaveBeenCalledTimes(2);
+  fireEvent.click(screen.getAllByTestId('write-revert')[1]);
+  await waitFor(() => expect(screen.getAllByTestId('write-row').length).toBe(1));
+  fireEvent.click(screen.getByTestId('write-revert'));
+  await waitFor(() => expect(screen.queryByTestId('write-row')).toBeNull());
+});
+
+test('writes made in another process are not offered for revert', async () => {
+  const store = setup();
+  withWrite();
+  await openMemoryAt1000();
+  fireEvent.click(screen.getByTestId('mem-edit'));
+  fireEvent.click(screen.getAllByTestId('hex-byte')[0]);
+  fireEvent.change(screen.getByTestId('mem-edit-input'), { target: { value: '90' } });
+  fireEvent.click(screen.getByTestId('mem-write'));
+  await waitFor(() => expect(screen.getByTestId('mem-mode-writes')).toHaveTextContent('Writes (1)'));
+  act(() => { store.dispatch(sessionActions.syncState({ isAttached: true, currentPid: '9999' })); });
+  expect(screen.getByTestId('mem-mode-writes')).toHaveTextContent(/^Writes$/);
+});

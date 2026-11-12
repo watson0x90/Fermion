@@ -215,3 +215,4 @@
 * Hooks and bookmarks are kept as a set per program. Attaching or spawning brings that program's set in; Set (Hooks tab, Inspector > Bookmarks) picks another. What was saved before is under General
 * Hooks: the handler is edited in the same editor as scripts, with syntax errors marked and Frida's API completed
 * TypeScript: a script saved as .ts is compiled with Frida's compiler, its types checked against Frida's definitions, each time it is loaded; a type error is reported with its line and the running script stays
+* Inspector, Memory: Edit mode writes bytes (hex or text) into data or code, showing what will be replaced before anything is written; Writes lists each write with the bytes it replaced, and Revert puts them back. With Edit off the Inspector still writes nothing
