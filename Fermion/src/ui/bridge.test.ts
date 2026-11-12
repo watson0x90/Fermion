@@ -179,3 +179,17 @@ test('a store without the Hooks slice still prints such a message instead of fai
   expect(() => f.emit('message', { type: 'send', payload: BATCH })).not.toThrow();
   expect(writes.length).toBe(1);
 });
+
+test('a caught child process is put in the store and announced in Output; a malformed announcement is ignored', () => {
+  const store = makeStore();
+  const f = fakeFermion() as ReturnType<typeof fakeFermion> & { onChild: (cb: (...a: unknown[]) => void) => void };
+  let onChild: (...a: unknown[]) => void = () => {};
+  f.onChild = (cb) => { onChild = cb; };
+  const writes: unknown[][] = [];
+  setTerminalSink({ write: (k: string, t: string) => writes.push([k, t]) });
+  initBridge(store, f);
+  onChild({ pid: 200, parentPid: 99, path: 'C:/app/helper.exe', argv: ['C:/app/helper.exe', '-x'] });
+  onChild({ pid: 'nope' });
+  expect(store.getState().session.children).toEqual([{ pid: 200, parentPid: 99, path: 'C:/app/helper.exe', argv: ['C:/app/helper.exe', '-x'] }]);
+  expect(writes).toEqual([['STATUS', '[+] Caught child process 200: helper.exe -x (suspended; choose in the Session sidebar)']]);
+});

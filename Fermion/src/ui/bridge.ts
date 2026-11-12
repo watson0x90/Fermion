@@ -6,6 +6,7 @@ import { sessionActions } from './store/sessionSlice';
 import { outputActions } from './store/outputSlice';
 import { hooksActions } from './store/hooksSlice';
 import { asHitBatch, hitLine, Hook } from './hooking/model';
+import { asChildInfo, childCommand } from './session/launch';
 
 // Pure: a SEND/MSG payload goes to the trace graph only while trace mode is on.
 export function routeMessage(kind: string, traceMode: boolean): 'trace' | 'terminal' {
@@ -88,6 +89,14 @@ export function initBridge(store: AnyStore, injected?: Fermion): void {
     const r = formatMessage({ type: 'log', level, payload: text });
     writeTerminal(r.kind, r.text);
     store.dispatch(outputActions.counted());
+  });
+
+  // A child process of the attached process was caught before it ran.
+  fermion.onChild?.((raw: unknown) => {
+    const child = asChildInfo(raw);
+    if (!child) return;
+    store.dispatch(sessionActions.childCaught(child));
+    writeTerminal('STATUS', `[+] Caught child process ${child.pid}: ${childCommand(child)} (suspended; choose in the Session sidebar)`);
   });
 
   fermion.onDetached((reason: string) => {

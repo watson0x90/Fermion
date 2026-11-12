@@ -66,3 +66,35 @@ export function targetLabel(target: SessionTarget): string {
   if (target.kind === 'attach') return target.name ? `${target.name} (pid ${target.pid})` : `pid ${target.pid}`;
   return target.path.split(/[\\/]/).pop() || target.path;
 }
+
+// A child process of the attached process, caught before it ran.
+export interface ChildInfo { pid: number; parentPid: number; path: string; argv: string[]; }
+
+// The announcement comes through main from the target's device: keep only
+// what has the right shape.
+export function asChildInfo(raw: unknown): ChildInfo | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  if (typeof r.pid !== 'number' || !Number.isSafeInteger(r.pid) || r.pid <= 0) return null;
+  const argv = Array.isArray(r.argv) ? r.argv.filter((a): a is string => typeof a === 'string').slice(0, 64).map((a) => a.slice(0, 1024)) : [];
+  return {
+    pid: r.pid,
+    parentPid: typeof r.parentPid === 'number' && Number.isSafeInteger(r.parentPid) ? r.parentPid : 0,
+    path: typeof r.path === 'string' ? r.path.slice(0, 4096) : '',
+    argv,
+  };
+}
+
+const baseName = (p: string) => p.split(/[\\/]/).pop() || p;
+
+export function childName(child: ChildInfo): string {
+  return baseName(child.path || child.argv[0] || '') || `pid ${child.pid}`;
+}
+
+// The command line as the operator would read it: the program's name, then
+// its arguments, shortened.
+export function childCommand(child: ChildInfo, max = 160): string {
+  const args = child.argv.slice(1).map((a) => (/\s/.test(a) ? '"' + a + '"' : a)).join(' ');
+  const text = childName(child) + (args ? ' ' + args : '');
+  return text.length > max ? text.slice(0, max - 1) + '…' : text;
+}

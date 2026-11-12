@@ -491,3 +491,6 @@ button.vrow:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 6%, 
 .vv.ptr { border: 0; background: transparent; padding: 0; font: inherit; color: var(--accent); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
 .vv.ptr:hover { text-decoration: underline; }
 .vmore { color: var(--faint); font-style: italic; }
+.session-note .cmd { font-size: 11px; color: var(--fg); overflow-wrap: anywhere; }
+.session-note .chk { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.session-note .chk input { margin: 0; accent-color: var(--accent); }

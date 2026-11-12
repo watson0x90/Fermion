@@ -283,3 +283,139 @@ test('Detach is remembered as the operator\'s own doing, and still offers to att
   fireEvent.click(screen.getByTestId('detach'));
   await waitFor(() => expect(screen.getByTestId('session-ended')).toHaveTextContent('You detached.'));
 });
+
+// ---- catching child processes ----
+const CHILD = { pid: 200, parentPid: 4821, path: 'C:\\app\\helper.exe', argv: ['C:\\app\\helper.exe', '--type=renderer'] };
+function withChildren() {
+  const f = withSpawn();
+  f.setChildGating = async (on: boolean) => { calls.push(['setChildGating', on]); return on; };
+  f.resolveChild = async (pid: number, action: string) => { calls.push(['resolveChild', pid, action]); return { pid, action }; };
+  f.getState = async () => ({ deviceId: 'local', isAttached: true, hasScript: false, currentPid: '200' });
+  return f;
+}
+function attachedStore() {
+  const store = fullStore();
+  store.dispatch(sessionActions.sessionStarted({ kind: 'attach', pid: 4821, name: 'app.exe' }));
+  store.dispatch(sessionActions.syncState({ isAttached: true, currentPid: '4821' }));
+  return store;
+}
+
+test('Catch child processes switches catching on and off for the attached process', async () => {
+  withChildren();
+  const store = attachedStore();
+  render(<Provider store={store}><SessionControls /></Provider>);
+  const box = screen.getByTestId('child-gating') as HTMLInputElement;
+  expect(box.checked).toBe(false);
+  fireEvent.click(box);
+  await waitFor(() => expect(calls).toEqual([['setChildGating', true]]));
+  expect(store.getState().session.childGating).toBe(true);
+  fireEvent.click(screen.getByTestId('child-gating'));
+  await waitFor(() => expect(calls).toEqual([['setChildGating', true], ['setChildGating', false]]));
+});
+
+test('the preference set before attaching is applied when a session starts', async () => {
+  withChildren();
+  const store = fullStore();
+  render(<Provider store={store}><SessionControls /></Provider>);
+  fireEvent.click(screen.getByTestId('child-gating'));
+  expect(calls).toEqual([]); // nothing to gate yet
+  act(() => { store.dispatch(sessionActions.syncState({ isAttached: true, currentPid: '4821' })); });
+  await waitFor(() => expect(calls).toEqual([['setChildGating', true]]));
+});
+
+test('catching that cannot be started is reported and the box is cleared', async () => {
+  const f = withChildren();
+  f.setChildGating = async () => { throw new Error("Error invoking remote method 'fermion:invoke': Error: not supported"); };
+  const store = attachedStore();
+  render(<Provider store={store}><SessionControls /></Provider>);
+  fireEvent.click(screen.getByTestId('child-gating'));
+  await waitFor(() => expect(lines).toContain('ERR [!] Could not start catching child processes: not supported'));
+  expect(store.getState().session.childGating).toBe(false);
+});
+
+test('a caught child is shown with its command line; Let it run resumes it', async () => {
+  withChildren();
+  const store = attachedStore();
+  render(<Provider store={store}><SessionControls /></Provider>);
+  expect(screen.queryByTestId('child-caught')).toBeNull();
+  act(() => { store.dispatch(sessionActions.childCaught(CHILD)); });
+  const note = screen.getByTestId('child-caught');
+  expect(note).toHaveTextContent('A child process is waiting.');
+  expect(note).toHaveTextContent('helper.exe --type=renderer · pid 200');
+  fireEvent.click(screen.getByTestId('child-release'));
+  await waitFor(() => expect(calls).toEqual([['resolveChild', 200, 'resume']]));
+  expect(screen.queryByTestId('child-caught')).toBeNull();
+});
+
+test('Switch to it moves the session: hooks and the script go in before the child is resumed', async () => {
+  withChildren();
+  const store = attachedStore();
+  store.dispatch(hooksActions.added(hookFromTarget({ name: 'k!f', module: 'k', offset: 16, address: '0x10' }, 'h1')));
+  store.dispatch(hooksActions.patched({ id: 'h1', status: 'on' })); // placed in the parent
+  store.dispatch(sessionActions.childGatingSet(true));
+  render(<Provider store={store}><SessionControls /></Provider>);
+  await waitFor(() => expect(calls).toEqual([['setChildGating', true]]));
+  calls.length = 0;
+  act(() => { store.dispatch(sessionActions.childCaught(CHILD)); store.dispatch(sessionActions.childCaught({ ...CHILD, pid: 201 })); });
+  fireEvent.click(screen.getAllByTestId('child-switch')[0]);
+  await waitFor(() => expect(calls[calls.length - 1]).toEqual(['resume', 200]));
+  expect(calls).toEqual([
+    ['resolveChild', 200, 'attach'],
+    ['hookAdd', 'h1'],           // placed again, in the child
+    ['loadScript', 'SCRIPT'],
+    ['setChildGating', true],    // its own children are caught too
+    ['resume', 200],
+  ]);
+  expect(store.getState().session.target).toEqual({ kind: 'attach', pid: 200, name: 'helper.exe' });
+  expect(store.getState().session.currentPid).toBe('200');
+  expect(store.getState().session.children).toEqual([]); // the other one was let run by main
+  expect(store.getState().session.ended).toBeNull();
+  expect(lines).toContain('STATUS [+] Now on child process 200');
+});
+
+test('Keep it suspended leaves the child waiting for Resume after the switch', async () => {
+  withChildren();
+  const store = attachedStore();
+  render(<Provider store={store}><SessionControls /></Provider>);
+  act(() => { store.dispatch(sessionActions.childCaught(CHILD)); });
+  fireEvent.click(screen.getByTestId('child-suspended'));
+  fireEvent.click(screen.getByTestId('child-switch'));
+  await screen.findByTestId('session-suspended');
+  expect(calls).toEqual([['resolveChild', 200, 'attach'], ['loadScript', 'SCRIPT']]);
+  fireEvent.click(screen.getByTestId('resume'));
+  await waitFor(() => expect(calls[calls.length - 1]).toEqual(['resume', 200]));
+});
+
+test('a switch that fails after the session moved does not leave the child frozen', async () => {
+  const f = withChildren();
+  f.loadScript = async () => { throw new Error('script error: boom'); };
+  const store = attachedStore();
+  render(<Provider store={store}><SessionControls /></Provider>);
+  act(() => { store.dispatch(sessionActions.childCaught(CHILD)); });
+  fireEvent.click(screen.getByTestId('child-switch'));
+  await waitFor(() => expect(lines).toContain('ERR [!] Could not switch to child 200: script error: boom'));
+  expect(calls[calls.length - 1]).toEqual(['resume', 200]);
+});
+
+test('a switch main refuses leaves the session where it was', async () => {
+  const f = withChildren();
+  f.resolveChild = async () => { throw new Error('No caught child with pid 200'); };
+  const store = attachedStore();
+  render(<Provider store={store}><SessionControls /></Provider>);
+  act(() => { store.dispatch(sessionActions.childCaught(CHILD)); });
+  fireEvent.click(screen.getByTestId('child-switch'));
+  await waitFor(() => expect(lines).toContain('ERR [!] Could not switch to child 200: No caught child with pid 200'));
+  expect(calls).toEqual([]);
+  expect(store.getState().session.currentPid).toBe('4821');
+  expect(screen.queryByTestId('child-caught')).toBeNull();
+});
+
+test('caught children disappear when the session ends', () => {
+  withChildren();
+  const store = attachedStore();
+  render(<Provider store={store}><SessionControls /></Provider>);
+  act(() => { store.dispatch(sessionActions.childCaught(CHILD)); });
+  act(() => { store.dispatch(sessionActions.detached('process-terminated')); });
+  expect(screen.queryByTestId('child-caught')).toBeNull();
+  expect(store.getState().session.children).toEqual([]);
+});

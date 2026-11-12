@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
 import { sessionActions } from '../store/sessionSlice';
-import { attachAndLoad, reloadFromEditor, spawnAndLoad, resumeSpawned, reconnect } from '../sessionOps';
-import { endedText, envCount, parseEnv, targetLabel } from '../session/launch';
+import { attachAndLoad, reloadFromEditor, spawnAndLoad, resumeSpawned, reconnect, setChildGating, releaseChild, switchToChild } from '../sessionOps';
+import { endedText, envCount, parseEnv, targetLabel, childCommand, ChildInfo } from '../session/launch';
 import { writeTerminal } from '../bridge';
 import { Icon } from './Icon';
 
@@ -34,6 +34,24 @@ export function SessionControls() {
   const ended = useAppSelector((s) => s.session.ended);
   const suspendedPid = useAppSelector((s) => s.session.suspendedPid);
   const hooks = useAppSelector((s) => s.hooks?.hooks ?? []);
+  const childGating = useAppSelector((s) => s.session.childGating);
+  const children = useAppSelector((s) => s.session.children);
+  const [childSuspended, setChildSuspended] = useState(false);
+
+  // The preference outlives a session: a new one starts catching too.
+  useEffect(() => {
+    if (isAttached && childGating) setChildGating(dispatch, true, true);
+  }, [isAttached]); // when a session starts; the toggle itself calls setChildGating
+
+  const onSwitch = async (child: ChildInfo) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await switchToChild(dispatch, child, hooks, { suspended: childSuspended, keepCatching: childGating });
+    } finally {
+      setBusy(false);
+    }
+  };
   const [remote, setRemote] = useState('');
   const [connecting, setConnecting] = useState(false);
   const deviceId = useAppSelector((s) => s.session.deviceId);
@@ -139,6 +157,22 @@ export function SessionControls() {
           <button className="btn ghost" data-testid="reload" onClick={onReload} disabled={!hasScript}><Icon name="reload" size={13} />Reload</button>
           <button className="btn ghost" data-testid="detach" onClick={onDetach} disabled={!isAttached}><Icon name="stop" size={13} />Detach</button>
         </div>
+        <label className="chk" title="Hold any process the attached process starts, before it runs, so you can move the session to it. Catching stops when you switch it off or the session ends, and held processes are then let run.">
+          <input type="checkbox" data-testid="child-gating" checked={childGating} onChange={(e) => setChildGating(dispatch, e.target.checked, isAttached)} />Catch child processes
+        </label>
+        {isAttached && children.map((child) => (
+          <div className="session-note" data-testid="child-caught" key={child.pid}>
+            <span><strong>A child process is waiting.</strong> It is suspended and has not run yet.</span>
+            <span className="mono cmd" title={child.path + ' ' + child.argv.slice(1).join(' ')}>{childCommand(child)} · pid {child.pid}</span>
+            <label className="chk" title="After moving to it, leave it suspended until you press Resume">
+              <input type="checkbox" data-testid="child-suspended" checked={childSuspended} onChange={(e) => setChildSuspended(e.target.checked)} />Keep it suspended
+            </label>
+            <div className="btns">
+              <button className="btn primary" data-testid="child-switch" disabled={busy} title="Move the session to this process: the script is loaded and hooks are placed before it runs. The current process carries on without Fermion." onClick={() => onSwitch(child)}>Switch to it</button>
+              <button className="btn ghost" data-testid="child-release" disabled={busy} onClick={() => releaseChild(dispatch, child)}>Let it run</button>
+            </div>
+          </div>
+        ))}
         {isAttached && suspendedPid !== null && (
           <div className="session-note" data-testid="session-suspended">
             <span>Process {suspendedPid} is suspended: nothing in it has run yet.</span>

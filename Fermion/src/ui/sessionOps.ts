@@ -6,7 +6,8 @@ import { writeTerminal } from './bridge';
 import { installAll } from './hooking/ops';
 import { Hook } from './hooking/model';
 import { cleanIpcError } from './inspector/format';
-import { SessionTarget, SpawnConfig, Proc, parseEnv, pickReattach } from './session/launch';
+import { SessionTarget, SpawnConfig, Proc, ChildInfo, parseEnv, pickReattach, childName } from './session/launch';
+import { hooksActions } from './store/hooksSlice';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion;
@@ -115,4 +116,68 @@ export async function reconnect(dispatch: (a: any) => unknown, target: SessionTa
   const { pid, message } = pickReattach(procs, target);
   if (pid === null) return message;
   return (await attachAndLoad(dispatch, pid, target.name)) ? '' : 'Could not attach (see Output).';
+}
+
+// Switch catching child processes on or off for the attached process. The
+// preference is kept, so the next session starts with it too.
+export async function setChildGating(dispatch: (a: any) => unknown, on: boolean, attached: boolean): Promise<void> {
+  dispatch(sessionActions.childGatingSet(on));
+  if (!attached) return;
+  try {
+    await api().setChildGating(on);
+  } catch (e) {
+    writeTerminal('ERR', '[!] Could not ' + (on ? 'start' : 'stop') + ' catching child processes: ' + cleanIpcError(e));
+    if (on) dispatch(sessionActions.childGatingSet(false));
+  }
+}
+
+// Let a caught child run without us.
+export async function releaseChild(dispatch: (a: any) => unknown, child: ChildInfo): Promise<void> {
+  dispatch(sessionActions.childResolved(child.pid));
+  try {
+    await api().resolveChild(child.pid, 'resume');
+    writeTerminal('STATUS', `[+] Child process ${child.pid} was let run`);
+  } catch (e) {
+    writeTerminal('ERR', '[!] Could not resume child ' + child.pid + ': ' + cleanIpcError(e));
+  }
+}
+
+// Move the session to a caught child: the script is loaded and the hooks are
+// placed in it while it is still suspended, then it is resumed — or, with
+// `suspended`, left waiting for Resume. The parent carries on uninstrumented.
+export async function switchToChild(dispatch: (a: any) => unknown, child: ChildInfo, hooks: Hook[], opts: { suspended: boolean; keepCatching: boolean }): Promise<boolean> {
+  const f = api();
+  let moved = false;
+  try {
+    await f.resolveChild(child.pid, 'attach');
+    moved = true;
+    // The old session is gone (and main let its other caught children run).
+    dispatch(sessionActions.childrenCleared());
+    dispatch(hooksActions.sessionEnded());
+    await installAll(dispatch, hooks.map((h) => ({ ...h, status: h.enabled ? 'waiting' as const : 'off' as const })));
+    dispatch(sessionActions.sessionStarted({ kind: 'attach', pid: child.pid, name: childName(child) }));
+    dispatch(sessionActions.syncState(await f.getState()));
+    await f.loadScript(scriptSrc());
+    dispatch(sessionActions.scriptLoaded());
+    if (opts.keepCatching) {
+      try { await f.setChildGating(true); } catch (e) { writeTerminal('ERR', '[!] Child processes of the new process are not being caught: ' + cleanIpcError(e)); dispatch(sessionActions.childGatingSet(false)); }
+    }
+    if (opts.suspended) {
+      dispatch(sessionActions.suspendedSet(child.pid));
+      writeTerminal('STATUS', `[+] Now on child process ${child.pid}, suspended. Press Resume to let it run.`);
+    } else {
+      await f.resume(child.pid);
+      writeTerminal('STATUS', `[+] Now on child process ${child.pid}`);
+    }
+    return true;
+  } catch (e) {
+    writeTerminal('ERR', '[!] Could not switch to child ' + child.pid + ': ' + cleanIpcError(e));
+    dispatch(sessionActions.childResolved(child.pid));
+    // Never leave it frozen: if the session did move, resume it there.
+    if (moved) {
+      try { await f.resume(child.pid); } catch { /* it is gone */ }
+      try { dispatch(sessionActions.syncState(await f.getState())); } catch { /* keep what we have */ }
+    }
+    return false;
+  }
 }

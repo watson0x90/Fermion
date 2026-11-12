@@ -170,3 +170,17 @@ test('spawn passes its options through the invoke channel', async () => {
   await api.spawn('a.exe', '-v', { cwd: 'C:/w' });
   assert.deepEqual(sent, [['spawn', 'a.exe', '-v', { cwd: 'C:/w' }]]);
 });
+
+test('child catching uses the invoke channel, and onChild receives only child events', async () => {
+  const sent = [];
+  let handler;
+  const api = buildApi({ invoke: (...a) => { sent.push(a.slice(1)); return Promise.resolve({}); }, on: (_ch, cb) => { handler = cb; } });
+  await api.setChildGating(true);
+  await api.resolveChild(200, 'attach');
+  assert.deepEqual(sent, [['setChildGating', true], ['resolveChild', 200, 'attach']]);
+  const got = [];
+  api.onChild((c) => got.push(c));
+  handler({}, 'message', { type: 'send' });
+  handler({}, 'child', { pid: 200 });
+  assert.deepEqual(got, [{ pid: 200 }]);
+});

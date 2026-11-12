@@ -1,4 +1,4 @@
-import { parseEnv, envCount, pickReattach, endedText, targetLabel } from './launch';
+import { parseEnv, envCount, pickReattach, endedText, targetLabel, asChildInfo, childName, childCommand } from './launch';
 
 test('parseEnv: NAME=value per line; blank lines and # comments are skipped; a value may contain =', () => {
   expect(parseEnv('DEBUG=1\n\n# a comment\r\n  PATH_EXTRA = C:\\x y \nQUERY=a=b=c\nEMPTY=')).toEqual({
@@ -47,4 +47,21 @@ test('targetLabel names what a session was on', () => {
   expect(targetLabel({ kind: 'attach', pid: 10, name: '' })).toBe('pid 10');
   expect(targetLabel({ kind: 'spawn', path: 'C:\\Tools\\app.exe', args: '', env: '', cwd: '', suspended: false })).toBe('app.exe');
   expect(targetLabel({ kind: 'spawn', path: '/usr/bin/app', args: '', env: '', cwd: '', suspended: false })).toBe('app');
+});
+
+test('asChildInfo keeps a well-formed announcement and drops anything else', () => {
+  expect(asChildInfo({ pid: 200, parentPid: 100, path: 'C:\\app\\helper.exe', argv: ['C:\\app\\helper.exe', '--type=renderer'], envp: ['SECRET=1'] }))
+    .toEqual({ pid: 200, parentPid: 100, path: 'C:\\app\\helper.exe', argv: ['C:\\app\\helper.exe', '--type=renderer'] });
+  for (const bad of [null, 'x', {}, { pid: '200' }, { pid: -1 }, { pid: 1.5 }]) expect(asChildInfo(bad)).toBeNull();
+  expect(asChildInfo({ pid: 5, parentPid: 'x', path: 7, argv: ['ok', 3, null, 'y'.repeat(5000)] })).toEqual({ pid: 5, parentPid: 0, path: '', argv: ['ok', 'y'.repeat(1024)] });
+  expect(asChildInfo({ pid: 5, argv: Array(500).fill('a') })!.argv.length).toBe(64);
+});
+
+test('childName and childCommand describe a caught child', () => {
+  const child = { pid: 200, parentPid: 100, path: 'C:\\app\\helper.exe', argv: ['C:\\app\\helper.exe', '--type=renderer', 'C:\\My Files\\a.txt'] };
+  expect(childName(child)).toBe('helper.exe');
+  expect(childCommand(child)).toBe('helper.exe --type=renderer "C:\\My Files\\a.txt"');
+  expect(childName({ pid: 7, parentPid: 1, path: '', argv: ['/usr/bin/tool', '-v'] })).toBe('tool');
+  expect(childName({ pid: 7, parentPid: 1, path: '', argv: [] })).toBe('pid 7');
+  expect(childCommand({ ...child, argv: ['x', 'a'.repeat(500)] }, 40).length).toBe(40);
 });

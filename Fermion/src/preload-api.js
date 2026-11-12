@@ -10,7 +10,7 @@
 function buildApi(ipcRenderer) {
 	const invoke = (method, ...args) => ipcRenderer.invoke('fermion:invoke', method, ...args);
 
-	const listeners = { message: new Set(), log: new Set(), detached: new Set() };
+	const listeners = { message: new Set(), log: new Set(), detached: new Set(), child: new Set() };
 	let wired = false;
 	function ensureWired() {
 		if (wired) return;
@@ -118,6 +118,10 @@ function buildApi(ipcRenderer) {
 			remove: (id) => invoke('hookRemove', id),
 			symbolicate: (addresses) => invoke('hookSymbolicate', addresses),
 		},
+		// Catching child processes of the attached process.
+		setChildGating: (enabled) => invoke('setChildGating', enabled),
+		resolveChild: (pid, action) => invoke('resolveChild', pid, action),
+		onChild: (cb) => on('child', cb),
 		onMessage: (cb) => on('message', cb),
 		onLog: (cb) => on('log', cb),
 		onDetached: (cb) => on('detached', cb),

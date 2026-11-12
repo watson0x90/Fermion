@@ -96,6 +96,13 @@ Arguments are separated by spaces; put quotes around one that contains spaces (`
 | **Working directory** | The directory the program starts in. |
 | **Start suspended** | Leaves the program suspended after the script and hooks are in place. Add hooks, look around in the Inspector, then press **Resume** in the sidebar to let it run. |
 
+**Catch child processes** (under Attach / Reload / Detach) holds any process the attached process starts, before it runs a single instruction. This is how you get into a helper, a sandboxed worker or an installer step that a program launches for you. Each caught child is shown in the sidebar with its command line, and waits for your choice:
+
+- **Switch to it** moves the session to the child. The Editor's script is loaded and your hooks are placed while it is still suspended, and then it runs. Tick **Keep it suspended** to hold it until you press **Resume**, so you can add hooks or look around first. The process you were attached to carries on without Fermion.
+- **Let it run** releases it untouched; the session stays where it is.
+
+A caught child is never left frozen: switching the box off, detaching, or the session ending lets every one of them run. The setting is remembered, so the next session catches children too, and after a switch the child's own children are caught as well. Fermion has one session, so two processes cannot be instrumented at once.
+
 When a session ends, the sidebar says why (the process exited, you detached, the connection was lost) and offers to start it again. **Spawn again** starts the same program with the same arguments and options. **Attach again** attaches to the same process if it is still there, or to the only process with the same name if the program was restarted; if several processes share the name it asks you to pick one.
 
 ## The window
@@ -381,7 +388,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, detach, process tree, REPL, hooks, inspector, graph, launch, attach) |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, attach) |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.
