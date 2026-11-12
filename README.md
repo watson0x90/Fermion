@@ -223,6 +223,19 @@ Views of the attached process that only observe it. Nothing in the Inspector wri
 
 ![Inspector: a text scan and its match in the hex view](Images/fermion-memory.png)
 
+**Disassembly** shows the instructions at an address. Type an address and press Go, or send one here from the address menu (below). Calls are blue, jumps amber and returns red. A call or jump to a fixed address shows where it goes: click that to follow it, and **◀** to come back. **More** continues the listing; it ends at the end of the memory range, or where the bytes stop being instructions. The header names the function and the memory's protection, and memory that is not executable is flagged, since its bytes may not be code.
+
+**The address menu.** Right-click an address anywhere in Fermion (a register, a backtrace frame, a symbol, a hex row, a scan result, an instruction, a function found in Hooks, a caller of a hooked call) for:
+
+| Item | Does |
+| --- | --- |
+| **Copy address** | Puts it on the clipboard. |
+| **Open in Memory** | Shows it in the hex view. |
+| **Open in Disassembly** | Shows the instructions there. |
+| **Hook this address** | Places a hook there and opens it in the [Hooks](#hooks) tab. |
+
+The menu key on the keyboard opens it too, and the arrow keys move through it.
+
 **Threads** lists each thread with its state and where it is. Select one for its register values and a backtrace with symbol names. Click a register value or a frame to open that address in Memory. Register values are a snapshot from the last refresh.
 
 **Follow** (on a selected thread) uses Frida's Stalker to count the calls that thread makes. Press it, let the thread run, then press **Stop**: the functions it called are listed, most-called first, and clicking one opens it in Memory. Only one thread can be followed at a time, and a follow ends by itself after 15 seconds. Following is much heavier than the other views: the thread runs through instrumented copies of its code, so it is slower while followed, and, as with tracing, a fragile target may not tolerate it.
@@ -277,6 +290,7 @@ To reach a `frida-server` over the network, type its address in **Remote host:po
 | `Enter` / `Shift+Enter` (REPL) | Run the entry / new line |
 | `↑` / `↓` (REPL, Output search) | Earlier / later entries; in the REPL, move through listed completions |
 | `Esc` (REPL, while an entry runs) | Cancel the entry |
+| Right-click an address | The address menu: copy, open in Memory or Disassembly, hook |
 | `Esc` (Output search, REPL completions) | Clear / dismiss |
 
 On macOS use `Cmd` in place of `Ctrl`. `F5` and `Ctrl-R` are disabled on purpose: reloading the window would drop the session.

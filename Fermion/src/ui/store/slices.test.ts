@@ -76,3 +76,13 @@ test('uiSlice: setActiveTab + setTheme + toggleRail/Settings', () => {
   s = uiReducer(s, uiActions.toggleSettings(true));
   expect(s.settingsOpen).toBe(true);
 });
+
+test('uiSlice: openAddress switches to the Inspector and counts requests, so the same address can be asked for twice', () => {
+  let s = uiReducer(undefined, uiActions.setActiveTab('repl'));
+  expect(s.addressRequest).toBeNull();
+  s = uiReducer(s, uiActions.openAddress({ view: 'code', address: '0x10' }));
+  expect(s.activeTab).toBe('inspector');
+  expect(s.addressRequest).toEqual({ view: 'code', address: '0x10', n: 1 });
+  s = uiReducer(s, uiActions.openAddress({ view: 'code', address: '0x10' }));
+  expect(s.addressRequest).toEqual({ view: 'code', address: '0x10', n: 2 });
+});

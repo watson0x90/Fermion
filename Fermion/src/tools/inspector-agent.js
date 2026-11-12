@@ -14,6 +14,7 @@
 	var SCAN_BUDGET_MS = 8000; // stop scanning after this long
 	var SCAN_CHUNK = 16 * 1024 * 1024; // bytes scanned per step, so the limits are checked often
 	var MAX_FRAMES = 64;
+	var MAX_INSTRUCTIONS = 200;    // instructions per disassemble call
 	var MAX_FOLLOW_MS = 15000;     // a follow stops by itself after this long
 	var MAX_FOLLOW_TARGETS = 20000; // distinct functions counted
 	var MAX_FOLLOW_ITEMS = 300;     // functions reported
@@ -255,6 +256,61 @@
 			var result = followResult();
 			follow = null;
 			return result;
+		},
+
+		// Disassemble forward from an address, inside the readable range it
+		// is in. Direct calls and jumps carry the address they go to.
+		disassemble: function (address, count) {
+			var start = ptr(address);
+			var range = Process.findRangeByAddress(start);
+			if (!range || range.protection.charAt(0) !== 'r') throw new Error(address + ' is not in readable memory.');
+			var end = range.base.add(range.size);
+			var max = Math.min(count, MAX_INSTRUCTIONS);
+			var items = [];
+			var cursor = start;
+			var stopped = '';
+			while (items.length < max) {
+				if (cursor.compare(end) >= 0) { stopped = 'end'; break; }
+				var insn;
+				try { insn = Instruction.parse(cursor); } catch (e) { stopped = 'undecodable'; break; }
+				if (insn.next.compare(end) > 0) { stopped = 'end'; break; }
+				var kind = '';
+				try {
+					var groups = insn.groups || [];
+					if (groups.indexOf('call') >= 0) kind = 'call';
+					else if (groups.indexOf('jump') >= 0) kind = 'jump';
+					else if (groups.indexOf('ret') >= 0) kind = 'ret';
+				} catch (e) { /* no group information for this architecture */ }
+				var target = null;
+				var targetName = '';
+				var op = String(insn.opStr || '');
+				if ((kind === 'call' || kind === 'jump') && /^#?0x[0-9a-f]+$/i.test(op)) {
+					target = hex(ptr(op.replace('#', '')));
+					// A call goes to a function: name it. A jump usually stays inside
+					// the function it is in, where the function's name says nothing:
+					// say where it lands instead.
+					targetName = kind === 'call' ? (symbolName(ptr(target)) || where(ptr(target))) : where(ptr(target));
+				}
+				items.push({
+					address: hex(cursor),
+					size: insn.size,
+					bytes: bytesToHex(cursor.readByteArray(insn.size)),
+					text: insn.mnemonic + (op ? ' ' + op : ''),
+					kind: kind,
+					target: target,
+					targetName: targetName,
+				});
+				cursor = insn.next;
+			}
+			return {
+				address: hex(start),
+				next: hex(cursor),
+				stopped: stopped,
+				where: where(start),
+				symbol: symbolName(start),
+				protection: range.protection,
+				items: items,
+			};
 		},
 
 		ranges: function (protection) {

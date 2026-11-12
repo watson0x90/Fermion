@@ -198,3 +198,4 @@
 * Housekeeping: ESLint warnings 75 -> 0; GitHub Actions checkout/setup-node v4 -> v5; the release archive stores symlinks instead of following them (the macOS package was inflated); package.json points at this repository
 * Tests: end-to-end tests for the Editor's file handling and the dialogs; every test script now runs in a temporary profile
 * Hooks tab: find functions (exports, imports, debug symbols) and hook them without writing a script. Each hook has its own handler, an on/off switch and a call count; calls are listed with thread, depth and callers. Hooks survive script reloads and are placed again after a detach + attach
+* Inspector: Disassembly view (instructions at an address, follow calls and jumps, Back, More). Right-click any address in Fermion for a menu: copy, open in Memory, open in Disassembly, hook it

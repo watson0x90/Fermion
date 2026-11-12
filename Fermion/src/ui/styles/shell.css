@@ -433,3 +433,27 @@ select.mini:disabled, input.mini:disabled { opacity: .5; }
 .hook-frame .fi { color: var(--faint); text-align: right; font-family: "IBM Plex Mono", ui-monospace, monospace; }
 .hook-frame .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hook-frame.dim .mono { color: var(--faint); }
+
+/* ---- address menu ---- */
+.addr-menu { position: fixed; z-index: 1000; min-width: 190px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--elev); box-shadow: 0 8px 24px rgba(0, 0, 0, .28); display: flex; flex-direction: column; }
+.addr-menu-head { padding: 5px 9px 6px; font-size: 11px; color: var(--faint); border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.addr-menu button { border: 0; background: transparent; color: var(--fg); font-size: 12px; text-align: left; padding: 6px 9px; border-radius: 5px; cursor: pointer; }
+.addr-menu button:hover:not(:disabled), .addr-menu button:focus-visible { background: color-mix(in srgb, var(--accent) 18%, transparent); outline: 0; }
+.addr-menu button:disabled { color: var(--faint); cursor: default; }
+
+/* ---- Inspector: Disassembly ---- */
+.code-tab { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.code-list { flex: 1; min-height: 0; overflow: auto; padding: 6px 0; font-size: 12px; line-height: 20px; background: var(--bg); }
+.code-row { display: grid; grid-template-columns: 15ch 16ch minmax(0, 1fr); column-gap: 14px; padding: 0 12px; white-space: nowrap; }
+.code-row:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.code-row .ca { color: var(--faint); text-align: right; cursor: context-menu; }
+.code-row .ca:focus-visible { outline: 1px solid var(--accent); }
+.code-row .cb { color: var(--faint); overflow: hidden; text-overflow: ellipsis; }
+.code-row .ct { color: var(--fg); display: flex; gap: 1ch; min-width: 0; }
+.code-row .cx { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.code-row.k-call .ct { color: var(--msg); }
+.code-row.k-jump .ct { color: var(--warn); }
+.code-row.k-ret .ct { color: var(--err); }
+.code-row .ctgt { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border: 0; background: transparent; padding: 0; font: inherit; color: var(--accent); cursor: pointer; display: inline-flex; align-items: center; gap: 3px; }
+.code-row .ctgt:hover { text-decoration: underline; }
+.code-foot { padding: 8px 12px; font-family: "IBM Plex Sans", system-ui, sans-serif; font-size: 11.5px; color: var(--faint); }

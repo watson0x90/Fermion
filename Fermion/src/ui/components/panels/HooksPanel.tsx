@@ -5,6 +5,7 @@ import { cleanIpcError } from '../../inspector/format';
 import { Frame, Hit, Hook, SearchKind, Target, hitTime, sameTarget } from '../../hooking/model';
 import { addTarget, applyHandler, installAll, removeHook, setEnabled } from '../../hooking/ops';
 import { Icon } from '../Icon';
+import { addrMenu } from '../../addressMenu';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion?.hooks;
@@ -194,7 +195,7 @@ export function HooksPanel() {
             {found.items.map((t) => {
               const done = isHooked(t);
               return (
-                <div className="hook-result" key={t.address} data-testid="hook-result">
+                <div className="hook-result" key={t.address} data-testid="hook-result" {...addrMenu(t.address)}>
                   <span className="nm mono" title={t.address}>{t.name}</span>
                   <span className="ad mono">{t.address}</span>
                   <button className="pill" data-testid="hook-add" disabled={done} onClick={() => add(t)}>{done ? 'Hooked' : 'Hook'}</button>
@@ -213,6 +214,7 @@ export function HooksPanel() {
             aria-selected={h.id === selected}
             data-testid={'hook-row-' + h.id}
             className={'hook-row' + (h.id === selected ? ' sel' : '') + (h.enabled ? '' : ' offrow')}
+            {...addrMenu(h.address)}
             onClick={() => dispatch(hooksActions.selected(h.id))}
           >
             <input
@@ -319,7 +321,7 @@ export function HooksPanel() {
                           return (
                             <>
                               {inModule.map((f, i) => (
-                                <div className="hook-frame" key={f.address + i} data-testid="hook-frame">
+                                <div className="hook-frame" key={f.address + i} data-testid="hook-frame" {...addrMenu(f.address)}>
                                   <span className="fi">{i}</span>
                                   <span className="mono" title={f.address + ' · ' + f.where}>{f.name || f.where}</span>
                                 </div>

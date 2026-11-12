@@ -112,6 +112,12 @@ function checkAddress(address) {
 	if (typeof address !== 'string' || !/^0x[0-9a-fA-F]{1,16}$/.test(address)) throw new Error('invalid address (expected 0x… hex)');
 	return address.toLowerCase();
 }
+const MAX_INSTRUCTIONS = 200;
+function checkInstructionCount(count) {
+	if (count === undefined) return 60;
+	if (!Number.isSafeInteger(count) || count < 1 || count > MAX_INSTRUCTIONS) throw new Error('invalid instruction count (must be 1..' + MAX_INSTRUCTIONS + ')');
+	return count;
+}
 function checkReadSize(size) {
 	if (!Number.isSafeInteger(size) || size < 1 || size > MAX_READ_BYTES) throw new Error('invalid size (must be 1..' + MAX_READ_BYTES + ' bytes)');
 	return size;
@@ -434,6 +440,7 @@ class FridaService extends EventEmitter {
 	async inspectBacktrace(threadId) { return this._inspect('backtrace', checkThreadId(threadId)); }
 	async inspectRanges(protection) { return this._inspect('ranges', checkProtection(protection)); }
 	async inspectRead(address, size) { return this._inspect('read', checkAddress(address), checkReadSize(size)); }
+	async inspectDisassemble(address, count) { return this._inspect('disassemble', checkAddress(address), checkInstructionCount(count)); }
 	async inspectScan(pattern, protection) { return this._inspect('scan', checkPattern(pattern), checkProtection(protection)); }
 	// Follow one thread with Stalker and count the calls it makes; unfollow
 	// stops and returns the counts. (Bounded in the agent: 15 s, one thread.)

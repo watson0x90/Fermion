@@ -41,7 +41,7 @@ test('evaluate (REPL) is allow-listed and forwards its code argument', async () 
 });
 
 test('the Inspector read-only operations are allow-listed', async () => {
-  const names = ['inspectModules', 'inspectExports', 'inspectImports', 'inspectThreads', 'inspectBacktrace', 'inspectRanges', 'inspectRead', 'inspectScan', 'inspectFollow', 'inspectUnfollow'];
+  const names = ['inspectModules', 'inspectExports', 'inspectImports', 'inspectThreads', 'inspectBacktrace', 'inspectRanges', 'inspectRead', 'inspectScan', 'inspectFollow', 'inspectUnfollow', 'inspectDisassemble'];
   const svc = {};
   for (const n of names) svc[n] = async (...a) => [n, ...a];
   const dispatch = createDispatch(svc);

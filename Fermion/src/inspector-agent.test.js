@@ -15,6 +15,7 @@ class Ptr {
   toJSON() { return this.toString(); }
   sub(o) { return new Ptr(this.v - (o instanceof Ptr ? o.v : BigInt(o))); }
   add(o) { return new Ptr(this.v + (o instanceof Ptr ? o.v : BigInt(o))); }
+  compare(o) { return this.v < o.v ? -1 : this.v > o.v ? 1 : 0; }
   readByteArray(n) {
     Ptr.reads.push([this.toString(), n]);
     if (Ptr.unreadableFrom !== null && this.v + BigInt(n) > Ptr.unreadableFrom) throw new Error('access violation');
@@ -93,6 +94,17 @@ function load(over = {}) {
     Backtracer: { ACCURATE: 'accurate', FUZZY: 'fuzzy' },
     DebugSymbol: { fromAddress: (a) => (a.v === 0x500n ? { address: a, name: null, moduleName: null } : { address: a, name: 'CreateFileW', moduleName: 'kernel32.dll' }) },
     JSON, Date: over.clock ? { now: over.clock } : Date, Uint8Array, Math, Promise,
+    Instruction: { parse: (a) => {
+      if (over.undecodableAt !== undefined && a.v === BigInt(over.undecodableAt)) throw new Error('invalid instruction');
+      const n = Number(a.v & 0xffn);
+      const insn = { address: a, next: a.add(4), size: 4, mnemonic: 'mov', opStr: 'rax, rbx', groups: [] };
+      if (n === 0x08) { insn.mnemonic = 'call'; insn.opStr = '0x7ff123'; insn.groups = ['call']; }
+      if (n === 0x0c) { insn.mnemonic = 'jne'; insn.opStr = '0x500'; insn.groups = ['jump', 'branch_relative']; }
+      if (n === 0x10) { insn.mnemonic = 'call'; insn.opStr = 'qword ptr [rip + 0x20]'; insn.groups = ['call']; }
+      if (n === 0x18) { insn.mnemonic = 'jmp'; insn.opStr = '0x7ff140'; insn.groups = ['jump']; }
+      if (n === 0x14) { insn.mnemonic = 'ret'; insn.opStr = ''; insn.groups = ['ret']; }
+      return insn;
+    } },
     Stalker: stalker, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].cancelled = true; },
   });
   vm.runInContext(SOURCE, ctx);
@@ -406,4 +418,53 @@ test('unfollow: module totals cover every function counted, not only the ones li
   const r = j(a.unfollow());
   assert.equal(r.items.length, 300);
   assert.deepEqual(r.modules, [{ name: 'ntdll.dll', calls: 5000, functions: 1 }, { name: 'target.exe', calls: 1000, functions: 500 }]);
+});
+
+// ---- disassembly ----
+test('disassemble: instructions with address, bytes and text; direct call and jump targets are named', () => {
+  const a = load();
+  const r = j(a.disassemble('0x7ff100', 7));
+  assert.equal(r.address, '0x7ff100');
+  assert.equal(r.next, '0x7ff11c');
+  assert.equal(r.stopped, '');
+  assert.equal(r.where, 'kernel32.dll+0x100');
+  assert.deepEqual(r.items.map((i) => [i.address, i.size, i.text]), [
+    ['0x7ff100', 4, 'mov rax, rbx'], ['0x7ff104', 4, 'mov rax, rbx'], ['0x7ff108', 4, 'call 0x7ff123'],
+    ['0x7ff10c', 4, 'jne 0x500'], ['0x7ff110', 4, 'call qword ptr [rip + 0x20]'], ['0x7ff114', 4, 'ret'], ['0x7ff118', 4, 'jmp 0x7ff140'],
+  ]);
+  assert.equal(r.items[0].bytes, '00010203');
+  assert.deepEqual([r.items[2].kind, r.items[2].target, r.items[2].targetName], ['call', '0x7ff123', 'kernel32.dll!CreateFileW']);
+  assert.deepEqual([r.items[3].kind, r.items[3].target, r.items[3].targetName], ['jump', '0x500', '0x500']);
+  // A jump says where it lands, not which function it is in (usually its own).
+  assert.deepEqual([r.items[6].kind, r.items[6].target, r.items[6].targetName], ['jump', '0x7ff140', 'kernel32.dll+0x140']);
+  // An indirect call has no target to follow.
+  assert.deepEqual([r.items[4].kind, r.items[4].target], ['call', null]);
+  assert.equal(r.items[5].kind, 'ret');
+  assert.equal(r.items[0].kind, '');
+});
+
+test('disassemble: stops at the end of the readable range instead of reading past it', () => {
+  const a = load({ Process: { findRangeByAddress: () => ({ base: new Ptr(0x7ff000), size: 0x110, protection: 'r-x' }) } });
+  const r = j(a.disassemble('0x7ff100', 50));
+  assert.equal(r.items.length, 4);
+  assert.equal(r.stopped, 'end');
+  assert.equal(r.next, '0x7ff110');
+});
+
+test('disassemble: bytes that are not an instruction end the listing and say so', () => {
+  const r = j(load({ undecodableAt: 0x7ff108 }).disassemble('0x7ff100', 50));
+  assert.equal(r.items.length, 2);
+  assert.equal(r.stopped, 'undecodable');
+  assert.equal(r.next, '0x7ff108');
+});
+
+test('disassemble: unmapped or unreadable memory is refused before anything is read', () => {
+  Ptr.reads.length = 0;
+  assert.throws(() => load({ Process: { findRangeByAddress: () => null } }).disassemble('0x10', 5), /not in readable memory/i);
+  assert.throws(() => load({ Process: { findRangeByAddress: () => ({ base: new Ptr(0), size: 0x1000, protection: '---' }) } }).disassemble('0x10', 5), /not in readable memory/i);
+  assert.equal(Ptr.reads.length, 0);
+});
+
+test('disassemble: the count is capped', () => {
+  assert.equal(j(load().disassemble('0x7ff100', 100000)).items.length, 200);
 });

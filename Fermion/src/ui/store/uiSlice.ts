@@ -3,6 +3,11 @@ import { loadSavedTheme } from '../theme/themeEngine';
 
 export type ToolboxTab = 'editor' | 'repl' | 'hooks' | 'graph' | 'tree' | 'inspector';
 
+// "Show this address": which Inspector view, and a counter so asking for the
+// same address twice is still a new request.
+export type AddressView = 'memory' | 'code';
+export interface AddressRequest { view: AddressView; address: string; n: number; }
+
 export interface UiState {
   activeTab: ToolboxTab;
   theme: string;       // active Monaco/app theme (drives the whole shell)
@@ -11,6 +16,7 @@ export interface UiState {
   outputDetached: boolean; // Output pane lives in its own window
   filePath: string | null; // the script file in the editor (null = never saved)
   dirty: boolean;          // the editor has changes that are not saved
+  addressRequest: AddressRequest | null; // an address to open in the Inspector
 }
 
 const initialState: UiState = {
@@ -21,6 +27,7 @@ const initialState: UiState = {
   outputDetached: false,
   filePath: null,
   dirty: false,
+  addressRequest: null,
 };
 
 const uiSlice = createSlice({
@@ -38,6 +45,11 @@ const uiSlice = createSlice({
     },
     toggleSettings(state, action: PayloadAction<boolean | undefined>) {
       state.settingsOpen = action.payload ?? !state.settingsOpen;
+    },
+    // Open an address in the Inspector's Memory or Disassembly view.
+    openAddress(state, action: PayloadAction<{ view: AddressView; address: string }>) {
+      state.activeTab = 'inspector';
+      state.addressRequest = { ...action.payload, n: (state.addressRequest?.n ?? 0) + 1 };
     },
     setOutputDetached(state, action: PayloadAction<boolean>) {
       state.outputDetached = action.payload;

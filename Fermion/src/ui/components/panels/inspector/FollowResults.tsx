@@ -1,3 +1,4 @@
+import { addrMenu } from '../../../addressMenu';
 import { useMemo, useState } from 'react';
 import { Icon } from '../../Icon';
 import { FollowItem, FollowModule, filterFollow, groupFollow, followCsv, moduleLabel } from '../../../inspector/follow';
@@ -34,7 +35,7 @@ export function FollowResults({ threadId, items, modules, onViewMemory }: {
   const row = (f: FollowItem) => (
     <div className="frame follow" key={f.address} data-testid="follow-row">
       <span className="fc">{f.count.toLocaleString()}</span>
-      <button className="fsym mono" title={f.address + ' — open in the Memory tab'} onClick={() => onViewMemory(f.address)}>{f.name}</button>
+      <button className="fsym mono" title={f.address + ' — open in the Memory tab (right-click for more)'} {...addrMenu(f.address)} onClick={() => onViewMemory(f.address)}>{f.name}</button>
     </div>
   );
 
