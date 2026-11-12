@@ -12,9 +12,13 @@ const { _electron: electron } = require('playwright-core');
 const electronPath = require('electron');
 const { spawn, execSync } = require('child_process');
 const path = require('path');
+const os = require('os');
+const fs = require('fs');
 
 const APP_DIR = path.join(__dirname, '..');
 const isWin = process.platform === 'win32';
+// A throwaway profile, so the test never touches a real installation's settings.
+const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fermion-attach-'));
 
 function spawnTarget() {
   if (isWin) {
@@ -44,7 +48,7 @@ function killTarget(pid) {
     await new Promise((r) => setTimeout(r, 1500));
     if (!pid) { console.log('ATTACH_SKIP could not spawn a target'); process.exit(0); }
 
-    app = await electron.launch({ executablePath: electronPath, args: ['.', '--no-sandbox'], cwd: APP_DIR });
+    app = await electron.launch({ executablePath: electronPath, args: ['.', '--no-sandbox', '--user-data-dir=' + userDataDir], cwd: APP_DIR });
     const win = await app.firstWindow();
     await win.waitForSelector('.xterm', { timeout: 60000 });
     await win.waitForSelector('.monaco-editor', { timeout: 60000 });
@@ -96,5 +100,6 @@ function killTarget(pid) {
   } finally {
     try { if (app) await app.close(); } catch (_) {}
     killTarget(pid);
+    try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch (_) { /* temp dir */ }
   }
 })();

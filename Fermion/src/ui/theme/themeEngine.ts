@@ -117,6 +117,7 @@ export function isDarkTheme(theme: MonacoTheme): boolean {
 
 // ---- runtime application ----
 const STORAGE_KEY = 'fermion.theme';
+const TOKENS_KEY = 'fermion.themeTokens';
 const DEFAULT_THEME = 'Kuroir';
 
 function themes(): Record<string, MonacoTheme> {
@@ -183,5 +184,10 @@ export function applyTheme(name: string): void {
     } catch { /* terminal not ready */ }
   }
 
-  try { localStorage.setItem(STORAGE_KEY, name); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(STORAGE_KEY, name);
+    // The About and Docs windows are plain pages without this engine; they
+    // read the derived tokens from here (see src/dialog-theme.js).
+    localStorage.setItem(TOKENS_KEY, JSON.stringify(tokens));
+  } catch { /* ignore */ }
 }

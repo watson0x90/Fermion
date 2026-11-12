@@ -51,7 +51,7 @@ export function MemoryTab({ active, goto }: { active: boolean; goto: Goto | null
   };
 
   // An address handed over from the Modules or Threads tab.
-  useEffect(() => { if (goto) show(goto.address, 1); /* eslint-disable-next-line */ }, [goto?.n]);
+  useEffect(() => { if (goto) show(goto.address, 1); }, [goto?.n]); // keyed on the hand-off counter only
 
   const go = () => {
     const parsed = parseAddress(addrInput);

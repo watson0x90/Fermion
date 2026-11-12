@@ -10,11 +10,6 @@ const fs = require('fs');
 
 const APP_DIR = path.join(__dirname, '..');
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fermion-tb-'));
-const rowsText = () => {
-  const r = document.querySelector('.xterm-rows');
-  return r ? r.textContent : '';
-};
-
 (async () => {
   let app;
   try {

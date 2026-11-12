@@ -1,61 +1,76 @@
+<!DOCTYPE html>
 <html>
-    <head>
-        <style>
-            body {
-                -webkit-app-region:drag;
-            }
-        </style>
-    </head>
-    <body>
-        <div style="background-color: #E0E1E2 !important;" class="ui top attached menu">
-            <button style="background: none;" class="ui icon button">
-                <i class="info circle icon"></i>
-              </button>
-            <div class="right menu">
-                <div class="ui dropdown icon item">
-                    <a id="CloseDevice" style="-webkit-app-region: no-drag; color: #676768;" class="flex items-center pl-3 py-3 pr-2 text-gray-50 hover:bg-gray-100 rounded" href="#">
-                        <span class="inline-block mr-3">
-                          <i class="x icon"></i></span>
-                      </a>
-                </div>
-            </div>
-        </div>
-        <div style="height:calc(100vh - 42px); background-color: #E0E1E2 !important;" class="ui bottom attached segment">
 
-            <!--Window Content-->
-            <div class="row" style="margin-left:0px;">
-                <img src="../src/images/fermion-alt.png">
-                <span id="FermionVersion" style="display:inline-block; padding: 0 0 22px 18px; vertical-align: bottom; font: 600 15px/1 system-ui, sans-serif; color: #4a4b48;"></span>
-            </div>
-            <div class="row" style="margin-left:0px;text-align:center;display:block">
-                <br />
-                <img src="../src/images/b33f.png">
-                <img style="padding-bottom: 15px;" src="../src/images/arrow.png">
-                <a id="OpenGitHub" href="#">
-                    <img src="../src/images/github.png" style="-webkit-app-region: no-drag;">
-                </a>
-            </div>
-            <!-- / Window Content-->
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="">
+  <title>About Fermion</title>
+  <!-- Shared app styles: theme tokens, fonts and the title bar. -->
+  <link rel="stylesheet" href="../src/renderer.bundle.css">
+  <style>
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    .dialog { display: grid; grid-template-rows: 38px minmax(0, 1fr); height: 100%; background: var(--bg); color: var(--fg); }
+    .about { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 10px 24px 18px; background: var(--panel); }
+    .about .logo { display: flex; align-items: flex-end; gap: 14px; }
+    .about .logo img { height: 46px; filter: var(--logo-filter); -webkit-user-drag: none; }
+    .about .version { font: 500 12.5px/1.2 "IBM Plex Mono", ui-monospace, monospace; color: var(--muted); padding-bottom: 6px; }
+    .about .credit { display: flex; align-items: center; gap: 14px; }
+    .about .credit img { filter: var(--logo-filter); -webkit-user-drag: none; }
+    .about .credit button { border: 0; background: transparent; padding: 0; cursor: pointer; border-radius: 50%; line-height: 0; }
+    .about .credit button:hover img { opacity: .7; }
+    .about .fork { margin: 0; font-size: 11.5px; color: var(--faint); text-align: center; }
+    .about .fork button { border: 0; background: transparent; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+    .about .fork button:hover { text-decoration: underline; }
+  </style>
+</head>
 
-        </div>
-    </body>
-    <script src="../node_modules/jquery/dist/jquery.min.js"></script>
-    <link rel="stylesheet" type="text/css" href="../src/frameworks/semantic/semantic.css">
-    <script src="../src/frameworks/semantic/semantic.js"></script>
-    <script type="text/javascript">
-        // Close dialog
-	    document.getElementById("CloseDevice").onclick = function () {
-	    	window.close();
-	    }
+<body>
+  <div class="dialog" data-testid="about-dialog">
+    <div class="titlebar">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
+          <circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none" />
+          <ellipse cx="12" cy="12" rx="10" ry="4.3" />
+          <ellipse cx="12" cy="12" rx="10" ry="4.3" transform="rotate(60 12 12)" />
+          <ellipse cx="12" cy="12" rx="10" ry="4.3" transform="rotate(120 12 12)" />
+        </svg>
+        <span class="sub">About</span>
+      </div>
+      <div class="sp"></div>
+      <div class="winctl">
+        <button class="close" id="CloseDialog" data-testid="dialog-close" title="Close">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+      </div>
+    </div>
 
-        // Show the versions actually running (the old picture said "v1.9").
-        window.fermion.versions().then(function (v) {
-            document.getElementById("FermionVersion").textContent = "v" + v.fermion + "  ·  Frida " + v.frida;
-        }).catch(function () {});
+    <div class="about">
+      <div class="logo">
+        <img src="../src/images/fermion-alt.png" alt="Fermion">
+        <span class="version" id="FermionVersion" data-testid="about-version"></span>
+      </div>
+      <div class="credit">
+        <img src="../src/images/b33f.png" alt="by b33f">
+        <img src="../src/images/arrow.png" alt="">
+        <button id="OpenOriginal" title="The original Fermion by Ruben Boonen (@FuzzySec)"><img src="../src/images/github.png" alt="FuzzySecurity/Fermion on GitHub"></button>
+      </div>
+      <p class="fork">Maintained fork: <button id="OpenFork" data-testid="about-fork">github.com/watson0x90/Fermion</button></p>
+    </div>
+  </div>
 
-        // Visit GitHub (opened in the user's browser by the main process)
-        document.getElementById("OpenGitHub").onclick = function () {
-	    	window.fermion.openExternal("https://github.com/watson0x90/Fermion");
-	    }
-	</script>
+  <script src="../src/dialog-theme.js"></script>
+  <script>
+    document.getElementById('CloseDialog').onclick = function () { window.close(); };
+
+    // The versions actually running.
+    window.fermion.versions().then(function (v) {
+      document.getElementById('FermionVersion').textContent = 'v' + v.fermion + ' · Frida ' + v.frida;
+    }).catch(function () {});
+
+    // Links open in the user's browser (validated by the main process).
+    document.getElementById('OpenOriginal').onclick = function () { window.fermion.openExternal('https://github.com/FuzzySecurity/Fermion'); };
+    document.getElementById('OpenFork').onclick = function () { window.fermion.openExternal('https://github.com/watson0x90/Fermion'); };
+  </script>
+</body>
+
 </html>

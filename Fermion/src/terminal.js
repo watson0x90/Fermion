@@ -23,6 +23,7 @@ const DEFAULT_THEME = {
 const SCROLLBACK = 5000;
 
 function hasAnsi(text) {
+  // eslint-disable-next-line no-control-regex -- matching the ESC of an ANSI sequence is the point
   return /\x1b\[/.test(text);
 }
 function hexToSgr(hex) {
