@@ -18,8 +18,8 @@ const SUBS: { id: Sub; label: string }[] = [
 
 // Inspector: views of the attached process — its loaded modules
 // (exports/imports), memory (ranges, hex view, scan), disassembly and threads
-// (registers, backtrace). Each view loads when first shown and on Refresh; nothing here
-// writes to the target.
+// (registers, backtrace). Each view loads when first shown and on Refresh; only Memory, with Edit
+// switched on, writes to the target.
 export function InspectorPanel() {
   const isAttached = useAppSelector((s) => s.session.isAttached);
   const currentPid = useAppSelector((s) => s.session.currentPid);
