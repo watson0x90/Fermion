@@ -4,7 +4,7 @@
 // attach trigger, and a synthetic-message injector) instead.
 import { formatMessage } from '../output-model.js';
 import { writeTerminal } from './bridge';
-import { sessionActions } from './store/sessionSlice';
+import { attachAndLoad } from './sessionOps';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export function exposeTestSurface(store: any) {
@@ -29,12 +29,8 @@ export function exposeTestSurface(store: any) {
   // Drive a real attach the way the Session panel does (ui-test-attach-console,
   // ui-test-trace-detach). Logs the same status line the app shows.
   w.__fermion.triggerAttach = async (pid: number | string) => {
-    const f = w.fermion;
     writeTerminal('STATUS', '[?] Attempting process attach..');
-    await f.attach(Number(pid));
-    store.dispatch(sessionActions.syncState(await f.getState()));
+    await attachAndLoad(store.dispatch, Number(pid), '', true); // throws with the reason
     writeTerminal('STATUS', '[+] Injecting => PID: ' + pid);
-    await f.loadScript(w.MonacoCodeEditor.getValue());
-    store.dispatch(sessionActions.scriptLoaded());
   };
 }

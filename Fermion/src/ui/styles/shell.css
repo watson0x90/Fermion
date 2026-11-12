@@ -536,3 +536,7 @@ button.vrow:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 6%, 
 .editorpane > .ptool { position: relative; }
 .editorpane .menu-anchor { position: static; }
 .editorpane .menu { right: 8px; top: calc(100% + 3px); max-width: calc(100% - 16px); }
+
+/* Which program's hooks and bookmarks are shown */
+.set-pick { display: inline-flex; align-items: center; gap: 6px; flex: none; color: var(--muted); font-size: 11.5px; }
+.set-pick select { max-width: 150px; }

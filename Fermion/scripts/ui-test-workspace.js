@@ -116,7 +116,27 @@ const TARGET = 'const fs = require("fs"); setInterval(() => { try { fs.statSync(
     if (!/uv_fs_stat/.test(await win.textContent('[data-testid="code-where"]'))) throw new Error('the bookmark opened somewhere else: ' + await win.textContent('[data-testid="code-where"]'));
     await snap('restored');
 
+    step = 'the set belongs to the program';
+    await win.click('role=tab[name="Hooks"]');
+    const setName = await win.inputValue('[data-testid="set-pick"]:visible');
+    if (!/^node(\.exe)?$/i.test(setName)) throw new Error('the set in use is "' + setName + '", not the attached program');
+    // The general set is empty: choosing it takes the hook out of the process...
+    await win.selectOption('[data-testid="set-pick"]:visible', '');
+    await win.waitForSelector('[data-testid="hook-empty"]', T);
+    await win.click('role=tab[name="Inspector"]');
+    await win.click('[data-testid="insp-bookmarks"]');
+    if (await win.evaluate(() => document.querySelectorAll('[data-testid="bm-row"]').length)) throw new Error('the general set shows another program\'s bookmark');
+    // ...and choosing the program's set again puts it back, hooked.
+    await win.selectOption('[data-testid="set-pick"]:visible', setName);
+    await win.waitForSelector('[data-testid="bm-row"]', T);
+    await win.click('role=tab[name="Hooks"]');
+    await win.waitForFunction(() => document.querySelector('[data-testid="hook-status"]')?.textContent === 'hooked', undefined, T);
+    await sleep(900);
+    const sets = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (sets.version !== 2 || sets.set !== setName || sets.hooks.length !== 1 || sets.others.length !== 0) throw new Error('saved sets: ' + JSON.stringify(sets).slice(0, 300));
+
     step = 'removing is saved too';
+    await win.click('role=tab[name="Inspector"]');
     await win.click('[data-testid="insp-bookmarks"]');
     await win.click('[data-testid="bm-remove"]');
     await win.click('role=tab[name="Hooks"]');
@@ -126,7 +146,7 @@ const TARGET = 'const fs = require("fs"); setInterval(() => { try { fs.statSync(
     const after = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (after.hooks.length || after.bookmarks.length) throw new Error('removals were not saved: ' + JSON.stringify(after).slice(0, 200));
 
-    console.log('WORKSPACE_OK hook + handler + bookmark saved, restored after a restart, and working in another process (was ' + firstAddress + ', now ' + nowAddress + ')');
+    console.log('WORKSPACE_OK hook + handler + bookmark saved, restored after a restart, working in another process, kept as a set per program (was ' + firstAddress + ', now ' + nowAddress + ')');
     await app.close();
     done(0);
   } catch (e) {

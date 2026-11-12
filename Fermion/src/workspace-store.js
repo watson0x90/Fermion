@@ -1,6 +1,8 @@
 // @ts-check
 // The operator's saved work: the Hooks tab's hooks and the address bookmarks,
-// kept in one JSON file in userData and owned by the main process.
+// kept in one JSON file in userData and owned by the main process. They are
+// kept as one set per program: the set in use (hooks, bookmarks, and its name
+// in `set`; '' is the general set) and the sets of other programs (`others`).
 //
 // The renderer asks to load and to save it. What it sends is not trusted (it
 // displays output from instrumented targets), so every save is rebuilt here
@@ -14,6 +16,8 @@ const MAX_CODE = 65536;
 const MAX_NAME = 512;
 const MAX_MODULE = 1024;
 const MAX_NOTE = 2000;
+const MAX_SETS = 100;      // sets of other programs
+const MAX_SET_NAME = 260;
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const ADDRESS = /^0x[0-9a-fA-F]{1,16}$/;
 
@@ -71,12 +75,41 @@ function cleanList(list, max, clean) {
 	return out;
 }
 
-// Anything -> { hooks, bookmarks } holding only valid entries.
+// A set is named after a program ('' is the general set). Null when it is
+// not a usable name.
+function setName(v) {
+	if (typeof v !== 'string' || v.length > MAX_SET_NAME) return null;
+	// eslint-disable-next-line no-control-regex
+	return /[\u0000-\u001f\u007f]/.test(v) ? null : v;
+}
+
+function cleanOthers(list, inUse) {
+	const out = [];
+	const seen = new Set([inUse.toLowerCase()]);
+	if (!Array.isArray(list)) return out;
+	for (const raw of list) {
+		if (out.length >= MAX_SETS) break;
+		if (!raw || typeof raw !== 'object') continue;
+		const name = setName(raw.name);
+		if (name === null || seen.has(name.toLowerCase())) continue;
+		const hooks = cleanList(raw.hooks, MAX_HOOKS, cleanHook);
+		const bookmarks = cleanList(raw.bookmarks, MAX_BOOKMARKS, cleanBookmark);
+		if (!hooks.length && !bookmarks.length) continue; // nothing worth keeping
+		seen.add(name.toLowerCase());
+		out.push({ name, hooks, bookmarks });
+	}
+	return out;
+}
+
+// Anything -> { hooks, bookmarks, set, others } holding only valid entries.
 function cleanWorkspace(raw) {
 	const r = raw && typeof raw === 'object' ? raw : {};
+	const set = setName(r.set) ?? '';
 	return {
 		hooks: cleanList(r.hooks, MAX_HOOKS, cleanHook),
 		bookmarks: cleanList(r.bookmarks, MAX_BOOKMARKS, cleanBookmark),
+		set,
+		others: cleanOthers(r.others, set),
 	};
 }
 
@@ -99,9 +132,9 @@ function createWorkspaceStore(file, io = fs) {
 			// Written beside the file and moved over it, so a crash mid-write
 			// cannot leave half a file.
 			const tmp = file + '.tmp';
-			io.writeFileSync(tmp, JSON.stringify({ version: 1, ...data }, null, 2));
+			io.writeFileSync(tmp, JSON.stringify({ version: 2, ...data }, null, 2));
 			io.renameSync(tmp, file);
-			return { hooks: data.hooks.length, bookmarks: data.bookmarks.length };
+			return { hooks: data.hooks.length, bookmarks: data.bookmarks.length, others: data.others.length };
 		},
 	};
 }
