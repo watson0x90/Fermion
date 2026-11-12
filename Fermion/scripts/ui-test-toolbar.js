@@ -88,6 +88,23 @@ const rowsText = () => {
     if (!(lay.searchTop >= lay.iconsBottom)) throw new Error('search is not underneath the icons: ' + JSON.stringify(lay));
     if (!(lay.searchWidth >= 180)) throw new Error('search box too narrow: ' + lay.searchWidth);
 
+    // Typing searches immediately (no Enter); the clear button drops the match.
+    await win.click('[data-testid="output-search"]');
+    await win.keyboard.type('bravo');
+    await win.waitForFunction(() => window.__fermion.terminal._term.getSelection() === 'bravo', undefined, { timeout: 15000 });
+    await win.click('[data-testid="search-clear"]');
+    await win.waitForFunction(() => window.__fermion.terminal._term.getSelection() === ''
+      && document.querySelector('[data-testid="output-search"]').value === ''
+      && !document.querySelector('[data-testid="search-clear"]'), undefined, { timeout: 15000 });
+    // Up recalls the cleared query and searches for it again.
+    await win.keyboard.press('ArrowUp');
+    await win.waitForFunction(() => document.querySelector('[data-testid="output-search"]').value === 'bravo'
+      && window.__fermion.terminal._term.getSelection() === 'bravo', undefined, { timeout: 15000 });
+    // Emptying the field by hand clears the match too.
+    await win.keyboard.press('Control+A');
+    await win.keyboard.press('Backspace');
+    await win.waitForFunction(() => window.__fermion.terminal._term.getSelection() === '', undefined, { timeout: 15000 });
+
     // An invalid regex must fail gracefully, not throw out of the handler.
     const threw = await win.evaluate(() => {
       try { window.__fermion.terminal.searchNext('['); return false; } catch (e) { return true; }
