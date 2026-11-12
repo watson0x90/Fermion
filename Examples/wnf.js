@@ -5,8 +5,8 @@
 // API's
 
 // https://github.com/googleprojectzero/sandbox-attacksurface-analysis-tools/blob/master/NtApiDotNet/NtWnfNative.cs
-var pNtQueryWnfStateData = Module.findExportByName('ntdll.dll', 'NtQueryWnfStateData')
-var pNtUpdateWnfStateData = Module.findExportByName('ntdll.dll', 'NtUpdateWnfStateData')
+var pNtQueryWnfStateData = Process.getModuleByName('ntdll.dll').findExportByName('NtQueryWnfStateData')
+var pNtUpdateWnfStateData = Process.getModuleByName('ntdll.dll').findExportByName('NtUpdateWnfStateData')
 
 // Enum
 var WnfStateNames = {

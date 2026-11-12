@@ -3,11 +3,11 @@
 //-------------------------//
 
 // Native function pointers
-var pLoadLibraryA = Module.findExportByName('Kernel32.dll', 'LoadLibraryA')
-var pLoadLibraryW = Module.findExportByName('Kernel32.dll', 'LoadLibraryW')
-var pLoadLibraryExA = Module.findExportByName('Kernel32.dll', 'LoadLibraryExA')
-var pLoadLibraryExW = Module.findExportByName('Kernel32.dll', 'LoadLibraryExW')
-var pLdrLoadDll = Module.findExportByName('ntdll.dll', 'LdrLoadDll')
+var pLoadLibraryA = Process.getModuleByName('Kernel32.dll').findExportByName('LoadLibraryA')
+var pLoadLibraryW = Process.getModuleByName('Kernel32.dll').findExportByName('LoadLibraryW')
+var pLoadLibraryExA = Process.getModuleByName('Kernel32.dll').findExportByName('LoadLibraryExA')
+var pLoadLibraryExW = Process.getModuleByName('Kernel32.dll').findExportByName('LoadLibraryExW')
+var pLdrLoadDll = Process.getModuleByName('ntdll.dll').findExportByName('LdrLoadDll')
 
 // Enums
 var Dll_dwFlags = {

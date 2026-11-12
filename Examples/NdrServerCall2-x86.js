@@ -1,6 +1,6 @@
 // Native pointer
 //=====
-var pNdrServerCall2 = Module.getExportByName("rpcrt4.dll", "NdrServerCall2");
+var pNdrServerCall2 = Process.getModuleByName("rpcrt4.dll").getExportByName("NdrServerCall2");
 
 // Print helper
 //=====

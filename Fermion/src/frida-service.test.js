@@ -326,3 +326,10 @@ test('inspectScan: a pattern needs at least two concrete bytes (a 1-byte scan ma
   await svc.inspectScan('4d ?? 5a', 'r--');
   assert.deepEqual(calls, [['scan', '4d ?? 5a', 'r--']]);
 });
+
+test('loadScript / reloadScript without a session say "not attached" instead of a null error', async () => {
+  const { FridaService } = require('./frida-service.js');
+  const svc = new FridaService();
+  await assert.rejects(() => svc.loadScript('send(1)'), /not attached/i);
+  await assert.rejects(() => svc.reloadScript('send(1)'), /not attached/i);
+});

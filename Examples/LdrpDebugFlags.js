@@ -7,7 +7,7 @@
 //------------------------------------------------------------------------------------//
 
 // pFunction
-var pLdrLoadDll = Module.findExportByName('ntdll.dll', 'LdrLoadDll')
+var pLdrLoadDll = Process.getModuleByName('ntdll.dll').findExportByName('LdrLoadDll')
 
 // Globals
 var iDebugOffet;

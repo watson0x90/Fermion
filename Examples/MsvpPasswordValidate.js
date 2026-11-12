@@ -6,8 +6,8 @@
 
 // Functions
 //----------------------------------------------
-var pMsvpPasswordValidate = Module.findExportByName('ntlmshared.dll', 'MsvpPasswordValidate');
-var pRtlCompareMemory = Module.findExportByName('ntdll.dll', 'RtlCompareMemory');
+var pMsvpPasswordValidate = Process.getModuleByName('ntlmshared.dll').findExportByName('MsvpPasswordValidate');
+var pRtlCompareMemory = Process.getModuleByName('ntdll.dll').findExportByName('RtlCompareMemory');
 
 // Globals
 //----------------------------------------------

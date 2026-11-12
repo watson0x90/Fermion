@@ -248,6 +248,7 @@ class FridaService extends EventEmitter {
 	}
 
 	async loadScript(src) {
+		if (!this._session) throw new Error('Not attached to a process');
 		this._script = await this._session.createScript(src);
 		this._wireScript(this._script);
 		await this._script.load();

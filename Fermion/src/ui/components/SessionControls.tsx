@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
 import { sessionActions } from '../store/sessionSlice';
 import { attachAndLoad, reloadFromEditor } from '../sessionOps';
+import { writeTerminal } from '../bridge';
 import { Icon } from './Icon';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -23,15 +24,41 @@ export function SessionControls() {
   const [pid, setPid] = useState('');
   const [spawnPath, setSpawnPath] = useState('');
   const [spawnArgs, setSpawnArgs] = useState('');
+  const [remote, setRemote] = useState('');
+  const [connecting, setConnecting] = useState(false);
+  const deviceId = useAppSelector((s) => s.session.deviceId);
 
   const loadDevices = () => api()?.enumerateDevices?.().then(setDevices);
   const loadProcs = () => api()?.enumerateProcesses?.().then((p: Proc[]) => setProcs([...p].sort((a, b) => a.pid - b.pid)));
   useEffect(() => { loadDevices(); }, []);
 
   const onDevice = async (id: string) => {
-    const effective = await api().setDevice(id);
-    dispatch(sessionActions.setDevice(effective));
+    try {
+      const effective = await api().setDevice(id);
+      dispatch(sessionActions.setDevice(effective));
+    } catch (e) {
+      writeTerminal('ERR', '[!] Could not select device: ' + (e instanceof Error ? e.message : String(e)));
+    }
   };
+
+  // Add a remote frida-server by address (host or host:port) and switch to it.
+  const onRemote = async () => {
+    const host = remote.trim();
+    if (!host || connecting) return;
+    setConnecting(true);
+    try {
+      const effective = await api().setDevice('socket@' + host);
+      dispatch(sessionActions.setDevice(effective));
+      await loadDevices();
+      setRemote('');
+      writeTerminal('STATUS', '[+] Remote device added: ' + effective);
+    } catch (e) {
+      writeTerminal('ERR', '[!] Could not connect to ' + host + ': ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setConnecting(false);
+    }
+  };
+
   const onAttach = async () => {
     if (!pid) return;
     await attachAndLoad(dispatch, Number(pid)); // shared with the Process tree
@@ -55,9 +82,22 @@ export function SessionControls() {
         <h4>Session</h4>
         <div className="field">
           <label>Device</label>
-          <select className="sel" aria-label="device" onChange={(e) => onDevice(e.target.value)}>
+          <select className="sel" aria-label="device" value={deviceId} onChange={(e) => onDevice(e.target.value)}>
             {devices.map((d) => <option key={d.id} value={d.id}>{d.id}</option>)}
+            {!devices.some((d) => d.id === deviceId) && <option value={deviceId}>{deviceId}</option>}
           </select>
+          <div className="row">
+            <input
+              className="sel"
+              aria-label="remote device"
+              placeholder="Remote host:port"
+              title="Address of a frida-server to connect to, e.g. 192.168.1.20:27042"
+              value={remote}
+              onChange={(e) => setRemote(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') onRemote(); }}
+            />
+            <button className="iconbtn" data-testid="remote-connect" title="Connect to this frida-server" disabled={!remote.trim() || connecting} onClick={onRemote}><Icon name="plus" size={15} /></button>
+          </div>
         </div>
         <div className="field">
           <label>Process</label>

@@ -5,7 +5,7 @@
 
 // Native function pointers
 //-----------------------
-var pFunctionPtr = Module.findExportByName('kernel32.dll', 'CreateFileW');
+var pFunctionPtr = Process.getModuleByName('kernel32.dll').findExportByName('CreateFileW');
 
 // Globals
 //-----------------------

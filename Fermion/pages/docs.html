@@ -95,6 +95,13 @@
 
 			<!--Window Content-->
 
+			<div class="ui warning message" style="margin: 6px 10px 14px; text-align: left;">
+				<div class="header">This reference predates Frida 17</div>
+				<p>Fermion now ships Frida 17, which removed some of the APIs described below: the static <code>Module.findExportByName</code> / <code>getExportByName</code> / <code>findBaseAddress</code> / <code>getBaseAddress</code>, the <code>Memory.read*</code> / <code>Memory.write*</code> functions, and the built-in <code>Java</code>, <code>ObjC</code> and <code>Swift</code> bridges. Use <code>Process.getModuleByName(name).findExportByName(symbol)</code>, <code>Module.findGlobalExportByName(symbol)</code> and the pointer methods (<code>p.readUtf16String()</code>) instead.</p>
+				<p>For documentation that matches the installed Frida, type <code>help</code> or <code>help Process</code> in the REPL, or rely on the editor's completion.</p>
+			</div>
+
+
 			<h2 id="table-of-contents">Table of contents</h2>
 
 			<ol>

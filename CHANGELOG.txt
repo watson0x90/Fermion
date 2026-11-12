@@ -162,3 +162,25 @@
 * Replace the deprecated electron-packager with @electron/packager
 * New tag-triggered GitHub Actions release workflow: builds Windows, Linux and macOS (arm64, ad-hoc signed) and smoke-launches every package with Playwright before publishing. Removed the old 12-hour auto-update cron pipeline
 * Added a .gitignore
+
+-= Fermion v2.0.0 =-
+
+* Major revision. The app is rebuilt on a secured architecture with a new interface; scripts written for Frida 16 need small changes (see "Writing scripts for Frida 17" in the README)
+* Architecture: all Frida work moved to the main process. The interface runs isolated (contextIsolation on, nodeIntegration off, @electron/remote removed) and reaches Frida only through an allow-listed bridge; arguments are validated in the main process
+* Interface rewritten in React + TypeScript (Redux Toolkit, bundled with esbuild): custom title bar, collapsible activity rail, Session sidebar, tabbed toolbox (Editor, REPL, Graph, Process tree, Inspector), Output pane and status bar. jQuery and Semantic UI are gone from the main window
+* The Device, Process, Instrument and Trace pop-up windows are replaced by the Session sidebar and the Graph tab
+* Output: xterm-based terminal coloured by kind (LOG, WARN, ERR, MSG, STATUS) with filter chips, follow tail, clear, save, and search-as-you-type with a regex toggle, a clear button and search history
+* Output can be detached into its own window and docked back, keeping history, filters and theme
+* 16 colour themes that restyle the whole app (editor, output, panels, window frame); the original look, Kuroir, is the default
+* New: REPL. Evaluate JavaScript in the attached process, with history, Tab completion and "help <name>" showing Frida's own documentation (generated from the Frida type definitions at build time)
+* New: Process tree. Parent/child hierarchy with filter, collapse, attach from a row, and "only ancestry"
+* New: Inspector (read-only). Modules with exports/imports; Memory with ranges, hex view and byte/text scan; Threads with registers and symbolized backtrace
+* Graph: tracing works again on Frida 17 (it used a removed API). The tracer now keeps every batch of calls, draws a call graph of functions with repeat counts, leaves out Frida's own calls, samples hot functions and caps large graphs. The graph is shown as an image, with zoom, fit and save-as-SVG
+* Editor: Reload button in the toolbar; a failed reload is reported in Output
+* Session: a remote frida-server can be added by host:port from the sidebar
+* Fix: process parent PID, user and path were silently dropped on Frida 17 (ppid is a BigInt)
+* Fix: the status bar could be painted over after resizing the window
+* Fix: re-rendering the output (toggling a filter) duplicated every line
+* Examples updated to the Frida 17 export-lookup API
+* Bundled API docs page marked as predating Frida 17
+* Tests: Vitest component tests, node:test unit tests for the main process and the in-target helper scripts, and Playwright end-to-end tests that drive the real app (smoke, terminal, toolbar, detach, process tree, REPL, inspector, graph, attach). CI runs them on every push

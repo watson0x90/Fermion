@@ -4,8 +4,8 @@
 
 // Native function pointers
 //-----------------------
-var pCoGet = Module.findExportByName('Ole32.dll', 'CoGetClassObject')
-var pStringFromCLSID = Module.findExportByName('Ole32.dll', 'StringFromCLSID')
+var pCoGet = Process.getModuleByName('Ole32.dll').findExportByName('CoGetClassObject')
+var pStringFromCLSID = Process.getModuleByName('Ole32.dll').findExportByName('StringFromCLSID')
 
 // API prototype
 //-----------------------
