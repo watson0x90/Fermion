@@ -7,7 +7,7 @@ const api = () => (window as any).fermion;
 // Custom slim title bar for the frameless window: the original hand-lettered
 // wordmark (inverted on dark themes via --logo-filter), a draggable strip, and
 // real window controls that drive the main process over fermion.win.*.
-export function TitleBar() {
+export function TitleBar({ subtitle = 'Frida IDE' }: { subtitle?: string }) {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -22,7 +22,7 @@ export function TitleBar() {
       <div className="brand">
         <Icon name="mark" className="mark" size={17} />
         <img className="wordmark" src="../src/images/fermion-alt.png" alt="Fermion" draggable={false} />
-        <span className="sub">Frida IDE</span>
+        <span className="sub">{subtitle}</span>
       </div>
       <div className="sp" />
       <div className="winctl">

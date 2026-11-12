@@ -6,6 +6,7 @@ const { FridaService } = require('./src/frida-service.js');
 const { createDispatch, wireServiceEvents } = require('./src/frida-ipc.js');
 const { buildWindowOptions } = require('./src/windows.js');
 const { isAllowedPage, isSafeExternalUrl } = require('./src/ipc-guards.js');
+const { createOutputWindowManager } = require('./src/output-window.js');
 var bWin;
 
 // All frida-node interaction runs here in the main process. The renderer drives
@@ -120,6 +121,23 @@ ipcMain.handle('fermion:win', (event, action, arg) => {
   }
 });
 
+// Detached Output window. Same secured webPreferences + preload as the main
+// window; it loads one fixed page and only exchanges allow-listed relay
+// messages with the main window (see src/output-window.js).
+const outputWindows = createOutputWindowManager({
+  BrowserWindow,
+  getMainWindow: () => bWin,
+  preload: path.join(__dirname, 'src', 'preload.js'),
+  page: path.join(__dirname, 'pages', 'output.html'),
+  harden: hardenWindow,
+});
+ipcMain.handle('fermion:output', (event, action) => {
+  if (action === 'detach') return outputWindows.open(event.sender);
+  if (action === 'dock') return outputWindows.close(event.sender);
+  return false;
+});
+ipcMain.on('fermion:output-relay', (event, msg) => { outputWindows.relay(event.sender, msg); });
+
 function createWindow() {
   // Create the browser window.
   bWin = new BrowserWindow({
@@ -151,6 +169,9 @@ function createWindow() {
   for (const ev of ['maximize', 'unmaximize']) {
     bWin.on(ev, () => { if (bWin && !bWin.isDestroyed()) bWin.webContents.send('fermion:win-state', bWin.isMaximized()); });
   }
+
+  // The detached Output window must not outlive the main window.
+  bWin.on('closed', () => outputWindows.closeAll());
 
   // and load the index.html of the app.
   bWin.loadFile(path.join(__dirname, '/pages/index.html'));

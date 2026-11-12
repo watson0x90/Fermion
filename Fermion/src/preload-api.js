@@ -55,6 +55,15 @@ function buildApi(ipcRenderer) {
 			setBackground: (color) => ipcRenderer.invoke('fermion:win', 'setBackground', color),
 		},
 		onMaximizeChange: (cb) => onChannel('fermion:win-state', cb),
+		// Detached Output window: open/close it, and the relay that carries output
+		// lines to it and its toolbar changes back to the main window.
+		output: {
+			detach: () => ipcRenderer.invoke('fermion:output', 'detach'),
+			dock: () => ipcRenderer.invoke('fermion:output', 'dock'),
+			send: (msg) => ipcRenderer.send('fermion:output-relay', msg),
+			onRelay: (cb) => onChannel('fermion:output-relay', cb),
+			onState: (cb) => onChannel('fermion:output-state', cb),
+		},
 		// Child windows -> main -> main window (relays).
 		sendNewDevice: (msg) => ipcRenderer.send('new-device', msg),
 		sendAttachProcess: (msg) => ipcRenderer.send('attach-process', msg),

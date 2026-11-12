@@ -38,6 +38,29 @@ test('outputSlice: toggleFilter flips a kind; counted increments; clear resets c
   expect(s.count).toBe(0);
 });
 
+test('outputSlice: setFilter sets one kind; hydrate adopts filters + follow from another window', () => {
+  let s = outputReducer(undefined, { type: '@@init' });
+  s = outputReducer(s, outputActions.setFilter({ kind: 'WARN', on: false }));
+  expect(s.filters.WARN).toBe(false);
+  s = outputReducer(s, outputActions.setFilter({ kind: 'WARN', on: false }));
+  expect(s.filters.WARN).toBe(false); // idempotent, unlike toggle
+  s = outputReducer(s, outputActions.setFilter({ kind: 'NOPE', on: false }));
+  expect('NOPE' in s.filters).toBe(false); // unknown kinds are ignored
+  s = outputReducer(s, outputActions.hydrate({ filters: { LOG: false, WARN: true, BOGUS: true }, follow: false }));
+  expect(s.filters.LOG).toBe(false);
+  expect(s.filters.WARN).toBe(true);
+  expect(s.filters.ERR).toBe(true);         // kinds missing from the snapshot keep their value
+  expect('BOGUS' in s.filters).toBe(false);
+  expect(s.follow).toBe(false);
+});
+
+test('uiSlice: setOutputDetached tracks whether Output lives in its own window', () => {
+  let s = uiReducer(undefined, { type: '@@init' });
+  expect(s.outputDetached).toBe(false);
+  s = uiReducer(s, uiActions.setOutputDetached(true));
+  expect(s.outputDetached).toBe(true);
+});
+
 test('uiSlice: setActiveTab + setTheme + toggleRail/Settings', () => {
   let s = uiReducer(undefined, { type: '@@init' });
   expect(s.activeTab).toBe('editor');

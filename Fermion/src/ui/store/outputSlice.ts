@@ -25,6 +25,17 @@ const outputSlice = createSlice({
     toggleFilter(state, action: PayloadAction<string>) {
       state.filters[action.payload] = !state.filters[action.payload];
     },
+    // Set (not toggle) one kind — used when another window reports its change.
+    setFilter(state, action: PayloadAction<{ kind: string; on: boolean }>) {
+      const { kind, on } = action.payload;
+      if (kind in state.filters) state.filters[kind] = !!on;
+    },
+    // Adopt the toolbar state of another window (detached Output snapshot).
+    hydrate(state, action: PayloadAction<{ filters?: Record<string, boolean>; follow?: boolean }>) {
+      const { filters, follow } = action.payload;
+      if (filters) for (const k of KINDS) { if (typeof filters[k] === 'boolean') state.filters[k] = filters[k]; }
+      if (typeof follow === 'boolean') state.follow = follow;
+    },
     setFollow(state, action: PayloadAction<boolean>) {
       state.follow = action.payload;
     },

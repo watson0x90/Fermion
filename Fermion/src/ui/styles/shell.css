@@ -46,6 +46,15 @@ button, input, select { font-family: inherit; }
 .toolbox, .output { overflow: hidden; }
 .body { display: grid; grid-template-rows: minmax(0, 1fr); overflow: hidden; grid-template-columns: 48px 244px minmax(0,1fr) minmax(0,1.05fr); min-height: 0; transition: grid-template-columns .16s ease; position: relative; }
 .app.rail-open .body { grid-template-columns: 176px 244px minmax(0,1fr) minmax(0,1.05fr); }
+/* Output detached into its own window: its column is gone (the pane is hidden,
+   not unmounted) and the toolbox takes the freed width. */
+.app.output-detached .body { grid-template-columns: 48px 244px minmax(0,1fr); }
+.app.output-detached.rail-open .body { grid-template-columns: 176px 244px minmax(0,1fr); }
+.app.output-detached .toolbox { border-right: 0; }
+.output[hidden] { display: none; }
+/* The detached Output window itself: title bar + the pane, no status row. */
+.app.output-window { grid-template-rows: 38px minmax(0, 1fr); }
+.app.output-window .body { grid-template-columns: minmax(0, 1fr); }
 
 /* ---- activity rail ---- */
 .rail { background: var(--chrome); border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 8px; gap: 2px; overflow: hidden; }
@@ -129,6 +138,9 @@ button, input, select { font-family: inherit; }
 .statusbar .s { display: inline-flex; align-items: center; gap: 6px; }
 .statusbar .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
 .statusbar .on { color: var(--accent); }
+.statusbar .grow { flex: 1; }
+.statusbar button.link { border: 0; background: transparent; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+.statusbar button.link:hover { text-decoration: underline; }
 
 /* ---- settings menu (from the rail gear) ---- */
 .scrim { position: absolute; inset: 0; background: color-mix(in srgb, #000 30%, transparent); z-index: 20; }
@@ -154,4 +166,7 @@ button, input, select { font-family: inherit; }
 @media (max-width: 920px) {
   .body { grid-template-columns: 48px 208px minmax(0, 1fr) minmax(0, 1fr); }
   .app.rail-open .body { grid-template-columns: 168px 208px minmax(0, 1fr) minmax(0, 1fr); }
+  .app.output-detached .body { grid-template-columns: 48px 208px minmax(0, 1fr); }
+  .app.output-detached.rail-open .body { grid-template-columns: 168px 208px minmax(0, 1fr); }
+  .app.output-window .body { grid-template-columns: minmax(0, 1fr); }
 }

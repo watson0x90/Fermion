@@ -67,10 +67,16 @@ function createTerminal(container) {
   term.open(container);
   try { fitAddon.fit(); } catch (_) {}
 
+  // Full reset as an in-band escape (RIS). term.reset() is synchronous but
+  // term.write() is queued, so a reset() call cannot clear writes still in the
+  // queue: two re-renders in a row left every line on screen twice. Sending the
+  // reset through the same queue keeps it ordered with the lines around it.
+  const RIS = 'c';
+
   function renderFiltered() {
-    term.reset();
-    for (const e of buffer.filtered(active)) term.write(toTermText(e.kind, e.text));
-    if (follow) term.scrollToBottom();
+    let data = RIS;
+    for (const e of buffer.filtered(active)) data += toTermText(e.kind, e.text);
+    term.write(data, () => { if (follow) term.scrollToBottom(); });
   }
 
   const controller = {
@@ -85,11 +91,24 @@ function createTerminal(container) {
     },
     setFilter(kind, on) {
       if (!KINDS.includes(kind)) return;
+      if (!!on === active.has(kind)) return; // unchanged: nothing to re-render
       if (on) active.add(kind); else active.delete(kind);
       renderFiltered();
     },
     isFilterOn(kind) { return active.has(kind); },
-    clear() { buffer.clear(); term.reset(); },
+    clear() { buffer.clear(); term.write(RIS); },
+    // Buffered lines as plain {kind, text} (a copy) — the snapshot handed to a
+    // detached Output window.
+    entries() { return buffer.entries().map((e) => ({ kind: e.kind, text: e.text })); },
+    // Replace the buffer with a snapshot from another window and re-render.
+    load(entries) {
+      buffer.clear();
+      for (const e of Array.isArray(entries) ? entries : []) {
+        if (!e) continue;
+        buffer.append({ kind: KINDS.includes(e.kind) ? e.kind : 'STATUS', text: String(e.text) });
+      }
+      renderFiltered();
+    },
     getText() { return buffer.entries().map((e) => stripAnsi(e.text)).join('\n'); },
     // Re-theme the terminal to match the active app theme. `theme` is an xterm
     // ITheme (background/foreground/cursor/selectionBackground); `kindColors`

@@ -2,7 +2,10 @@ import { configureStore } from '@reduxjs/toolkit';
 import session from './store/sessionSlice';
 import output from './store/outputSlice';
 import ui from './store/uiSlice';
-import { initBridge, setTerminalSink, setTraceSink, routeMessage } from './bridge';
+import {
+  initBridge, setTerminalSink, setTraceSink, routeMessage,
+  setOutputMirror, writeTerminal, clearTerminal, terminalEntries, loadTerminal,
+} from './bridge';
 
 function makeStore() {
   return configureStore({ reducer: { session, output, ui } });
@@ -38,6 +41,47 @@ test('initBridge: message -> terminal sink + counted; detached clears session', 
   expect(store.getState().output.count).toBe(1);
   f.emit('detached', 'process-terminated');
   expect(store.getState().session.isAttached).toBe(false);
+});
+
+test('writeTerminal also feeds the output mirror; clear/entries/load reach the sink', () => {
+  const writes: unknown[][] = [];
+  const mirrored: unknown[][] = [];
+  let cleared = 0;
+  let loaded: unknown = null;
+  setTerminalSink({
+    write: (k: string, t: string) => writes.push([k, t]),
+    clear: () => { cleared++; },
+    entries: () => [{ kind: 'LOG', text: 'old' }],
+    load: (e: unknown) => { loaded = e; },
+  });
+  setOutputMirror((k, t) => mirrored.push([k, t]));
+  writeTerminal('LOG', 'hello');
+  expect(writes).toEqual([['LOG', 'hello']]);
+  expect(mirrored).toEqual([['LOG', 'hello']]);
+
+  setOutputMirror(null);
+  writeTerminal('LOG', 'again');
+  expect(mirrored.length).toBe(1);
+
+  clearTerminal();
+  expect(cleared).toBe(1);
+  expect(terminalEntries()).toEqual([{ kind: 'LOG', text: 'old' }]);
+  loadTerminal([{ kind: 'ERR', text: 'x' }]);
+  expect(loaded).toEqual([{ kind: 'ERR', text: 'x' }]);
+});
+
+test('bridge events reach the mirror too (the detached window sees live Frida output)', () => {
+  const store = makeStore();
+  const f = fakeFermion();
+  const mirrored: unknown[][] = [];
+  setTerminalSink({ write: () => {} });
+  setTraceSink(null);
+  setOutputMirror((k, t) => mirrored.push([k, t]));
+  initBridge(store, f);
+  f.emit('log', 'warning', 'careful');
+  f.emit('detached', 'gone');
+  setOutputMirror(null);
+  expect(mirrored).toEqual([['WARN', 'careful'], ['STATUS', '[+] Exit Reason: gone']]);
 });
 
 test('initBridge: message in trace mode -> trace sink, not terminal', () => {

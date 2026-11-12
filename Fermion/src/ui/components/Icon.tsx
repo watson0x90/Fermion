@@ -5,7 +5,7 @@
 export type IconName =
   | 'mark' | 'session' | 'graph' | 'tree' | 'inspect' | 'docs' | 'info' | 'gear'
   | 'refresh' | 'play' | 'reload' | 'stop' | 'follow' | 'clear' | 'save'
-  | 'search' | 'wrap' | 'expand' | 'popout' | 'tick' | 'min' | 'max' | 'unmax' | 'close';
+  | 'search' | 'wrap' | 'expand' | 'popout' | 'dock' | 'tick' | 'min' | 'max' | 'unmax' | 'close';
 
 const P: Record<IconName, React.ReactNode> = {
   mark: (<><circle cx="12" cy="12" r="3.2" fill="currentColor" stroke="none" /><ellipse cx="12" cy="12" rx="10" ry="4.3" /><ellipse cx="12" cy="12" rx="10" ry="4.3" transform="rotate(60 12 12)" /><ellipse cx="12" cy="12" rx="10" ry="4.3" transform="rotate(120 12 12)" /></>),
@@ -27,6 +27,7 @@ const P: Record<IconName, React.ReactNode> = {
   wrap: (<path d="M4 6h16M4 12h12a3 3 0 110 6h-3m0 0l2-2m-2 2l2 2M4 18h5" />),
   expand: (<path d="M4 6h16M4 12h16M4 18h16" />),
   popout: (<path d="M14 4h6v6M20 4l-8 8M18 14v4a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2h4" />),
+  dock: (<path d="M20 4l-8 8M12 6v6h6M18 14v4a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2h4" />),
   tick: (<path d="M5 12l5 5 9-10" />),
   min: (<path d="M5 12h14" />),
   max: (<rect x="5" y="5" width="14" height="14" rx="1.5" />),

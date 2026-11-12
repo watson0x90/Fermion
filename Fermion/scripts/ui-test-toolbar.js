@@ -50,6 +50,15 @@ const rowsText = () => {
       return r.includes('alpha-line') && r.includes('bravo-line');
     }, { timeout: 15000 });
 
+    // Re-rendering must not duplicate lines: each line is on screen exactly once
+    // (the filter re-render used to race the terminal's write queue).
+    await new Promise((r) => setTimeout(r, 400));
+    const copies = await win.evaluate(() => {
+      const r = document.querySelector('.xterm-rows').textContent;
+      return { alpha: r.split('alpha-line').length - 1, bravo: r.split('bravo-line').length - 1 };
+    });
+    if (copies.alpha !== 1 || copies.bravo !== 1) throw new Error('lines duplicated after filter re-render: ' + JSON.stringify(copies));
+
     // Search finds a present term.
     const found = await win.evaluate(() => window.__fermion.terminal.searchNext('alpha'));
     if (!found) throw new Error('searchNext did not find a present term');

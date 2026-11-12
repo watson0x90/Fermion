@@ -10,13 +10,29 @@ export function routeMessage(kind: string, traceMode: boolean): 'trace' | 'termi
   return (traceMode && (kind === 'SEND' || kind === 'MSG')) ? 'trace' : 'terminal';
 }
 
+export interface OutputEntry { kind: string; text: string; }
 export interface TerminalSink {
   write(kind: string, text: string): void;
+  clear?(): void;
+  entries?(): OutputEntry[];
+  load?(entries: OutputEntry[]): void;
 }
 let sink: TerminalSink | null = null;
 export function setTerminalSink(s: TerminalSink | null) { sink = s; }
-// Write a status/meta line to the terminal (e.g. the startup version banner).
-export function writeTerminal(kind: string, text: string) { sink?.write(kind, text); }
+
+// While the Output pane is detached, every line written here is also handed to
+// the mirror, which relays it to the detached window (see outputDetach.ts).
+let mirror: ((kind: string, text: string) => void) | null = null;
+export function setOutputMirror(fn: ((kind: string, text: string) => void) | null) { mirror = fn; }
+
+// Write a line to the terminal (Frida output, status/meta lines).
+export function writeTerminal(kind: string, text: string) {
+  sink?.write(kind, text);
+  mirror?.(kind, text);
+}
+export function clearTerminal() { sink?.clear?.(); }
+export function terminalEntries(): OutputEntry[] { return sink?.entries?.() ?? []; }
+export function loadTerminal(entries: OutputEntry[]) { sink?.load?.(entries); }
 
 let traceSink: ((payload: unknown) => void) | null = null;
 export function setTraceSink(fn: ((payload: unknown) => void) | null) { traceSink = fn; }
@@ -39,19 +55,19 @@ export function initBridge(store: AnyStore, injected?: Fermion): void {
     if (routeMessage(kind, store.getState().session.traceMode) === 'trace') {
       traceSink?.(m.payload);
     } else {
-      sink?.write(kind, text);
+      writeTerminal(kind, text);
     }
     store.dispatch(outputActions.counted());
   });
 
   fermion.onLog((level: string, text: string) => {
     const r = formatMessage({ type: 'log', level, payload: text });
-    sink?.write(r.kind, r.text);
+    writeTerminal(r.kind, r.text);
     store.dispatch(outputActions.counted());
   });
 
   fermion.onDetached((reason: string) => {
     store.dispatch(sessionActions.detached());
-    sink?.write('STATUS', `[+] Exit Reason: ${reason}`);
+    writeTerminal('STATUS', `[+] Exit Reason: ${reason}`);
   });
 }

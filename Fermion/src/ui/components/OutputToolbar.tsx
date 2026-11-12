@@ -7,12 +7,18 @@ import { Icon } from './Icon';
 // only place the kind is named — the internal kind stays SEND).
 const LABEL: Record<string, string> = { LOG: 'LOG', WARN: 'WARN', ERR: 'ERR', SEND: 'MSG', STATUS: 'STATUS' };
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function OutputToolbar({ ctrlRef }: { ctrlRef: MutableRefObject<any> }) {
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const outputApi = () => (window as any).fermion?.output;
+
+// `standalone` = this toolbar is running in the detached Output window: the
+// pop-out button becomes "dock", and every toolbar change is relayed to the
+// main window so the pane comes back in the same state when docked.
+export function OutputToolbar({ ctrlRef, standalone = false }: { ctrlRef: MutableRefObject<any>; standalone?: boolean }) {
   const dispatch = useAppDispatch();
   const filters = useAppSelector((s) => s.output.filters);
   const follow = useAppSelector((s) => s.output.follow);
   const [q, setQ] = useState('');
+  const relay = (msg: Record<string, unknown>) => { if (standalone) outputApi()?.send?.(msg); };
 
   const save = async () => {
     const text: string = ctrlRef.current?.getText() ?? '';
@@ -28,15 +34,17 @@ export function OutputToolbar({ ctrlRef }: { ctrlRef: MutableRefObject<any> }) {
           key={k}
           data-testid={'flt-' + k}
           className={'chip ' + k.toLowerCase() + (filters[k] ? ' on' : '')}
-          onClick={() => { dispatch(outputActions.toggleFilter(k)); ctrlRef.current?.setFilter(k, !filters[k]); }}
+          onClick={() => { dispatch(outputActions.toggleFilter(k)); ctrlRef.current?.setFilter(k, !filters[k]); relay({ t: 'filter', kind: k, on: !filters[k] }); }}
         >
           <span className="d" />{LABEL[k]}
         </button>
       ))}
       <span className="sp" />
-      <button className="ic" data-testid="detach-output" title="Detach Output — coming soon" disabled><Icon name="popout" size={15} /></button>
-      <button className={'ic' + (follow ? ' on' : '')} title="Follow tail" onClick={() => { dispatch(outputActions.setFollow(!follow)); ctrlRef.current?.setFollow(!follow); }}><Icon name="follow" size={15} /></button>
-      <button className="ic" data-testid="clear-output" title="Clear" onClick={() => { ctrlRef.current?.clear(); dispatch(outputActions.clear()); }}><Icon name="clear" size={15} /></button>
+      {standalone
+        ? <button className="ic" data-testid="dock-output" title="Dock Output back into the main window" onClick={() => outputApi()?.dock?.()}><Icon name="dock" size={15} /></button>
+        : <button className="ic" data-testid="detach-output" title="Detach Output into its own window" onClick={() => outputApi()?.detach?.()}><Icon name="popout" size={15} /></button>}
+      <button className={'ic' + (follow ? ' on' : '')} title="Follow tail" onClick={() => { dispatch(outputActions.setFollow(!follow)); ctrlRef.current?.setFollow(!follow); relay({ t: 'follow', on: !follow }); }}><Icon name="follow" size={15} /></button>
+      <button className="ic" data-testid="clear-output" title="Clear" onClick={() => { ctrlRef.current?.clear(); dispatch(outputActions.clear()); relay({ t: 'clear' }); }}><Icon name="clear" size={15} /></button>
       <button className="ic" title="Save output" onClick={save}><Icon name="save" size={15} /></button>
       <span className="search">
         <Icon name="search" size={13} />
