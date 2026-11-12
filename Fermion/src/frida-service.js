@@ -25,6 +25,7 @@ const AGENT_PATHS = {
 	hooks: path.join(__dirname, 'tools', 'hooks-agent.js'),
 };
 const MAX_EVAL_CHARS = 200000;
+const MAX_CAUGHT_CHILDREN = 32; // children held suspended at once; more are let go
 const EVAL_TIMEOUT_MS = 20000;
 
 // ---- Inspector argument validation (the renderer is untrusted) ----
@@ -252,6 +253,16 @@ class FridaService extends EventEmitter {
 		this._evalTimeoutMs = EVAL_TIMEOUT_MS;
 		// Entries being evaluated right now: a function per entry that cancels it.
 		this._evalCancels = new Set();
+		// Catching child processes of the attached process (Frida child gating).
+		this._childGating = false;
+		this._gatedDevice = null;
+		this._onChildAdded = null;
+		this._caughtChildren = new Map(); // pid -> what was announced
+		// While the session moves to a caught child, the parent's session is
+		// kept: Frida lets a caught child run the moment its parent is detached
+		// or its catching is switched off, and the child must stay suspended
+		// until its script and hooks are in. { session, pid, childPid }.
+		this._heldParent = null;
 		// Unload the active script on process termination (the old inject/start
 		// registered these per call; once is equivalent and avoids leaking a
 		// listener per attach).
@@ -348,9 +359,15 @@ class FridaService extends EventEmitter {
 	// down the one attached since.
 	_adoptSession(session) {
 		this._clearSession();
+		this._setSession(session);
+	}
+
+	_setSession(session) {
 		this._session = session;
 		this._sessionPID = session.pid.toString();
 		session.detached.connect((reason) => {
+			// A parent we were holding went away by itself: nothing left to hold.
+			if (this._heldParent && this._heldParent.session === session) { this._dropHeldParent(false); return; }
 			if (this._session !== session) return;
 			this._clearSession();
 			this.emit('detached', reason);
@@ -359,6 +376,7 @@ class FridaService extends EventEmitter {
 
 	// Forget everything that belonged to the session (it is gone, or going).
 	_clearSession() {
+		this._releaseChildren(this._session);
 		this._session = null;
 		this._script = null;
 		this._sessionPID = null;
@@ -387,7 +405,10 @@ class FridaService extends EventEmitter {
 
 	async resume(pid) {
 		const device = this._spawnDevice || await this._getFrida().getDevice(this._deviceId);
-		return device.resume(pid);
+		const result = await device.resume(pid);
+		// The child we moved to is running now: its parent can be let go.
+		if (this._heldParent && this._heldParent.childPid === pid) this._dropHeldParent(true);
+		return result;
 	}
 
 	async loadScript(src) {
@@ -529,6 +550,146 @@ class FridaService extends EventEmitter {
 		}
 	}
 	async inspectUnfollow() { return this._inspect('unfollow'); }
+
+	// ---- catching child processes ----
+	// With catching on, a process started by the attached process is held
+	// suspended and announced ('child' event) instead of running. It is then
+	// either let go, or the session moves to it (resolveChild). A caught child
+	// is never left frozen: switching catching off, detaching, or the session
+	// ending lets every one of them run.
+	async setChildGating(on) {
+		if (typeof on !== 'boolean') throw new Error('child catching must be true or false');
+		const session = this._session;
+		if (!session) throw new Error('Not attached to a process');
+		if (on === this._childGating) return on;
+		if (!on) {
+			await this._stopCatching(session);
+			return false;
+		}
+		const device = await this._getFrida().getDevice(this._deviceId);
+		const hadListener = !!this._onChildAdded;
+		if (!hadListener) this._listenForChildren(device);
+		try {
+			await session.enableChildGating();
+		} catch (e) {
+			if (!hadListener) this._stopListening();
+			throw e;
+		}
+		this._childGating = true;
+		return true;
+	}
+
+	_listenForChildren(device) {
+		const handler = (child) => this._childCaught(device, child);
+		device.childAdded.connect(handler);
+		this._gatedDevice = device;
+		this._onChildAdded = handler;
+	}
+
+	_stopListening() {
+		if (this._gatedDevice && this._onChildAdded) {
+			try { this._gatedDevice.childAdded.disconnect(this._onChildAdded); } catch { /* already disconnected */ }
+		}
+		this._gatedDevice = null;
+		this._onChildAdded = null;
+	}
+
+	_childCaught(device, child) {
+		if (!child) return;
+		const pid = child.pid;
+		if (!Number.isSafeInteger(pid) || pid <= 0) return;
+		const letGo = () => { Promise.resolve().then(() => device.resume(pid)).catch(() => {}); };
+		// A parent we are only holding on to during a move: its new children
+		// are not ours any more, and must not be left suspended.
+		if (this._heldParent && String(child.parentPid) === String(this._heldParent.pid)) { letGo(); return; }
+		// Only children of the process this session is on are ours to hold.
+		if (!this._childGating || String(child.parentPid) !== this._sessionPID) return;
+		if (this._caughtChildren.size >= MAX_CAUGHT_CHILDREN) { letGo(); return; }
+		const argv = Array.isArray(child.argv)
+			? child.argv.slice(0, 64).map((a) => String(a).slice(0, 1024))
+			: [];
+		const info = { pid, parentPid: child.parentPid, path: typeof child.path === 'string' ? child.path.slice(0, 4096) : '', argv };
+		this._caughtChildren.set(pid, info);
+		this.emit('child', info);
+	}
+
+	// Let every caught child run. Returns the work, for callers that wait.
+	_resumeCaught() {
+		const device = this._gatedDevice;
+		const pids = [...this._caughtChildren.keys()];
+		this._caughtChildren = new Map();
+		return device ? pids.map((pid) => Promise.resolve().then(() => device.resume(pid)).catch(() => {})) : [];
+	}
+
+	// Catching switched off for the current session (which carries on).
+	_stopCatching(session) {
+		const work = this._resumeCaught();
+		if (this._childGating && session) work.push(Promise.resolve().then(() => session.disableChildGating()).catch(() => {}));
+		this._childGating = false;
+		if (!this._heldParent) this._stopListening();
+		return Promise.all(work);
+	}
+
+	// Let go of the parent kept during a move. `leave` is false when it has
+	// already gone by itself.
+	_dropHeldParent(leave) {
+		const held = this._heldParent;
+		this._heldParent = null;
+		if (!held) return;
+		if (leave) {
+			Promise.resolve().then(() => held.session.disableChildGating()).catch(() => {});
+			try { held.session.detach(); } catch { /* already gone */ }
+		}
+		if (!this._childGating) this._stopListening();
+	}
+
+	// The session is over (or being replaced): nothing stays caught or held.
+	_releaseChildren(session) {
+		const work = this._resumeCaught();
+		if (this._childGating && session) work.push(Promise.resolve().then(() => session.disableChildGating()).catch(() => {}));
+		this._childGating = false;
+		this._dropHeldParent(true); // letting the parent go also lets a child we were moving to run
+		this._stopListening();
+		return Promise.all(work);
+	}
+
+	// action 'resume': let the caught child run. action 'attach': move the
+	// session to it. The child stays suspended; the caller loads the script
+	// and hooks, then calls resume(pid), which also lets the parent go. Until
+	// then the parent's session is kept, because leaving it would set the
+	// child running.
+	async resolveChild(pid, action) {
+		if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('invalid child pid');
+		if (action !== 'attach' && action !== 'resume') throw new Error('the action must be attach or resume');
+		const old = this._session;
+		if (!old) throw new Error('Not attached to a process');
+		const device = this._gatedDevice;
+		if (!device || !this._caughtChildren.has(pid)) throw new Error('No caught child with pid ' + pid);
+		this._caughtChildren.delete(pid);
+		if (action === 'resume') {
+			await device.resume(pid);
+			return { pid, action };
+		}
+		let childSession;
+		try {
+			childSession = await device.attach(pid);
+		} catch (e) {
+			await Promise.resolve().then(() => device.resume(pid)).catch(() => {});
+			throw e;
+		}
+		// The session moves: the parent's other caught children run, the parent
+		// is held (not detached) until the child is resumed, and no 'detached'
+		// is announced, because the session did not end.
+		this._resumeCaught();
+		this._childGating = false; // the new session is not catching (yet)
+		this._heldParent = { session: old, pid: Number(this._sessionPID), childPid: pid };
+		this._script = null;
+		this._agentSession = null;
+		this._agents = new Map();
+		this._setSession(childSession);
+		this._spawnDevice = device; // resume(pid) goes to the same device
+		return { pid, action };
+	}
 
 	// ---- Hooks tab ----
 	// Hooks live in their own agent script, so they survive reloads of the

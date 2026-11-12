@@ -1,5 +1,5 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
-import { SessionTarget } from '../session/launch';
+import { SessionTarget, ChildInfo } from '../session/launch';
 
 export interface SessionState {
   deviceId: string;
@@ -10,6 +10,8 @@ export interface SessionState {
   target: SessionTarget | null;  // what the current (or last) session is on, so it can be started again
   ended: string | null;          // why the last session ended; null while attached or before any
   suspendedPid: number | null;   // a spawned process that is waiting for Resume
+  childGating: boolean;          // the operator wants child processes caught
+  children: ChildInfo[];         // caught children waiting for a decision, oldest first
 }
 
 const initialState: SessionState = {
@@ -21,6 +23,8 @@ const initialState: SessionState = {
   target: null,
   ended: null,
   suspendedPid: null,
+  childGating: false,
+  children: [],
 };
 
 const sessionSlice = createSlice({
@@ -43,6 +47,19 @@ const sessionSlice = createSlice({
     suspendedSet(state, action: PayloadAction<number | null>) {
       state.suspendedPid = action.payload;
     },
+    childGatingSet(state, action: PayloadAction<boolean>) {
+      state.childGating = action.payload;
+      if (!action.payload) state.children = []; // main lets them run
+    },
+    childCaught(state, action: PayloadAction<ChildInfo>) {
+      if (!state.children.some((c) => c.pid === action.payload.pid)) state.children.push(action.payload);
+    },
+    childResolved(state, action: PayloadAction<number>) {
+      state.children = state.children.filter((c) => c.pid !== action.payload);
+    },
+    childrenCleared(state) {
+      state.children = [];
+    },
     endedDismissed(state) {
       state.ended = null;
     },
@@ -51,6 +68,7 @@ const sessionSlice = createSlice({
     detached(state, action: PayloadAction<string | undefined>) {
       if (state.isAttached && state.target) state.ended = action.payload ?? 'unknown';
       state.suspendedPid = null;
+      state.children = []; // main lets caught children run when the session ends
       state.isAttached = false;
       state.hasScript = false; // the session's script is gone — Reload must disable
       state.currentPid = null;

@@ -67,3 +67,15 @@ test('the Hooks tab operations are allow-listed and forward their arguments', as
   assert.equal(await dispatch('hookEnable', 'hk-1', false), 'hookEnable');
   assert.deepEqual(seen, [['hookSearch', 'exports', 'open'], ['hookEnable', 'hk-1', false]]);
 });
+
+test('child catching: the two operations are allow-listed and the child event is forwarded', async () => {
+  const { INVOKE_METHODS, wireServiceEvents } = require('./frida-ipc.js');
+  assert.ok(INVOKE_METHODS.has('setChildGating'));
+  assert.ok(INVOKE_METHODS.has('resolveChild'));
+  const { EventEmitter } = require('node:events');
+  const service = new EventEmitter();
+  const sent = [];
+  wireServiceEvents(service, (...a) => sent.push(a));
+  service.emit('child', { pid: 200 });
+  assert.deepEqual(sent, [['child', { pid: 200 }]]);
+});

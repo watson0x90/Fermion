@@ -57,10 +57,10 @@ test('toPlain: BigInt beyond the safe integer range becomes a string rather than
 // A fake session whose scripts record what happens to them.
 function fakeSession() {
   const scripts = [];
-  return {
+  const session = {
     scripts,
     pid: 4821,
-    detached: { connect: () => {} },
+    detached: { connect: (cb) => { session.ended = cb; } },
     detach: () => {},
     createScript: async (src) => {
       const s = {
@@ -74,6 +74,7 @@ function fakeSession() {
       return s;
     },
   };
+  return session;
 }
 function attachedService() {
   const { FridaService } = require('./frida-service.js');
@@ -630,4 +631,212 @@ test('spawn: the program, arguments and options are validated before anything is
   ];
   for (const [args, re] of bad) await assert.rejects(() => svc.spawn(...args), re, JSON.stringify(args).slice(0, 80));
   assert.equal(spawned.length, 0);
+});
+
+// ---- catching child processes ----
+function childService() {
+  const { FridaService } = require('./frida-service.js');
+  const svc = new FridaService();
+  const log = [];
+  const handlers = new Set();
+  const sessions = [];
+  const makeSession = (pid) => {
+    const s = fakeSession();
+    s.pid = pid;
+    s.gating = false;
+    s.enableChildGating = async () => { s.gating = true; log.push(['enableChildGating', pid]); };
+    s.disableChildGating = async () => { s.gating = false; log.push(['disableChildGating', pid]); };
+    s.detach = () => { log.push(['detach', pid]); };
+    sessions.push(s);
+    return s;
+  };
+  const device = {
+    childAdded: { connect: (cb) => handlers.add(cb), disconnect: (cb) => handlers.delete(cb) },
+    attach: async (pid) => { if (device.attachFails) throw new Error('unable to attach'); log.push(['attach', pid]); return makeSession(pid); },
+    resume: async (pid) => { log.push(['resume', pid]); },
+  };
+  svc._frida = { getDevice: async () => device };
+  const events = [];
+  svc.on('child', (c) => events.push(c));
+  const report = (child) => { for (const cb of [...handlers]) cb(child); };
+  const child = (pid, extra = {}) => ({ pid, parentPid: 100, origin: 'spawn', path: 'C:\\app\\helper.exe', argv: ['C:\\app\\helper.exe', '--type=renderer'], identifier: null, envp: ['SECRET=1'], ...extra });
+  return { svc, device, log, handlers, sessions, events, report, child };
+}
+
+test('setChildGating: needs a session and a true/false; switching on gates the session and listens for children', async () => {
+  const t = childService();
+  await assert.rejects(() => t.svc.setChildGating(true), /not attached/i);
+  await t.svc.attach(100);
+  await assert.rejects(() => t.svc.setChildGating('yes'), /true or false/);
+  assert.equal(await t.svc.setChildGating(true), true);
+  assert.equal(t.handlers.size, 1);
+  assert.deepEqual(t.log.slice(-1), [['enableChildGating', 100]]);
+  // Asking again changes nothing.
+  assert.equal(await t.svc.setChildGating(true), true);
+  assert.equal(t.handlers.size, 1);
+  assert.equal(t.log.filter((l) => l[0] === 'enableChildGating').length, 1);
+});
+
+test('a child of the attached process is announced with its pid, path and arguments, and nothing else', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.report(t.child(200));
+  assert.deepEqual(t.events, [{ pid: 200, parentPid: 100, path: 'C:\\app\\helper.exe', argv: ['C:\\app\\helper.exe', '--type=renderer'] }]);
+});
+
+test('a child of some other process is not ours: it is not announced and not touched', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.report(t.child(300, { parentPid: 999 }));
+  assert.deepEqual(t.events, []);
+  await assert.rejects(() => t.svc.resolveChild(300, 'resume'), /no caught child/i);
+  assert.equal(t.log.filter((l) => l[0] === 'resume').length, 0);
+});
+
+test('resolveChild resume lets a caught child run; only a caught pid and a known action are accepted', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.report(t.child(200));
+  await assert.rejects(() => t.svc.resolveChild(201, 'resume'), /no caught child/i);
+  await assert.rejects(() => t.svc.resolveChild('200', 'resume'), /invalid child pid/i);
+  await assert.rejects(() => t.svc.resolveChild(200, 'kill'), /attach or resume/);
+  assert.deepEqual(await t.svc.resolveChild(200, 'resume'), { pid: 200, action: 'resume' });
+  assert.deepEqual(t.log.slice(-1), [['resume', 200]]);
+  await assert.rejects(() => t.svc.resolveChild(200, 'resume'), /no caught child/i); // only once
+});
+
+test('resolveChild attach moves the session to the child, still suspended; the parent is kept until the child is resumed', async () => {
+  const t = childService();
+  const detached = [];
+  t.svc.on('detached', (r) => detached.push(r));
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.report(t.child(200));
+  t.report(t.child(201));
+  assert.deepEqual(await t.svc.resolveChild(200, 'attach'), { pid: 200, action: 'attach' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(t.svc.getState().currentPid, '200');
+  assert.equal(t.svc.getState().isAttached, true);
+  const after = () => t.log.slice(t.log.findIndex((l) => l[0] === 'attach' && l[1] === 200));
+  // The other caught child runs; the one we moved to does not.
+  assert.deepEqual(after().filter((l) => l[0] === 'resume'), [['resume', 201]]);
+  // Leaving the parent now would set the child running (Frida releases a
+  // caught child when its parent is detached or stops catching): not yet.
+  assert.equal(after().some((l) => l[0] === 'detach' || l[0] === 'disableChildGating'), false);
+  assert.equal(t.handlers.size, 1);
+  // The caller resumes the child once its script and hooks are in; then the parent is let go.
+  await t.svc.resume(200);
+  await new Promise((r) => setTimeout(r, 5));
+  const tail = after();
+  const at = (name, pid) => tail.findIndex((l) => l[0] === name && l[1] === pid);
+  assert.ok(at('resume', 200) >= 0);
+  assert.ok(at('detach', 100) > at('resume', 200), JSON.stringify(tail));
+  assert.ok(at('disableChildGating', 100) > at('resume', 200));
+  assert.equal(t.handlers.size, 0);
+  assert.deepEqual(detached, []); // a move is not an ended session
+  assert.equal(t.svc.getState().currentPid, '200');
+});
+
+test('while the parent is held during a move, a new child of it is let run, not announced', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.report(t.child(200));
+  await t.svc.resolveChild(200, 'attach');
+  t.events.length = 0;
+  t.report(t.child(300)); // parentPid 100: the held parent
+  await new Promise((r) => setTimeout(r, 5));
+  assert.deepEqual(t.events, []);
+  assert.deepEqual(t.log.slice(-1), [['resume', 300]]);
+});
+
+test('catching can be switched on for the child before it is resumed, and stays on after the parent is let go', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.report(t.child(200));
+  await t.svc.resolveChild(200, 'attach');
+  assert.equal(await t.svc.setChildGating(true), true);
+  assert.ok(t.log.some((l) => l[0] === 'enableChildGating' && l[1] === 200));
+  assert.equal(t.handlers.size, 1);
+  await t.svc.resume(200);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(t.handlers.size, 1); // still listening, for the child's own children
+  t.events.length = 0;
+  t.report(t.child(400, { parentPid: 200 }));
+  assert.deepEqual(t.events.map((e) => e.pid), [400]);
+  // The old parent's children are nobody's business now.
+  t.report(t.child(401, { parentPid: 100 }));
+  assert.deepEqual(t.events.map((e) => e.pid), [400]);
+});
+
+test('a move that is abandoned (detach, or the child dies) lets the parent go, so nothing stays held', async () => {
+  for (const end of ['detach', 'child-ended', 'parent-ended']) {
+    const t = childService();
+    await t.svc.attach(100);
+    await t.svc.setChildGating(true);
+    t.report(t.child(200));
+    await t.svc.resolveChild(200, 'attach');
+    if (end === 'detach') await t.svc.detach();
+    if (end === 'child-ended') t.sessions[1].ended('process-terminated');
+    if (end === 'parent-ended') t.sessions[0].ended('process-terminated');
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(t.handlers.size, 0, end);
+    if (end !== 'parent-ended') assert.ok(t.log.some((l) => l[0] === 'detach' && l[1] === 100), end + ': the parent was not let go');
+    if (end === 'parent-ended') assert.equal(t.svc.getState().currentPid, '200', end); // the session on the child carries on
+  }
+});
+
+test('resolveChild attach: if the child cannot be attached it is let go and the session stays where it was', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.report(t.child(200));
+  t.device.attachFails = true;
+  await assert.rejects(() => t.svc.resolveChild(200, 'attach'), /unable to attach/);
+  assert.deepEqual(t.log.slice(-1), [['resume', 200]]);
+  assert.equal(t.svc.getState().currentPid, '100');
+});
+
+// Nothing may be left frozen.
+test('switching catching off, detaching, or the session ending lets every caught child run', async () => {
+  for (const end of ['off', 'detach', 'ended']) {
+    const t = childService();
+    await t.svc.attach(100);
+    await t.svc.setChildGating(true);
+    t.report(t.child(200));
+    t.report(t.child(201));
+    if (end === 'off') assert.equal(await t.svc.setChildGating(false), false);
+    if (end === 'detach') await t.svc.detach();
+    if (end === 'ended') t.sessions[0].ended('process-terminated');
+    await new Promise((r) => setTimeout(r, 5));
+    assert.deepEqual(t.log.filter((l) => l[0] === 'resume').map((l) => l[1]).sort(), [200, 201], end);
+    assert.equal(t.handlers.size, 0, end);
+    await assert.rejects(() => t.svc.resolveChild(200, 'resume'), /no caught child|not attached/i, end);
+  }
+});
+
+test('too many caught children at once: the extra ones are let go instead of piling up', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  for (let i = 0; i < 40; i++) t.report(t.child(1000 + i));
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(t.events.length, 32);
+  assert.equal(t.log.filter((l) => l[0] === 'resume').length, 8);
+});
+
+test('a caught child with strange data is announced in a bounded, plain form', async () => {
+  const t = childService();
+  await t.svc.attach(100);
+  await t.svc.setChildGating(true);
+  t.report(t.child(200, { path: null, argv: Array.from({ length: 500 }, () => 'x'.repeat(5000)) }));
+  t.report(t.child(201, { argv: 'not a list' }));
+  assert.equal(t.events[0].path, '');
+  assert.equal(t.events[0].argv.length, 64);
+  assert.equal(t.events[0].argv[0].length, 1024);
+  assert.deepEqual(t.events[1].argv, []);
 });

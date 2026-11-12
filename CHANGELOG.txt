@@ -202,3 +202,4 @@
 * Spawn: environment variables, working directory, quoted arguments with spaces, and Start suspended with a Resume button; hooks are placed before a spawned program runs. A failed spawn is reported instead of failing silently
 * When a session ends the sidebar says why and offers Spawn again / Attach again
 * REPL: object and array results are an expandable tree; pointers in a result open the address menu
+* Catch child processes: a process started by the attached process is held before it runs; switch the session to it (script and hooks in place first, optionally kept suspended) or let it run

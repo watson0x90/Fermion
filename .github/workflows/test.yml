@@ -97,6 +97,9 @@ jobs:
       - name: Spawn with options, suspended start, start again
         run: xvfb-run -a node scripts/ui-test-launch.js
 
+      - name: Child processes are caught before they run
+        run: xvfb-run -a node scripts/ui-test-children.js
+
       - name: Hooks tab finds, hooks and lists calls
         run: xvfb-run -a node scripts/ui-test-hooks.js
 

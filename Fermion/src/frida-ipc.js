@@ -47,6 +47,10 @@ const INVOKE_METHODS = new Set([
 	'hookRemove',
 	'hookEnable',
 	'hookSymbolicate',
+	// Catch child processes of the attached process, and decide what happens
+	// to one: only pids main itself announced are accepted.
+	'setChildGating',
+	'resolveChild',
 ]);
 
 function createDispatch(service) {
@@ -63,6 +67,7 @@ function wireServiceEvents(service, send) {
 	service.on('message', (m) => send('message', m));
 	service.on('log', (level, text) => send('log', level, text));
 	service.on('detached', (reason) => send('detached', reason));
+	service.on('child', (info) => send('child', info));
 }
 
 module.exports = { createDispatch, wireServiceEvents, INVOKE_METHODS };
