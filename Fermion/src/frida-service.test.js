@@ -171,3 +171,85 @@ test('evaluate: two entries racing on a fresh session still load one agent', asy
   await Promise.all([svc.evaluate('a'), svc.evaluate('b')]);
   assert.equal(session.scripts.length, 1);
 });
+
+// ---- Inspector: read-only target inspection ----
+function inspectorService() {
+  const { FridaService } = require('./frida-service.js');
+  const svc = new FridaService();
+  const calls = [];
+  const session = fakeSession();
+  const create = session.createScript;
+  session.createScript = async (src) => {
+    const s = await create(src);
+    if (/Inspector agent/.test(src)) {
+      const rec = (name) => async (...args) => { calls.push([name, ...args]); return { items: [], total: 0, truncated: false }; };
+      s.exports = { modules: rec('modules'), exports: rec('exports'), imports: rec('imports'), threads: rec('threads'),
+        backtrace: rec('backtrace'), ranges: rec('ranges'), read: rec('read'), scan: rec('scan') };
+    }
+    return s;
+  };
+  svc._frida = { getDevice: async () => ({ attach: async () => session }) };
+  return { svc, session, calls };
+}
+
+test('inspect*: every operation refuses when not attached', async () => {
+  const { FridaService } = require('./frida-service.js');
+  const svc = new FridaService();
+  for (const call of [() => svc.inspectModules(), () => svc.inspectThreads(), () => svc.inspectRanges('r--'), () => svc.inspectRead('0x1000', 16)]) {
+    await assert.rejects(call, /not attached/i);
+  }
+});
+
+test('inspect*: forwards validated arguments to one inspector agent per session', async () => {
+  const { svc, session, calls } = inspectorService();
+  await svc.attach(1);
+  await svc.inspectModules();
+  await svc.inspectExports('kernel32.dll');
+  await svc.inspectImports('kernel32.dll');
+  await svc.inspectThreads();
+  await svc.inspectBacktrace(4242);
+  await svc.inspectRanges('r-x');
+  await svc.inspectRead('0x7FF000', 256);
+  await svc.inspectScan('4d 5a ?? 00', 'rw-');
+  assert.deepEqual(calls, [
+    ['modules'], ['exports', 'kernel32.dll'], ['imports', 'kernel32.dll'], ['threads'], ['backtrace', 4242],
+    ['ranges', 'r-x'], ['read', '0x7ff000', 256], ['scan', '4d 5a ?? 00', 'rw-'],
+  ]);
+  assert.equal(session.scripts.filter((s) => /Inspector agent/.test(s.src)).length, 1);
+});
+
+test('inspect*: the inspector agent is separate from the REPL agent and the user script', async () => {
+  const { svc, session } = inspectorService();
+  await svc.attach(1);
+  await svc.inspectModules();
+  await svc.evaluate('1');
+  await svc.loadScript('send(1)');
+  assert.equal(session.scripts.length, 3);
+  assert.equal(svc.hasScript, true);
+  assert.equal(session.scripts.some((s) => s.unloaded), false);
+});
+
+test('inspect*: malformed arguments are rejected before reaching the target', async () => {
+  const { svc, calls } = inspectorService();
+  await svc.attach(1);
+  const bad = [
+    () => svc.inspectExports(''), () => svc.inspectExports(42), () => svc.inspectExports('x'.repeat(2000)),
+    () => svc.inspectBacktrace(-1), () => svc.inspectBacktrace(1.5), () => svc.inspectBacktrace('12'),
+    () => svc.inspectRanges('rwxx'), () => svc.inspectRanges('abc'), () => svc.inspectRanges(undefined),
+    () => svc.inspectRead('1000', 16), () => svc.inspectRead('0xZZ', 16), () => svc.inspectRead('0x' + 'f'.repeat(17), 16),
+    () => svc.inspectRead('0x1000', 0), () => svc.inspectRead('0x1000', 4097), () => svc.inspectRead('0x1000', '16'),
+    () => svc.inspectScan('', 'r--'), () => svc.inspectScan('zz', 'r--'), () => svc.inspectScan('4d5a', 'r--'),
+    () => svc.inspectScan('4d 5a', 'nope'), () => svc.inspectScan('4d '.repeat(3000).trim(), 'r--'),
+    () => svc.inspectScan('?? ??', 'r--'),
+  ];
+  for (const call of bad) await assert.rejects(call, /invalid|empty|too long|must/i);
+  assert.deepEqual(calls, []);
+});
+
+test('inspect*: an error thrown inside the target is passed on as a rejection with its message', async () => {
+  const { svc, session } = inspectorService();
+  await svc.attach(1);
+  await svc.inspectModules();
+  session.scripts[0].exports.exports = async () => { throw new Error('Module not found: nope.dll'); };
+  await assert.rejects(() => svc.inspectExports('nope.dll'), /Module not found: nope\.dll/);
+});

@@ -15,9 +15,6 @@ const TABS: { id: ToolboxTab; label: string; icon: IconName }[] = [
   { id: 'inspector', label: 'Inspector', icon: 'inspect' },
 ];
 
-// Editor, REPL, Graph and Process tree are live; Inspector is still a Phase-3
-// stub panel occupying its final slot.
-//
 // Every panel stays MOUNTED; only the active one is visible (inactive ones are
 // `hidden`). The Editor's Monaco instance is referenced globally via
 // window.MonacoCodeEditor by the always-visible Session sidebar + Graph panel,

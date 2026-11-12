@@ -88,6 +88,17 @@ function buildApi(ipcRenderer) {
 		getState: () => invoke('getState'),
 		// REPL: evaluate one entry in the attached process.
 		evaluate: (code) => invoke('evaluate', code),
+		// Inspector: read-only views of the attached process.
+		inspect: {
+			modules: () => invoke('inspectModules'),
+			exports: (moduleName) => invoke('inspectExports', moduleName),
+			imports: (moduleName) => invoke('inspectImports', moduleName),
+			threads: () => invoke('inspectThreads'),
+			backtrace: (threadId) => invoke('inspectBacktrace', threadId),
+			ranges: (protection) => invoke('inspectRanges', protection),
+			read: (address, size) => invoke('inspectRead', address, size),
+			scan: (pattern, protection) => invoke('inspectScan', pattern, protection),
+		},
 		onMessage: (cb) => on('message', cb),
 		onLog: (cb) => on('log', cb),
 		onDetached: (cb) => on('detached', cb),

@@ -21,6 +21,16 @@ const INVOKE_METHODS = new Set([
 	// Phase 3 — REPL: run one entry in the attached process (same capability
 	// as loadScript, which already runs arbitrary script there).
 	'evaluate',
+	// Phase 3 — Inspector: read-only views of the attached process. Arguments
+	// are validated in the service before they reach the target.
+	'inspectModules',
+	'inspectExports',
+	'inspectImports',
+	'inspectThreads',
+	'inspectBacktrace',
+	'inspectRanges',
+	'inspectRead',
+	'inspectScan',
 ]);
 
 function createDispatch(service) {

@@ -17,9 +17,49 @@ const { EventEmitter } = require('events');
 const fs = require('fs');
 const path = require('path');
 
-// The REPL helper agent (runs inside the target; see the file's header).
-const REPL_AGENT_PATH = path.join(__dirname, 'tools', 'repl-agent.js');
+// Fermion's own helper agents (they run inside the target; see each file's
+// header). Each is its own script in the session, separate from the user's.
+const AGENT_PATHS = {
+	repl: path.join(__dirname, 'tools', 'repl-agent.js'),
+	inspector: path.join(__dirname, 'tools', 'inspector-agent.js'),
+};
 const MAX_EVAL_CHARS = 200000;
+
+// ---- Inspector argument validation (the renderer is untrusted) ----
+const MAX_READ_BYTES = 4096;
+function checkModuleName(name) {
+	if (typeof name !== 'string') throw new Error('module name must be a string');
+	if (!name) throw new Error('module name is empty');
+	if (name.length > 1024) throw new Error('module name is too long');
+	return name;
+}
+function checkThreadId(id) {
+	if (!Number.isSafeInteger(id) || id < 0) throw new Error('invalid thread id');
+	return id;
+}
+function checkProtection(protection) {
+	if (typeof protection !== 'string' || !/^[r-][w-][x-]$/.test(protection)) throw new Error('invalid protection (expected e.g. "r--" or "rw-")');
+	return protection;
+}
+function checkAddress(address) {
+	if (typeof address !== 'string' || !/^0x[0-9a-fA-F]{1,16}$/.test(address)) throw new Error('invalid address (expected 0x… hex)');
+	return address.toLowerCase();
+}
+function checkReadSize(size) {
+	if (!Number.isSafeInteger(size) || size < 1 || size > MAX_READ_BYTES) throw new Error('invalid size (must be 1..' + MAX_READ_BYTES + ' bytes)');
+	return size;
+}
+// A Frida scan pattern: space-separated hex bytes, `?` nibble wildcards allowed,
+// with at least one concrete nibble (an all-wildcard pattern matches everything).
+function checkPattern(pattern) {
+	if (typeof pattern !== 'string') throw new Error('scan pattern must be a string');
+	const p = pattern.trim().toLowerCase();
+	if (!p) throw new Error('scan pattern is empty');
+	if (p.length > 3 * 1024) throw new Error('scan pattern is too long');
+	if (!/^[0-9a-f?]{2}( [0-9a-f?]{2})*$/.test(p)) throw new Error('invalid scan pattern (expected hex bytes like "4d 5a ?? 00")');
+	if (!/[0-9a-f]/.test(p)) throw new Error('invalid scan pattern (needs at least one concrete byte)');
+	return p;
+}
 
 // Pure: where does a formatted message go? SEND payloads are forwarded to the
 // trace window only while trace mode is on; everything else goes to the
@@ -62,10 +102,9 @@ class FridaService extends EventEmitter {
 		this._script = null;
 		this._sessionPID = null;
 		this._spawnDevice = null;
-		// REPL agent: its own script in the session, separate from the user's.
-		this._replScript = null;
-		this._replLoading = null;
-		this._replSession = null;
+		// Helper agents loaded into the current session (name -> Promise<Script>).
+		this._agentSession = null;
+		this._agents = new Map();
 		// Unload the active script on process termination (the old inject/start
 		// registered these per call; once is equivalent and avoids leaking a
 		// listener per attach).
@@ -213,7 +252,7 @@ class FridaService extends EventEmitter {
 		if (!code.trim()) throw new Error('evaluate: code is empty');
 		if (code.length > MAX_EVAL_CHARS) throw new Error('evaluate: code is too long');
 		if (!this._session) throw new Error('Not attached to a process');
-		const script = await this._getReplScript();
+		const script = await this._getAgent('repl');
 		try {
 			const result = toPlain(await script.exports.evaluate(code));
 			if (result && typeof result.ok === 'boolean') return result;
@@ -224,29 +263,46 @@ class FridaService extends EventEmitter {
 		}
 	}
 
-	// One agent per session; concurrent first calls share the same load.
-	_getReplScript() {
+	// One of each agent per session; concurrent first calls share the same load.
+	_getAgent(name) {
 		const session = this._session;
-		if (this._replSession !== session) {
-			this._replSession = session;
-			this._replScript = null;
-			this._replLoading = null;
+		if (!session) return Promise.reject(new Error('Not attached to a process'));
+		if (this._agentSession !== session) {
+			this._agentSession = session;
+			this._agents = new Map();
 		}
-		if (this._replScript) return Promise.resolve(this._replScript);
-		if (!this._replLoading) {
-			const loading = (async () => {
-				const script = await session.createScript(fs.readFileSync(REPL_AGENT_PATH, 'utf8'));
+		const agents = this._agents;
+		let loading = agents.get(name);
+		if (!loading) {
+			loading = (async () => {
+				const script = await session.createScript(fs.readFileSync(AGENT_PATHS[name], 'utf8'));
 				this._wireScript(script);
 				await script.load();
-				if (this._replSession === session) this._replScript = script;
 				return script;
 			})();
-			this._replLoading = loading;
-			// A failed load must not be cached: the next entry retries.
-			loading.catch(() => { if (this._replLoading === loading) this._replLoading = null; });
+			agents.set(name, loading);
+			// A failed load must not be cached: the next call retries.
+			loading.catch(() => { if (agents.get(name) === loading) agents.delete(name); });
 		}
-		return this._replLoading;
+		return loading;
 	}
+
+	// ---- Inspector: read-only views of the attached process ----
+	// Each call goes to the inspector agent; arguments are validated here first.
+	// An error raised in the target (unknown module, unreadable memory) rejects
+	// with its message.
+	async _inspect(method, ...args) {
+		const script = await this._getAgent('inspector');
+		return toPlain(await script.exports[method](...args));
+	}
+	async inspectModules() { return this._inspect('modules'); }
+	async inspectExports(moduleName) { return this._inspect('exports', checkModuleName(moduleName)); }
+	async inspectImports(moduleName) { return this._inspect('imports', checkModuleName(moduleName)); }
+	async inspectThreads() { return this._inspect('threads'); }
+	async inspectBacktrace(threadId) { return this._inspect('backtrace', checkThreadId(threadId)); }
+	async inspectRanges(protection) { return this._inspect('ranges', checkProtection(protection)); }
+	async inspectRead(address, size) { return this._inspect('read', checkAddress(address), checkReadSize(size)); }
+	async inspectScan(pattern, protection) { return this._inspect('scan', checkPattern(pattern), checkProtection(protection)); }
 
 	async detach() {
 		if (this._session) {

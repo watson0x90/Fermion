@@ -100,3 +100,20 @@ test('evaluate invokes the evaluate method over fermion:invoke', async () => {
   await api.evaluate('1+1');
   assert.deepEqual(sent, [['fermion:invoke', 'evaluate', '1+1']]);
 });
+
+test('inspect.* invoke the matching inspect methods', async () => {
+  const sent = [];
+  const api = buildApi({ invoke: (...a) => { sent.push(a.slice(1)); return Promise.resolve({}); }, on: () => {} });
+  await api.inspect.modules();
+  await api.inspect.exports('k.dll');
+  await api.inspect.imports('k.dll');
+  await api.inspect.threads();
+  await api.inspect.backtrace(7);
+  await api.inspect.ranges('r--');
+  await api.inspect.read('0x10', 256);
+  await api.inspect.scan('4d 5a', 'r--');
+  assert.deepEqual(sent, [
+    ['inspectModules'], ['inspectExports', 'k.dll'], ['inspectImports', 'k.dll'], ['inspectThreads'],
+    ['inspectBacktrace', 7], ['inspectRanges', 'r--'], ['inspectRead', '0x10', 256], ['inspectScan', '4d 5a', 'r--'],
+  ]);
+});
