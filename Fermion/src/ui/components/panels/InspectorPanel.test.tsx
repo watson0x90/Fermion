@@ -30,6 +30,8 @@ function setup({ attached = true, active = true } = {}) {
     ranges: vi.fn(async (p: string) => list([{ base: '0x1000', size: 4096, protection: p, file: 'C:\\Windows\\a.dll' }, { base: '0x9000', size: 8192, protection: p, file: '' }])),
     read: vi.fn(async (address: string, size: number) => ({ address, size, requested: size, hex: HEX256 })),
     scan: vi.fn(async () => ({ ...list([{ address: '0x1010', size: 2, where: 'a.dll+0x10' }]), stopped: '', rangesScanned: 2, rangesTotal: 2 })),
+    follow: vi.fn(async (id: number) => ({ following: true, threadId: id, maxSeconds: 15 })),
+    unfollow: vi.fn(async () => ({ following: false, threadId: 5156, calls: 1234, total: 2, truncated: false, endedBy: 'stop', items: [{ address: '0x7fff96125a70', name: 'ntdll.dll!RtlSizeHeap', count: 1000 }, { address: '0x500', name: '0x500', count: 234 }] })),
   };
   (window as any).fermion = { inspect };
   const store = configureStore({ reducer: { session, output, ui } });
@@ -373,4 +375,64 @@ test('Memory: Auto keeps re-reading the bytes on screen', async () => {
     await waitFor(() => expect(inspect.read).toHaveBeenCalledTimes(2));
     expect(inspect.read).toHaveBeenLastCalledWith('0x2000', 256);
   } finally { vi.useRealTimers(); }
+});
+
+test('Threads: Follow counts the calls a thread makes; Stop shows them, most-called first', async () => {
+  setup();
+  open('threads');
+  fireEvent.click(await screen.findByTestId('thr-row-5156'));
+  const follow = await screen.findByTestId('thr-follow');
+  expect(follow).toHaveTextContent('Follow');
+  fireEvent.click(follow);
+  await waitFor(() => expect(inspect.follow).toHaveBeenCalledWith(5156));
+  await waitFor(() => expect(screen.getByTestId('thr-follow')).toHaveTextContent('Stop'));
+  expect(screen.getByTestId('thr-follow-status')).toHaveTextContent(/Following thread 5156/);
+  // Another thread cannot be followed meanwhile.
+  fireEvent.click(screen.getByTestId('thr-row-77'));
+  expect(screen.getByTestId('thr-follow')).toHaveTextContent('Stop');
+
+  fireEvent.click(screen.getByTestId('thr-follow'));
+  await waitFor(() => expect(inspect.unfollow).toHaveBeenCalledTimes(1));
+  const rows = await screen.findAllByTestId('follow-row');
+  expect(rows.length).toBe(2);
+  expect(rows[0]).toHaveTextContent('ntdll.dll!RtlSizeHeap');
+  expect(rows[0]).toHaveTextContent('1,000');
+  expect(screen.getByTestId('thr-follow-status')).toHaveTextContent('1,234 calls to 2 functions');
+  expect(screen.getByTestId('thr-follow')).toHaveTextContent('Follow');
+});
+
+test('Threads: a follow that ended at the time limit, or was cut short, says so', async () => {
+  setup();
+  open('threads');
+  fireEvent.click(await screen.findByTestId('thr-row-5156'));
+  inspect.unfollow.mockResolvedValueOnce({ following: false, threadId: 5156, calls: 90000, total: 6000, truncated: true, endedBy: 'limit', items: [{ address: '0x1', name: 'a!b', count: 9 }] });
+  fireEvent.click(await screen.findByTestId('thr-follow'));
+  await waitFor(() => expect(screen.getByTestId('thr-follow')).toHaveTextContent('Stop'));
+  fireEvent.click(screen.getByTestId('thr-follow'));
+  await waitFor(() => expect(screen.getByTestId('thr-follow-status')).toHaveTextContent(/stopped at the 15 second limit/));
+  expect(screen.getByTestId('thr-follow-status')).toHaveTextContent(/showing the 1 most-called/);
+});
+
+test('Threads: a follow that cannot start is reported and leaves Follow available', async () => {
+  setup();
+  open('threads');
+  fireEvent.click(await screen.findByTestId('thr-row-5156'));
+  inspect.follow.mockRejectedValueOnce(new Error("Error invoking remote method 'fermion:invoke': Error: That is Frida's own thread; it cannot be followed."));
+  fireEvent.click(await screen.findByTestId('thr-follow'));
+  await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent("That is Frida's own thread; it cannot be followed."));
+  expect(screen.getByTestId('thr-follow')).toHaveTextContent('Follow');
+  expect(inspect.unfollow).not.toHaveBeenCalled();
+});
+
+test('Threads: clicking a followed function opens it in Memory', async () => {
+  setup();
+  open('threads');
+  fireEvent.click(await screen.findByTestId('thr-row-5156'));
+  fireEvent.click(await screen.findByTestId('thr-follow'));
+  await waitFor(() => expect(screen.getByTestId('thr-follow')).toHaveTextContent('Stop'));
+  fireEvent.click(screen.getByTestId('thr-follow'));
+  const rows = await screen.findAllByTestId('follow-row');
+  fireEvent.click(within(rows[0]).getByRole('button'));
+  expect(screen.getByTestId('insp-memory')).toHaveAttribute('aria-selected', 'true');
+  await waitFor(() => expect(inspect.read).toHaveBeenCalledWith('0x7fff96125a70', 256));
 });

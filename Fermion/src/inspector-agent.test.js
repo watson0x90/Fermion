@@ -53,6 +53,7 @@ function load(over = {}) {
     // By default every address is inside one big readable range.
     findRangeByAddress: () => ({ base: new Ptr(0), size: 2 ** 40, protection: 'rw-' }),
     enumerateThreads: () => threads,
+    getCurrentThreadId: () => 99,
     enumerateRanges: (prot) => [
       { base: new Ptr(0x1000), size: 0x1000, protection: prot, file: { path: 'C:/a.dll' } },
       { base: new Ptr(0x9000), size: 0x2000, protection: prot },
@@ -61,6 +62,14 @@ function load(over = {}) {
     ...over.Process,
   };
   const scans = [];
+  const timers = [];
+  const stalker = {
+    followed: [], unfollowed: [], opts: null, flushed: 0,
+    follow: (tid, opts) => { if (over.followThrows) throw new Error('unable to follow'); stalker.followed.push(tid); stalker.opts = opts; },
+    unfollow: (tid) => { stalker.unfollowed.push(tid); },
+    flush: () => { stalker.flushed++; },
+    garbageCollect: () => {},
+  };
   const matchesFor = over.matchesFor || ((base, size, pattern) => {
     if (base.v === 0xdead000n) throw new Error('access violation');
     return base.v === 0x1000n ? [{ address: new Ptr(0x1010), size: pattern.split(' ').length }] : [];
@@ -82,9 +91,10 @@ function load(over = {}) {
     Backtracer: { ACCURATE: 'accurate', FUZZY: 'fuzzy' },
     DebugSymbol: { fromAddress: (a) => (a.v === 0x500n ? { address: a, name: null, moduleName: null } : { address: a, name: 'CreateFileW', moduleName: 'kernel32.dll' }) },
     JSON, Date: over.clock ? { now: over.clock } : Date, Uint8Array, Math, Promise,
+    Stalker: stalker, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].cancelled = true; },
   });
   vm.runInContext(SOURCE, ctx);
-  return Object.assign({ scans }, ctx.rpc.exports);
+  return Object.assign({ scans, stalker, timers }, ctx.rpc.exports);
 }
 // Results cross rpc as JSON; compare them the same way.
 const j = (v) => JSON.parse(JSON.stringify(v));
@@ -227,4 +237,84 @@ test('scan: chunks overlap by pattern length - 1 so a match across a chunk bound
   await a.scan('4d 5a 90 00', 'r--');
   const CH = 16 * 1024 * 1024;
   assert.deepEqual(a.scans, [['0x100000000', CH + 3], ['0x101000000', CH + 3], ['0x102000000', 8 * 1024 * 1024]]);
+});
+
+// ---- following a thread with Stalker ----
+test('follow: starts Stalker on the thread, asking only for a summary of calls', () => {
+  const a = load();
+  assert.deepEqual(j(a.follow(11)), { following: true, threadId: 11, maxSeconds: 15 });
+  assert.deepEqual(a.stalker.followed, [11]);
+  assert.deepEqual(j(a.stalker.opts.events), { call: true });
+  assert.equal(typeof a.stalker.opts.onCallSummary, 'function');
+  assert.equal(a.stalker.opts.onReceive, undefined); // no per-event stream
+});
+
+test('unfollow: stops, and returns the functions called, most-called first, with names', () => {
+  const a = load();
+  a.follow(11);
+  a.stalker.opts.onCallSummary({ '0x7ff123': 3, '0x500': 1 });
+  a.stalker.opts.onCallSummary({ '0x7ff123': 4, '0x7ff200': 2 });
+  const r = j(a.unfollow());
+  assert.deepEqual(a.stalker.unfollowed, [11]);
+  assert.equal(a.stalker.flushed, 1);
+  assert.equal(r.following, false);
+  assert.equal(r.threadId, 11);
+  assert.equal(r.calls, 10);
+  assert.equal(r.total, 3);
+  assert.equal(r.truncated, false);
+  assert.deepEqual(r.items, [
+    { address: '0x7ff123', name: 'kernel32.dll!CreateFileW', count: 7 },
+    { address: '0x7ff200', name: 'kernel32.dll!CreateFileW', count: 2 },
+    { address: '0x500', name: '0x500', count: 1 },
+  ]);
+});
+
+test('follow: one thread at a time; an unknown thread and the agent\'s own thread are refused', () => {
+  const a = load();
+  a.follow(11);
+  assert.throws(() => a.follow(12), /already following thread 11/i);
+  const b = load();
+  assert.throws(() => b.follow(404), /Thread not found: 404/);
+  assert.throws(() => b.follow(99), /Frida's own thread/i);
+  assert.deepEqual(b.stalker.followed, []);
+});
+
+test('unfollow with nothing being followed returns an empty result instead of throwing', () => {
+  assert.deepEqual(j(load().unfollow()), { following: false, threadId: null, calls: 0, total: 0, truncated: false, items: [], endedBy: 'none' });
+});
+
+test('follow: a failure to start leaves nothing being followed', () => {
+  const a = load({ followThrows: true });
+  assert.throws(() => a.follow(11), /unable to follow/);
+  assert.doesNotThrow(() => { a.followThrows = false; });
+  assert.equal(j(a.unfollow()).threadId, null);
+});
+
+// A forgotten follow must not stalk the thread for ever.
+test('follow: stops by itself after the time limit, and the result is still there to collect', () => {
+  const a = load();
+  a.follow(11);
+  a.stalker.opts.onCallSummary({ '0x7ff123': 5 });
+  assert.equal(a.timers.length, 1);
+  assert.equal(a.timers[0].ms, 15000);
+  a.timers[0].fn();                         // the limit fires
+  assert.deepEqual(a.stalker.unfollowed, [11]);
+  const r = j(a.unfollow());                // collect afterwards
+  assert.equal(r.endedBy, 'limit');
+  assert.equal(r.calls, 5);
+  assert.deepEqual(a.stalker.unfollowed, [11]); // not unfollowed twice
+  // and a new follow can start
+  assert.equal(j(a.follow(12)).threadId, 12);
+});
+
+test('follow: a thread calling thousands of distinct functions is capped and says so', () => {
+  const a = load();
+  a.follow(11);
+  const many = {};
+  for (let i = 0; i < 6000; i++) many['0x' + (0x900000 + i).toString(16)] = 1;
+  a.stalker.opts.onCallSummary(many);
+  const r = a.unfollow();
+  assert.equal(r.truncated, true);
+  assert.ok(r.items.length <= 300, 'items ' + r.items.length);
+  assert.equal(r.calls, 6000);
 });

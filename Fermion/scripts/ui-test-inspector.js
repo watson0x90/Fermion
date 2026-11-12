@@ -18,7 +18,7 @@ const T = { timeout: 20000 };
 (async () => {
   let app; let step = 'launch';
   // The target holds a recognizable string in memory for the scan to find.
-  const target = spawn(process.execPath, ['-e', 'globalThis.keep = Buffer.from("FERMION_SCAN_MARKER_7391"); setTimeout(() => {}, 120000)'], { stdio: 'ignore' });
+  const target = spawn(process.execPath, ['-e', 'globalThis.keep = Buffer.from("FERMION_SCAN_MARKER_7391"); const fs = require("fs"); setInterval(() => { try { fs.statSync(process.execPath); } catch (e) {} }, 150)'], { stdio: 'ignore' });
   const done = (code) => { try { target.kill(); } catch (_) { /* gone */ } process.exit(code); };
   try {
     app = await electron.launch({ executablePath: electronPath, args: ['.', '--no-sandbox', '--user-data-dir=' + userDataDir], cwd: APP_DIR });
@@ -119,6 +119,30 @@ const T = { timeout: 20000 };
     if (nReg < 8) throw new Error('only ' + nReg + ' registers shown');
     await snap('threads');
 
+    step = 'follow a thread';
+    {
+      // The first thread listed is the main thread, which runs the timer above.
+      await win.click('[data-testid="thr-follow"]');
+      await win.waitForFunction(() => /Stop/.test(document.querySelector('[data-testid="thr-follow"]').textContent), undefined, T);
+      await new Promise((r) => setTimeout(r, 1800));
+      await win.click('[data-testid="thr-follow"]');
+      await win.waitForSelector('[data-testid="follow-row"]', T);
+      const fol = await win.evaluate(() => ({
+        status: document.querySelector('[data-testid="thr-follow-status"]').textContent,
+        rows: document.querySelectorAll('[data-testid="follow-row"]').length,
+        top: document.querySelector('[data-testid="follow-row"]').textContent,
+        named: [...document.querySelectorAll('[data-testid="follow-row"] .fsym')].filter((b) => b.textContent.includes('!')).length,
+      }));
+      if (!/[\d,]+ calls to [\d,]+ functions/.test(fol.status)) throw new Error('follow status: ' + fol.status);
+      if (fol.rows < 5 || fol.named < 3) throw new Error('follow results: ' + JSON.stringify(fol));
+      // Stopping really stopped: nothing is being followed any more.
+      const again = await win.evaluate(() => window.fermion.inspect.unfollow());
+      if (again.threadId !== null) throw new Error('a thread was still being followed after Stop');
+      await snap('follow');
+      await win.click('[data-testid="thr-follow-dismiss"]');
+      await win.waitForSelector('[data-testid="bt-row"]', T);
+    }
+
     step = 'register -> memory';
     await win.click('[data-testid="reg-sp"]');
     await win.waitForFunction(() => document.querySelector('[data-testid="insp-memory"]').getAttribute('aria-selected') === 'true'
@@ -130,7 +154,7 @@ const T = { timeout: 20000 };
     await win.click('[data-testid="detach"]');
     await win.waitForFunction(() => /Attach to a process/.test(document.querySelector('[data-testid="inspector-panel"]').textContent), undefined, T);
 
-    console.log('INSPECT_OK modules + exports/imports + hex view + paging + unreadable address + text scan (' + status.trim() + ') + threads/registers/backtrace');
+    console.log('INSPECT_OK modules + exports/imports + hex view + paging + unreadable address + text scan (' + status.trim() + ') + threads/registers/backtrace + follow');
     await app.close();
     done(0);
   } catch (e) {

@@ -110,6 +110,10 @@ export function ReplPanel() {
       if (r && r.ok) {
         finish(id, { status: 'ok', text: String(r.text) });
         writeTerminal('LOG', String(r.text));
+      } else if (r && r.cancelled) {
+        // The user stopped it: shown in the transcript, but not an error in Output.
+        finish(id, { status: 'err', text: String(r.error || 'Cancelled.') });
+        writeTerminal('STATUS', '[REPL] entry cancelled');
       } else {
         const error = String((r && r.error) || 'Evaluation failed');
         finish(id, { status: 'err', text: error, stack: r && r.stack ? String(r.stack) : '' });
@@ -123,6 +127,18 @@ export function ReplPanel() {
       setBusy(false);
     }
   };
+
+  // Stop waiting for the running entry. The service ends it as "cancelled" and
+  // restarts the REPL agent; run() above then finishes normally.
+  const cancel = () => { if (busy) api().cancelEvaluate?.(); };
+  // Escape cancels too. The prompt is disabled while an entry runs, so the key
+  // is listened for on the document, only while this tab is showing.
+  useEffect(() => {
+    if (!busy || !active) return;
+    const onEsc = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); api().cancelEvaluate?.(); } };
+    document.addEventListener('keydown', onEsc);
+    return () => document.removeEventListener('keydown', onEsc);
+  }, [busy, active]);
 
   // Replace code[from, end) with `text` and leave the caret after it.
   const insert = (from: number, end: number, text: string) => {
@@ -212,7 +228,7 @@ export function ReplPanel() {
         {!entries.length && (
           <div className="repl-hint">
             {isAttached
-              ? <>Type an expression and press Enter — for example <code>Process.id</code> or <code>Process.enumerateModules()[0]</code>. Press <code>Tab</code> to complete a name, and type <code>help</code> or <code>help Process</code> for documentation. Variables declared with <code>var</code> stay available between entries (<code>let</code> and <code>const</code> do not). The REPL has its own scope, separate from the script in the Editor. An entry that runs longer than 20 seconds is stopped.</>
+              ? <>Type an expression and press Enter — for example <code>Process.id</code> or <code>Process.enumerateModules()[0]</code>. Press <code>Tab</code> to complete a name, and type <code>help</code> or <code>help Process</code> for documentation. Variables declared with <code>var</code> stay available between entries (<code>let</code> and <code>const</code> do not). The REPL has its own scope, separate from the script in the Editor. A running entry can be cancelled, and is stopped by itself after 20 seconds.</>
               : <>Attach to a process to use the REPL.</>}
           </div>
         )}
@@ -251,13 +267,14 @@ export function ReplPanel() {
           aria-label="REPL input"
           rows={Math.min(8, Math.max(1, code.split('\n').length))}
           spellCheck={false}
-          placeholder={isAttached ? 'Enter to run · Tab to complete · help' : 'Not attached'}
+          placeholder={busy ? 'Running… Esc or Cancel to stop' : isAttached ? 'Enter to run · Tab to complete · help' : 'Not attached'}
           style={{ overflowY: code.split('\n').length > 8 ? 'auto' : 'hidden' }}
           value={code}
           disabled={!isAttached || busy}
           onChange={(e) => { cursor.current = -1; setChoices(null); setCode(e.target.value); }}
           onKeyDown={onKey}
         />
+        {busy && <button className="pill" data-testid="repl-cancel" title="Stop waiting for this entry (Esc). The REPL is restarted." onClick={cancel}><Icon name="stop" size={11} />Cancel</button>}
       </div>
     </div>
   );
