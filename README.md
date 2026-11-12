@@ -1,4 +1,4 @@
-![CI](https://github.com/watson0x90/Fermion/actions/workflows/release.yml/badge.svg) ![stars](https://badgen.net/github/stars/watson0x90/Fermion?color=orange&label=Stars) ![forks](https://badgen.net/github/forks/watson0x90/Fermion?color=orange&label=Forks) ![release](https://badgen.net/badge/Fermion/v2.0.0/grey?icon=atom) ![frida-node](https://badgen.net/badge/Frida-Node/v17.26.2/grey?icon=npm) ![frida-gum](https://badgen.net/badge/Frida-Gum/v19.13.0/grey?icon=npm)
+![CI](https://github.com/watson0x90/Fermion/actions/workflows/release.yml/badge.svg) ![stars](https://badgen.net/github/stars/watson0x90/Fermion?color=orange&label=Stars) ![forks](https://badgen.net/github/forks/watson0x90/Fermion?color=orange&label=Forks) ![release](https://badgen.net/badge/Fermion/v2.1.0/grey?icon=atom) ![frida-node](https://badgen.net/badge/Frida-Node/v17.26.2/grey?icon=npm) ![frida-gum](https://badgen.net/badge/Frida-Gum/v19.13.0/grey?icon=npm)
 
 # Fermion
 
@@ -100,6 +100,8 @@ Arguments are separated by spaces; put quotes around one that contains spaces (`
 
 - **Switch to it** moves the session to the child. The Editor's script is loaded and your hooks are placed while it is still suspended, and then it runs. Tick **Keep it suspended** to hold it until you press **Resume**, so you can add hooks or look around first. The process you were attached to carries on without Fermion.
 - **Let it run** releases it untouched; the session stays where it is.
+
+On Linux and macOS a program starts another in two steps: it first makes a copy of itself (fork), and the copy then replaces itself with the new program (exec). Fermion shows the first step as *copy of this process (fork)*, because at that point there is no command line yet. Switch to it and, when it starts the new program, the session follows it by itself: the new program is held at its first instruction, the script is loaded and the hooks are placed, and then it runs. Output names the program. The same happens when the process you are attached to replaces itself, as a wrapper script does. This needs catching to be on; with it off, the session ends there. It has been checked on Linux and not on macOS.
 
 A caught child is never left frozen: switching the box off, detaching, or the session ending lets every one of them run. The setting is remembered, so the next session catches children too, and after a switch the child's own children are caught as well. Fermion has one session, so two processes cannot be instrumented at once.
 
@@ -430,8 +432,8 @@ Releases are intentional and maintainer-driven. Pushing a version tag runs [`.gi
 
 ```
 # bump "version" in Fermion/package.json, commit, then:
-git tag v2.0.0
-git push origin v2.0.0
+git tag v2.1.0
+git push origin v2.1.0
 ```
 
 ## Notes
