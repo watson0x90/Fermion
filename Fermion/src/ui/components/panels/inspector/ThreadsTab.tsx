@@ -4,12 +4,15 @@ import { parseAddress } from '../../../inspector/format';
 import { inspectApi, useInspect, Listing } from '../../../inspector/useInspect';
 
 interface Thr { id: number; name: string; state: string; pc: string | null; where: string; registers: Record<string, string>; }
+const AUTO_MS = 2000;
+
 interface Frame { address: string; where: string; symbol: string; }
 
 // Threads of the target with where each one is; selecting a thread shows its
 // register context and a backtrace. Pointer-like values open in the Memory tab.
 export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMemory: (address: string) => void }) {
-  const threads = useInspect<Listing<Thr>>(() => inspectApi().threads(), 'threads', active);
+  const [auto, setAuto] = useState(false);
+  const threads = useInspect<Listing<Thr>>(() => inspectApi().threads(), 'threads', active, auto ? AUTO_MS : 0);
   const [selected, setSelected] = useState<number | null>(null);
   const thread = threads.data?.items.find((t) => t.id === selected) ?? null;
 
@@ -24,6 +27,7 @@ export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMe
       <div className="ptool">
         <span className="grow">Register values are a snapshot from the last refresh.</span>
         <span className="count" data-testid="thr-count">{threads.loading && !threads.data ? 'loading…' : `${threads.data?.total ?? 0} threads`}</span>
+        <button className={'pill' + (auto ? ' on' : '')} data-testid="thr-auto" aria-pressed={auto} title="Re-read the threads every 2 seconds while this view is open" onClick={() => setAuto(!auto)}>Auto</button>
         <button className="pill" data-testid="thr-refresh" onClick={threads.reload}><Icon name="refresh" size={12} />Refresh</button>
       </div>
       {threads.error && <div className="insp-note err" role="alert">Could not list threads: {threads.error}</div>}

@@ -231,6 +231,7 @@ select.mini { height: 26px; font-size: 11.5px; color: var(--fg); background: var
 .repl-choices .choice { border: 1px solid var(--border); background: var(--elev); color: var(--fg); font: 11.5px/1.5 "IBM Plex Mono", ui-monospace, monospace; padding: 0 7px; border-radius: 5px; cursor: pointer; }
 .repl-choices .choice.function { color: var(--msg); }
 .repl-choices .choice:hover { border-color: var(--accent); }
+.repl-choices .choice.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, var(--elev)); }
 .repl-choices .more { font-size: 11px; color: var(--faint); align-self: center; }
 .repl-prompt { display: flex; gap: 8px; align-items: flex-start; padding: 8px 12px; border-top: 1px solid var(--border); background: var(--panel); }
 .repl-prompt.off .prompt { color: var(--faint); }

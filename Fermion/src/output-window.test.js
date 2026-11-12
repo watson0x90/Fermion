@@ -164,6 +164,8 @@ test('isRelayMessage accepts only plain objects with a known type for the direct
   assert.equal(isRelayMessage({ t: 'snapshot', entries: [] }, 'toOutput'), true);
   assert.equal(isRelayMessage({ t: 'theme', name: 'Monokai' }, 'toOutput'), true);
   assert.equal(isRelayMessage({ t: 'clear' }, 'toOutput'), true);
+  assert.equal(isRelayMessage({ t: 'lines', items: [] }, 'toOutput'), true);
+  assert.equal(isRelayMessage({ t: 'lines', items: [] }, 'toMain'), false);
   assert.equal(isRelayMessage({ t: 'filter', kind: 'LOG', on: false }, 'toMain'), true);
   assert.equal(isRelayMessage({ t: 'clear' }, 'toMain'), true);
   assert.equal(isRelayMessage({ t: 'follow', on: true }, 'toMain'), true);

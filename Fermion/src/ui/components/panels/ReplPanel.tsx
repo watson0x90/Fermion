@@ -48,7 +48,9 @@ export function ReplPanel() {
   const [entries, setEntries] = useState<Entry[]>([]);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
-  const [choices, setChoices] = useState<Choices | null>(null);
+  const [choices, setChoicesRaw] = useState<Choices | null>(null);
+  const [choiceIdx, setChoiceIdx] = useState(-1); // highlighted completion; -1 = none
+  const setChoices = (c: Choices | null) => { setChoicesRaw(c); setChoiceIdx(-1); };
 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const logRef = useRef<HTMLDivElement>(null);
@@ -162,7 +164,17 @@ export function ReplPanel() {
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const h = history.current;
-    if (e.key === 'Tab' && !e.shiftKey) {
+    // While completions are listed, the arrows walk them; Enter or Tab accepts
+    // the highlighted one. With nothing highlighted, the keys keep their usual
+    // meaning (Enter runs the entry, Tab completes again).
+    if (choices && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      const n = choices.items.length;
+      setChoiceIdx((i) => (e.key === 'ArrowDown' ? (i + 1) % n : (i <= 0 ? n - 1 : i - 1)));
+    } else if (choices && choiceIdx >= 0 && (e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey) {
+      e.preventDefault();
+      pick(choices.items[choiceIdx]);
+    } else if (e.key === 'Tab' && !e.shiftKey) {
       e.preventDefault(); // keep the focus in the prompt
       complete();
     } else if (e.key === 'Escape' && choices) {
@@ -213,9 +225,18 @@ export function ReplPanel() {
       </div>
       {choices && (
         <div className="repl-choices" data-testid="repl-choices" role="listbox" aria-label="Completions">
-          {choices.items.map((c) => (
+          {choices.items.map((c, i) => (
             // onMouseDown: keep the focus (and the caret) in the prompt.
-            <button key={c.name} role="option" aria-selected={false} className={'choice ' + c.kind} data-testid="repl-choice" onMouseDown={(ev) => ev.preventDefault()} onClick={() => pick(c)}>
+            <button
+              key={c.name}
+              role="option"
+              aria-selected={i === choiceIdx}
+              ref={i === choiceIdx ? (el) => el?.scrollIntoView?.({ block: 'nearest' }) : undefined}
+              className={'choice ' + c.kind + (i === choiceIdx ? ' on' : '')}
+              data-testid="repl-choice"
+              onMouseDown={(ev) => ev.preventDefault()}
+              onClick={() => pick(c)}
+            >
               {c.name}{c.kind === 'function' ? '()' : ''}
             </button>
           ))}

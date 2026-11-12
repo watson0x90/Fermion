@@ -9,6 +9,18 @@ import { Icon } from './Icon';
 const LABEL: Record<string, string> = { LOG: 'LOG', WARN: 'WARN', ERR: 'ERR', SEND: 'MSG', STATUS: 'STATUS' };
 
 const HISTORY_MAX = 50;
+const HISTORY_KEY = 'fermion.searchHistory';
+
+// Earlier searches, shared by the main window and the detached Output window.
+function loadSearchHistory(): string[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x) => typeof x === 'string' && x.length > 0 && x.length <= 500).slice(-HISTORY_MAX);
+  } catch {
+    return [];
+  }
+}
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const outputApi = () => (window as any).fermion?.output;
@@ -31,9 +43,9 @@ export function OutputToolbar({ ctrlRef, standalone = false }: { ctrlRef: Mutabl
     await window.fermion.exportFile(text, { title: 'Save Frida Output', defaultPath: 'frida-output.txt' });
   };
 
-  // ---- search: live as you type, with a session history on Up/Down ----
+  // ---- search: live as you type, with a history on Up/Down ----
   const inputRef = useRef<HTMLInputElement>(null);
-  const history = useRef<string[]>([]); // oldest first
+  const history = useRef<string[]>(loadSearchHistory()); // oldest first; kept across restarts
   const cursor = useRef(-1);            // -1 = not browsing; else steps back from newest
   const draft = useRef('');             // what was typed before browsing history
 
@@ -49,6 +61,7 @@ export function OutputToolbar({ ctrlRef, standalone = false }: { ctrlRef: Mutabl
     if (!value || h[h.length - 1] === value) return;
     h.push(value);
     if (h.length > HISTORY_MAX) h.shift();
+    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch { /* storage unavailable */ }
   };
   const clearSearch = () => {
     remember(q);

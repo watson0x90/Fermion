@@ -224,3 +224,52 @@ test('picking a choice that is already fully typed leaves the caret alone afterw
     expect(input.selectionStart).toBe('Process.id.toString'.length);
   } finally { MEMBERS.Process.pop(); }
 });
+
+test('the completion list can be walked with the arrow keys and accepted with Enter or Tab', async () => {
+  const { input, type, tab } = setup();
+  type('Process.');
+  tab();
+  await waitFor(() => expect(choiceNames().length).toBe(4)); // arch, enumerateModules(), enumerateThreads(), id
+  const selected = () => screen.getAllByTestId('repl-choice').findIndex((c) => c.getAttribute('aria-selected') === 'true');
+  expect(selected()).toBe(-1);
+
+  fireEvent.keyDown(input, { key: 'ArrowDown' }); expect(selected()).toBe(0);
+  fireEvent.keyDown(input, { key: 'ArrowDown' }); expect(selected()).toBe(1);
+  fireEvent.keyDown(input, { key: 'ArrowUp' });   expect(selected()).toBe(0);
+  fireEvent.keyDown(input, { key: 'ArrowUp' });   expect(selected()).toBe(3); // wraps
+  fireEvent.keyDown(input, { key: 'ArrowDown' }); expect(selected()).toBe(0); // wraps
+  fireEvent.keyDown(input, { key: 'ArrowDown' }); expect(selected()).toBe(1);
+
+  evaluate.mockClear();
+  fireEvent.keyDown(input, { key: 'Enter' });     // accepts the highlighted choice; does not run the entry
+  expect(input.value).toBe('Process.enumerateModules');
+  expect(screen.queryByTestId('repl-choices')).toBeNull();
+  expect(evaluate).not.toHaveBeenCalled();
+  expect(screen.queryAllByTestId('repl-entry').length).toBe(0);
+
+  // Tab accepts a highlighted choice too.
+  type('Process.');
+  tab();
+  await waitFor(() => expect(choiceNames().length).toBe(4));
+  fireEvent.keyDown(input, { key: 'ArrowUp' }); // last: id
+  fireEvent.keyDown(input, { key: 'Tab' });
+  expect(input.value).toBe('Process.id');
+});
+
+test('with the list open but nothing highlighted, Enter still runs the entry and the arrows do not touch history', async () => {
+  const { input, type, tab } = setup();
+  type('1 + 1');
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => expect(input).not.toBeDisabled());
+  type('Process.');
+  tab();
+  await waitFor(() => expect(choiceNames().length).toBe(4));
+  fireEvent.keyDown(input, { key: 'ArrowUp' }); // moves in the list, not to the "1 + 1" history entry
+  expect(input.value).toBe('Process.');
+  fireEvent.keyDown(input, { key: 'Escape' });
+  type('Process.id');
+  tab();
+  await waitFor(() => expect(evaluate).toHaveBeenCalledWith('__fermion.complete("Process.id")'));
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => expect(evaluate).toHaveBeenCalledWith('Process.id'));
+});

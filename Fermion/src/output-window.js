@@ -9,7 +9,7 @@
 
 // Message types each side may send. Anything else is dropped at the boundary.
 const RELAY_TYPES = {
-	toOutput: new Set(['snapshot', 'line', 'clear', 'theme']),
+	toOutput: new Set(['snapshot', 'line', 'lines', 'clear', 'theme']),
 	toMain: new Set(['ready', 'clear', 'filter', 'follow']),
 };
 

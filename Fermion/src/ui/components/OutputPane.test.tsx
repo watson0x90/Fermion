@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, fireEvent, act, cleanup } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { configureStore } from '@reduxjs/toolkit';
 import { vi } from 'vitest';
@@ -171,7 +171,9 @@ test('the terminal refits when its pane changes size, not only when the window d
   }
 });
 
-function searchSetup() {
+function searchSetup({ keepHistory = false } = {}) {
+  // Search history is persisted; start each test without another test's.
+  if (!keepHistory) localStorage.removeItem('fermion.searchHistory');
   fakeOutput();
   fakeCtrl.searchNext.mockClear();
   (fakeCtrl as any).searchPrev = vi.fn();
@@ -246,4 +248,32 @@ test('toggling regex re-runs the current query in the new mode', () => {
   type('a.c');
   fireEvent.click(screen.getByTestId('search-regex'));
   expect(fakeCtrl.searchNext).toHaveBeenLastCalledWith('a.c', { regex: false, incremental: true });
+});
+
+test('search history is kept across restarts (and shared with the detached window)', () => {
+  localStorage.removeItem('fermion.searchHistory');
+  const first = searchSetup();
+  first.type('alpha'); first.key('Enter');
+  first.type('beta'); first.key('Enter');
+  expect(JSON.parse(localStorage.getItem('fermion.searchHistory')!)).toEqual(['alpha', 'beta']);
+  cleanup();
+
+  // A new pane (a restart, or the detached Output window) starts with it.
+  const second = searchSetup({ keepHistory: true });
+  second.key('ArrowUp'); expect(second.input.value).toBe('beta');
+  second.key('ArrowUp'); expect(second.input.value).toBe('alpha');
+  localStorage.removeItem('fermion.searchHistory');
+});
+
+test('a corrupt stored history is ignored', () => {
+  localStorage.setItem('fermion.searchHistory', '{not json');
+  const { input, key } = searchSetup({ keepHistory: true });
+  key('ArrowUp');
+  expect(input.value).toBe('');
+  localStorage.setItem('fermion.searchHistory', JSON.stringify(['ok', 7, null, 'x'.repeat(5000)]));
+  cleanup();
+  const again = searchSetup({ keepHistory: true });
+  again.key('ArrowUp');
+  expect(again.input.value).toBe('ok'); // only sane strings are kept
+  localStorage.removeItem('fermion.searchHistory');
 });
