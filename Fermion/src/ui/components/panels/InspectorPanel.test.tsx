@@ -1257,3 +1257,89 @@ test('Disassembly: the heading gives the name of a named place and, after it, wh
   expect(screen.getByTestId('code-label')).toHaveTextContent('stat entry:');
   expect(screen.getByTestId('code-target')).toHaveTextContent('stat entry+0x40'); // a call to a place just after the named one
 });
+
+// ---- strings and references ----
+const STRS = { module: 'node.exe', total: 2, truncated: false, scanned: 1048576, timedOut: false, items: [
+  { address: '0x7ff62c800010', where: 'node.exe+0xf0010', kind: 'ascii', length: 12, text: 'NODE_OPTIONS' },
+  { address: '0x7ff62c800040', where: 'node.exe+0xf0040', kind: 'utf16', length: 300, text: 'x'.repeat(200) },
+] };
+
+test('Modules: Strings lists a module\'s strings; typing searches them in the target once typing pauses', async () => {
+  setup();
+  inspect.strings = vi.fn(async () => STRS);
+  fireEvent.click(await screen.findByTestId('mod-row-node.exe'));
+  await screen.findAllByTestId('sym-row');
+  fireEvent.click(screen.getByTestId('sym-kind-strings'));
+  await waitFor(() => expect(inspect.strings).toHaveBeenCalledWith('node.exe', { text: '', min: 5 }));
+  const rows = await screen.findAllByTestId('str-row');
+  expect(rows[0]).toHaveTextContent('NODE_OPTIONS');
+  expect(rows[0]).toHaveTextContent('0x7ff62c800010');
+  expect(within(rows[0]).getByTitle('ASCII')).toHaveTextContent('a');
+  expect(within(rows[1]).getByTitle('UTF-16')).toHaveTextContent('w');
+  expect(rows[1]).toHaveTextContent('…'); // cut: it is longer than what is shown
+  expect(screen.getByTestId('sym-count')).toHaveTextContent('2 strings');
+  expect(inspect.exports).toHaveBeenCalledTimes(1); // the exports were not asked for again
+  fireEvent.change(screen.getByTestId('sym-filter'), { target: { value: 'opt' } });
+  fireEvent.change(screen.getByTestId('sym-filter'), { target: { value: 'options' } });
+  await waitFor(() => expect(inspect.strings).toHaveBeenLastCalledWith('node.exe', { text: 'options', min: 5 }), { timeout: 3000 });
+  expect(inspect.strings.mock.calls.some((c: any[]) => c[1].text === 'opt')).toBe(false); // not for every key
+  fireEvent.change(screen.getByTestId('str-min'), { target: { value: '8' } });
+  await waitFor(() => expect(inspect.strings).toHaveBeenLastCalledWith('node.exe', { text: 'options', min: 8 }));
+});
+
+test('Modules: Strings says when there are more than it shows, when a big module was cut short, and when nothing matches', async () => {
+  setup();
+  inspect.strings = vi.fn(async () => ({ ...STRS, total: 569004, truncated: true, timedOut: true, scanned: 31457280 }));
+  fireEvent.click(await screen.findByTestId('mod-row-node.exe'));
+  fireEvent.click(screen.getByTestId('sym-kind-strings'));
+  await waitFor(() => expect(screen.getByTestId('str-truncated')).toHaveTextContent('Showing the first 2 of 569,004'));
+  expect(screen.getByTestId('str-timeout')).toHaveTextContent('stopped after 30 MB');
+  expect(screen.getByTestId('sym-count')).toHaveTextContent('2 of 569,004 strings');
+  inspect.strings = vi.fn(async () => ({ ...STRS, items: [], total: 0 }));
+  fireEvent.change(screen.getByTestId('sym-filter'), { target: { value: 'zzz' } });
+  await waitFor(() => expect(screen.getByTestId('mod-detail')).toHaveTextContent('No string contains that.'), { timeout: 3000 });
+});
+
+const REFS = { address: '0x7ff62c800010', module: 'node.exe', relative: true, unconfirmed: 0, truncated: false, timedOut: false,
+  code: [{ address: '0x7ff62c711020', where: 'node.exe+0x1020', text: 'lea rdx, [rip + 0xeefe9]' }],
+  pointers: [{ address: '0x7ff62c900080', where: 'node.exe+0x1f0080' }] };
+
+test('References: an address from the address menu is searched for at once; instructions open in Disassembly, pointers in Memory', async () => {
+  const store = setup();
+  inspect.refs = vi.fn(async () => REFS);
+  act(() => { store.dispatch(bookmarksActions.added({ id: 'n1', label: 'read_options', module: 'node.exe', offset: 0x1000, address: '0x7ff62c711000', view: 'code', note: '' })); });
+  act(() => { store.dispatch(uiActions.openAddress({ view: 'refs', address: '0x7ff62c800010' })); });
+  await waitFor(() => expect(screen.getByTestId('insp-refs')).toHaveAttribute('aria-selected', 'true'));
+  await waitFor(() => expect(inspect.refs).toHaveBeenCalledWith('0x7ff62c800010', undefined));
+  await waitFor(() => expect(screen.getByTestId('refs-line')).toHaveTextContent('1 instruction and 1 pointer in node.exe refer to 0x7ff62c800010.'));
+  const code = screen.getByTestId('refs-code');
+  expect(code).toHaveTextContent('lea rdx, [rip + 0xeefe9]');
+  expect(code).toHaveTextContent('read_options+0x20'); // the operator's name for where the instruction is
+  expect(screen.getByTestId('refs-count')).toHaveTextContent('2 references');
+  fireEvent.click(code);
+  expect(store.getState().ui.addressRequest).toMatchObject({ view: 'code', address: '0x7ff62c711020' });
+  act(() => { store.dispatch(uiActions.openAddress({ view: 'refs', address: '0x7ff62c800010' })); });
+  fireEvent.click(await screen.findByTestId('refs-pointer'));
+  expect(store.getState().ui.addressRequest).toMatchObject({ view: 'memory', address: '0x7ff62c900080' });
+});
+
+test('References: another module can be named; limits, a missing module and an empty result are all said plainly', async () => {
+  setup();
+  inspect.refs = vi.fn(async () => ({ ...REFS, code: [], pointers: [], truncated: true, timedOut: true, relative: false }));
+  open('refs');
+  expect(screen.getByTestId('refs-empty')).toHaveTextContent('Find what refers to an address');
+  expect(screen.getByTestId('refs-find')).toBeDisabled();
+  fireEvent.change(screen.getByTestId('refs-address'), { target: { value: '7ff62c800010' } });
+  fireEvent.change(screen.getByTestId('refs-module'), { target: { value: ' ntdll.dll ' } });
+  fireEvent.click(screen.getByTestId('refs-find'));
+  await waitFor(() => expect(inspect.refs).toHaveBeenCalledWith('0x7ff62c800010', 'ntdll.dll'));
+  const line = await screen.findByTestId('refs-line');
+  expect(line).toHaveTextContent('0 instructions and 0 pointers');
+  expect(line).toHaveTextContent('Only the first 200 of each kind');
+  expect(line).toHaveTextContent('ran out of time');
+  expect(line).toHaveTextContent('only pointers are searched for');
+  expect(screen.getByTestId('inspector-panel')).toHaveTextContent('No instruction in node.exe refers to it.');
+  inspect.refs = vi.fn(async () => { throw new Error("Error invoking remote method 'fermion:invoke': Error: 0x7ff62c800010 is not inside a module. Name the module to search.") });
+  fireEvent.click(screen.getByTestId('refs-find'));
+  await waitFor(() => expect(screen.getByTestId('refs-error')).toHaveTextContent('is not inside a module. Name the module to search.'));
+});

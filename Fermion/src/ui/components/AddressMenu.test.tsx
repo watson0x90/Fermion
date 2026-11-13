@@ -44,7 +44,7 @@ test('right-clicking an address opens the menu for it; anything else is left alo
   const menu = screen.getByTestId('addr-menu');
   expect(menu).toHaveAttribute('role', 'menu');
   expect(menu).toHaveTextContent('0x7ff010');
-  expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Copy address', 'Open in Memory', 'Open in Disassembly', 'Hook this address', 'Watch reads and writes', 'Find heap block', 'Name this address…', 'Bookmark']);
+  expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Copy address', 'Open in Memory', 'Open in Disassembly', 'Hook this address', 'Find references', 'Watch reads and writes', 'Find heap block', 'Name this address…', 'Bookmark']);
 });
 
 test('Copy address puts it on the clipboard and closes the menu', () => {
@@ -203,4 +203,11 @@ test('naming an address that already has a name changes that name; an empty name
   fireEvent.keyDown(screen.getByTestId('addr-menu-name-input'), { key: 'Enter' });
   await new Promise((r) => setTimeout(r, 20));
   expect(store.getState().bookmarks.items[0].label).toBe('second');
+});
+
+test('Find references hands the address to the References view of the Inspector', () => {
+  const store = setup();
+  openMenu();
+  fireEvent.click(screen.getByTestId('addr-menu-refs'));
+  expect(store.getState().ui.addressRequest).toEqual({ view: 'refs', address: '0x7ff010', n: 1 });
 });

@@ -388,6 +388,20 @@ Things to know:
 - Tracking stops by itself after 10 minutes. Up to 200,000 live blocks are recorded and the newest 20,000 freed ones are kept; the view says when a limit was reached. What was recorded can be looked up until tracking is started again or the session ends.
 - A program built without frame pointers or unwind information gives short or wrong call stacks. Trust the first frames more than the last.
 
+**Strings.** Select a module in the Modules view and choose **Strings** (beside Exports and Imports) to list the text in it: ASCII strings and UTF-16 ones, each with its address. Type in the search box to keep the strings that contain what you typed; the search runs in the target once you pause typing. The list shows the first 2,000 and says how many there are in all, so search to narrow it. Code is not searched (its bytes spell things by accident), and a very large module is given 8 seconds: the view says when that cut the search short.
+
+**References** answers "what uses this?". Right-click an address anywhere (a string, a function, a global) and choose **Find references**, or enter one in the References view. It lists:
+
+- the **instructions** that refer to it: calls and jumps to it, and code that takes its address, each shown as disassembled and opening in Disassembly;
+- the **pointers** to it: entries of tables and vtables, saved callbacks, each opening in Memory.
+
+Things to know:
+
+- One module is searched: the one the address is in, or the one you name in the **in** field (to find what in `app.exe` calls a function of `kernel32.dll`, say).
+- Instructions are found on x86 and x64. A candidate is listed only if it disassembles to an instruction that really reaches the address, so what is listed is right; a short jump inside a function, with a one-byte distance, is not looked for. On other processors only pointers are found.
+- A call that goes through a pointer (an import, a virtual call) refers to the pointer, not to the function. Look for references to the pointer's address instead: for an imported function that is its address in the Imports list.
+- Up to 200 of each kind are listed, and a large module is given 10 seconds.
+
 **The address menu.** Right-click an address anywhere in Fermion (a register, a backtrace frame, a symbol, a hex row, a scan result, an instruction, a function found in Hooks, a caller of a hooked call) for:
 
 | Item | Does |
@@ -396,6 +410,7 @@ Things to know:
 | **Open in Memory** | Shows it in the hex view. |
 | **Open in Disassembly** | Shows the instructions there. |
 | **Hook this address** | Places a hook there and opens it in the [Hooks](#hooks) tab. |
+| **Find references** | Lists the instructions and pointers in its module that refer to it. |
 | **Watch reads and writes** | Hands it to the Watch view, to see which code touches the data there. |
 | **Find heap block** | Looks it up in the Heap view: which block it is in, who allocated it, who freed it. |
 | **Name this address…** | Gives it a name of your own, shown for that address in every view (see below). |
@@ -565,7 +580,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, memory watch, heap tracking, names for addresses, hook presets, settings, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, memory watch, heap tracking, names for addresses, strings and references, hook presets, settings, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.

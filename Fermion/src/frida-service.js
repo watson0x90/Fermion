@@ -220,6 +220,20 @@ function checkWatchSize(size) {
 	if (!Number.isSafeInteger(size) || size < 1 || size > MAX_WATCH_BYTES) throw new Error('a watch covers 1..' + MAX_WATCH_BYTES + ' bytes');
 	return size;
 }
+// A search of a module's strings: { text, min }. `text` is what a string must
+// contain (up to 100 characters, empty for all), `min` the shortest run that
+// counts as a string. Returns a fresh object holding only the two fields.
+const MAX_STRING_QUERY = 100;
+function checkStringQuery(query) {
+	if (query === undefined || query === null) return { text: '', min: 5 };
+	const bad = () => new Error('invalid string search (expected { text: up to ' + MAX_STRING_QUERY + ' characters, min: 4..64 })');
+	if (typeof query !== 'object' || Array.isArray(query)) throw bad();
+	const text = query.text === undefined ? '' : query.text;
+	if (typeof text !== 'string' || text.length > MAX_STRING_QUERY) throw bad();
+	const min = query.min === undefined ? 5 : query.min;
+	if (!Number.isSafeInteger(min) || min < 4 || min > 64) throw bad();
+	return { text, min };
+}
 // How a watch is kept: exactly where the processor allows it ('auto', the
 // default), exactly or not at all, or by trapping the page.
 const WATCH_MODES = ['auto', 'exact', 'sampled'];
@@ -709,6 +723,16 @@ class FridaService extends EventEmitter {
 	async inspectWatchStart(address, size, mode) { return this._inspect('watchStart', checkAddress(address), checkWatchSize(size), checkWatchMode(mode)); }
 	async inspectWatchHits() { return this._inspect('watchHits'); }
 	async inspectWatchStop() { return this._inspect('watchStop'); }
+
+	// ---- strings and references ----
+	// Read-only: the strings of a module, and what in a module refers to an
+	// address (the module the address is in, unless one is named). Bounded in
+	// the agent (time, 2,000 strings, 200 references of each kind).
+	async inspectStrings(moduleName, query) { return this._inspect('strings', checkModuleName(moduleName), checkStringQuery(query)); }
+	async inspectRefs(address, moduleName) {
+		const module = moduleName === undefined || moduleName === null ? null : checkModuleName(moduleName);
+		return this._inspect('refs', checkAddress(address), module);
+	}
 
 	// ---- tracking the heap ----
 	// Record the blocks the program allocates and frees, with call stacks, and

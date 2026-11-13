@@ -29,6 +29,9 @@ class Ptr {
   readByteArray(n) {
     Ptr.reads.push([this.toString(), n]);
     if (Ptr.unreadableFrom !== null && this.v + BigInt(n) > Ptr.unreadableFrom) throw new Error('access violation');
+    // Real bytes, where a test has put some (Ptr.memory); a made-up pattern elsewhere.
+    const region = (Ptr.memory || []).find((r) => this.v >= r.base && this.v + BigInt(n) <= r.base + BigInt(r.data.length));
+    if (region) { const at = Number(this.v - region.base); return region.data.slice(at, at + n).buffer; }
     const b = new Uint8Array(n);
     for (let i = 0; i < n; i++) b[i] = Number((this.v + BigInt(i)) & 0xffn);
     return b.buffer;
@@ -37,6 +40,7 @@ class Ptr {
 Ptr.unreadableFrom = null;
 Ptr.reads = [];
 Ptr.writes = [];
+Ptr.memory = null; // [{ base, data }]: regions with real bytes
 Ptr.pointers = {}; // address -> the pointer stored there
 Ptr.unwritable = false;
 
@@ -51,6 +55,7 @@ function cpuContext(regs) {
 // `over.matchesFor(base, size, pattern)` decides what a scan of one chunk finds;
 // `over.clock` replaces Date.now so the time budget can be exercised.
 function load(over = {}) {
+  Ptr.memory = null;
   const kernel = {
     name: 'kernel32.dll', base: new Ptr(0x7ff000), size: 0x1000, path: 'C:/Windows/kernel32.dll',
     enumerateExports: () => [{ type: 'function', name: 'CreateFileW', address: new Ptr(0x7ff010) }, { type: 'variable', name: 'g', address: new Ptr(0x7ff800) }],
@@ -109,6 +114,18 @@ function load(over = {}) {
   });
   const Memory = {
     // Async scan: reports matches until the callback says 'stop'.
+    // Like Memory.scanSync, over the regions with real bytes: a pattern of hex bytes.
+    scanSync: (base, size, pattern) => {
+      const want = pattern.split(' ').map((b) => parseInt(b, 16));
+      const region = (Ptr.memory || []).find((r) => base.v >= r.base && base.v < r.base + BigInt(r.data.length));
+      if (!region) return [];
+      const from = Number(base.v - region.base);
+      const found = [];
+      for (let i = from; i + want.length <= Math.min(region.data.length, from + size); i++) {
+        if (want.every((b, k) => region.data[i + k] === b)) found.push({ address: new Ptr(region.base + BigInt(i)), size: want.length });
+      }
+      return found;
+    },
     alloc: (n) => { const at = nextAlloc; nextAlloc += Math.ceil(n / 16) * 16 + 16; return new Ptr(at); },
     scan: (base, size, pattern, cb) => {
       scans.push([base.toString(), size]);
@@ -140,7 +157,7 @@ function load(over = {}) {
     NativeFunction: function (address) { return over.winapi[address.exportName]; },
     Module: { findGlobalExportByName: (n) => (!over.noAllocators && ALLOCATORS.includes(n) && !/^Rtl/.test(n) ? exported(n) : null) },
     ModuleMap: function () { this.update = () => {}; this.find = (a) => Process.findModuleByAddress(a); },
-    Map, Number,
+    Map, Number, String, parseInt,
     MemoryAccessMonitor: monitor,
     rpc: {}, Process, Memory, ptr: (v) => new Ptr(v),
     Thread: { backtrace: (context, mode) => { if (mode === 'accurate' && over.accurateFails) throw new Error('no unwind info'); if (over.onBacktrace) over.onBacktrace(); return context && context.stack ? context.stack : [new Ptr(0x7ff123), new Ptr(0x500)]; } },
@@ -148,6 +165,11 @@ function load(over = {}) {
     DebugSymbol: { fromAddress: (a) => (a.v === 0x500n ? { address: a, name: null, moduleName: null } : { address: a, name: 'CreateFileW', moduleName: 'kernel32.dll' }) },
     JSON, Date: over.clock ? { now: over.clock } : Date, Uint8Array, Math, Promise,
     Instruction: { parse: (a) => {
+      if (over.insns) { // a test's own instructions: nothing else decodes
+        const known = over.insns[Number(a.v)];
+        if (!known) throw new Error('invalid instruction');
+        return { address: a, next: a.add(known.size), size: known.size, mnemonic: known.mnemonic, opStr: known.opStr, groups: [] };
+      }
       if (over.undecodableAt !== undefined && a.v === BigInt(over.undecodableAt)) throw new Error('invalid instruction');
       const n = Number(a.v & 0xffn);
       const insn = { address: a, next: a.add(4), size: 4, mnemonic: 'mov', opStr: 'rax, rbx', groups: [] };
@@ -1367,4 +1389,143 @@ test('heapFind: a walk that takes too long stops and says so', () => {
   const s = j(a.heapFind('0x9999999')).system;
   assert.deepEqual([s.state, s.timedOut], ['none', true]);
   assert.equal(a.log.locks, a.log.unlocks);
+});
+
+// ---- strings and references ----
+// A module with real bytes behind it: `data` at 0x400000 (r--), `code` at 0x410000 (r-x).
+function imageModule(data, code = new Uint8Array(0x100), over = {}) {
+  const ranges = [{ base: new Ptr(0x400000), size: data.length, protection: 'r--' }, { base: new Ptr(0x410000), size: code.length, protection: 'r-x' }];
+  const m = { name: 'app.exe', base: new Ptr(0x400000), size: 0x20000, path: 'C:/app/app.exe', enumerateExports: () => [], enumerateImports: () => [], enumerateRanges: () => ranges };
+  const loaded = load({ modules: [m], ...over });
+  Ptr.memory = [{ base: 0x400000n, data }, { base: 0x410000n, data: code }];
+  return loaded;
+}
+const ascii = (s) => Array.from(s, (c) => c.charCodeAt(0));
+const wide = (s) => Array.from(s, (c) => [c.charCodeAt(0), 0]).flat();
+function bytesAt(size, parts) { // parts: [[offset, bytes], ...]; the rest is 0xff
+  const b = new Uint8Array(size).fill(0xff);
+  for (const [off, bytes] of parts) b.set(bytes, off);
+  return b;
+}
+const le32 = (v) => [v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff];
+
+test('strings: ASCII and UTF-16 strings of a module, with where they are; shorter runs are not strings', () => {
+  const a = imageModule(bytesAt(0x400, [[0x10, ascii('GetProcAddress')], [0x40, wide('Software\\Fermion')], [0x100, ascii('abc')], [0x200, ascii('config.json')]]));
+  const r = j(a.strings('app.exe', { text: '', min: 5 }));
+  assert.deepEqual(r.items, [
+    { address: '0x400010', where: 'app.exe+0x10', kind: 'ascii', length: 14, text: 'GetProcAddress' },
+    { address: '0x400040', where: 'app.exe+0x40', kind: 'utf16', length: 16, text: 'Software\\Fermion' },
+    { address: '0x400200', where: 'app.exe+0x200', kind: 'ascii', length: 11, text: 'config.json' },
+  ]);
+  assert.deepEqual([r.module, r.total, r.truncated, r.timedOut, r.scanned], ['app.exe', 3, false, false, 0x400]);
+  assert.equal(j(a.strings('app.exe', { text: '', min: 3 })).total, 4); // "abc" counts when three is enough
+  assert.throws(() => a.strings('nope.dll', { text: '', min: 5 }), /Module not found/);
+});
+
+test('strings: a search keeps the strings that contain the text, whatever the case', () => {
+  const a = imageModule(bytesAt(0x400, [[0x10, ascii('GetProcAddress')], [0x40, wide('Software\\Fermion')], [0x200, ascii('config.json')]]));
+  const r = j(a.strings('app.exe', { text: 'FERM', min: 5 }));
+  assert.deepEqual(r.items.map((i) => i.text), ['Software\\Fermion']);
+  assert.equal(r.total, 1);
+  assert.equal(j(a.strings('app.exe', { text: 'nothing like it', min: 5 })).total, 0);
+});
+
+test('strings: code is not searched; a string that runs to the very end of a range is still found; long ones are cut', () => {
+  const long = 'x'.repeat(300);
+  const data = bytesAt(0x400, [[0x10, ascii(long)], [0x400 - 6, ascii('theEnd')]]);
+  const a = imageModule(data, bytesAt(0x100, [[0x10, ascii('in the code')]]));
+  const r = j(a.strings('app.exe', { text: '', min: 5 }));
+  assert.deepEqual(r.items.map((i) => [i.address, i.length, i.text.length]), [['0x400010', 300, 200], ['0x4003fa', 6, 6]]);
+});
+
+test('strings: only the first 2,000 are returned, all are counted, and a slow scan stops at its time budget', () => {
+  const parts = [];
+  for (let i = 0; i < 2100; i++) parts.push([i * 8, ascii('str' + String(i).padStart(4, '0'))]);
+  const a = imageModule(bytesAt(2100 * 8, parts));
+  const r = j(a.strings('app.exe', { text: '', min: 5 }));
+  assert.deepEqual([r.items.length, r.total, r.truncated], [2000, 2100, true]);
+  let now = 0;
+  const slow = imageModule(bytesAt(0x300000, [[0x10, ascii('early')], [0x2ff000, ascii('never reached')]]), new Uint8Array(16), { clock: () => (now += 5000) });
+  const s = j(slow.strings('app.exe', { text: '', min: 5 }));
+  assert.equal(s.timedOut, true);
+  assert.deepEqual(s.items.map((i) => i.text), ['early']);
+});
+
+test('refs: pointers to an address, and the instructions that refer to it', () => {
+  const target = 0x400200;
+  // Data: a pointer to the target at +0x80. Code: at +0x20 an instruction whose
+  // last four bytes are a displacement to the target (as lea/call/jmp have it).
+  const data = bytesAt(0x400, [[0x80, [...le32(target), 0, 0, 0, 0]]]);
+  const at = 0x410020; // instruction start; 3 bytes of opcode, then the displacement
+  const disp = target - (at + 3 + 4);
+  const code = bytesAt(0x100, [[0x20, [0x48, 0x8d, 0x0d, ...le32(disp)]]]);
+  const a = imageModule(data, code, { insns: { 0x410020: { size: 7, mnemonic: 'lea', opStr: 'rcx, [rip - 0xfe27]' } } });
+  const r = j(a.refs('0x400200', null));
+  assert.deepEqual(r.pointers, [{ address: '0x400080', where: 'app.exe+0x80' }]);
+  assert.deepEqual(r.code, [{ address: '0x410020', where: 'app.exe+0x10020', text: 'lea rcx, [rip - 0xfe27]' }]);
+  assert.deepEqual([r.address, r.module, r.truncated, r.timedOut], ['0x400200', 'app.exe', false, false]);
+});
+
+test('refs: bytes that only look like a displacement, with no instruction around them, are not reported', () => {
+  const target = 0x400200;
+  const code = bytesAt(0x100, [[0x23, le32(target - (0x410023 + 4))]]);
+  const a = imageModule(new Uint8Array(0x400).fill(0xff), code, { insns: {} }); // nothing decodes there
+  const r = j(a.refs('0x400200', null));
+  assert.deepEqual(r.code, []);
+  assert.equal(r.unconfirmed, 1);
+});
+
+test('refs: an address outside every module needs the module to search named; an unknown module is an error', () => {
+  const a = imageModule(bytesAt(0x400, [[0x80, [...le32(0x900000), 0, 0, 0, 0]]]));
+  assert.throws(() => a.refs('0x900000', null), /not inside a module/);
+  assert.deepEqual(j(a.refs('0x900000', 'app.exe')).pointers, [{ address: '0x400080', where: 'app.exe+0x80' }]);
+  assert.throws(() => a.refs('0x900000', 'nope.dll'), /Module not found/);
+});
+
+test('refs: no more than 200 of each kind are returned, and it says when there were more', () => {
+  const parts = [];
+  for (let i = 0; i < 250; i++) parts.push([i * 8, [...le32(0x400f00), 0, 0, 0, 0]]);
+  const a = imageModule(bytesAt(0x1000, parts));
+  const r = j(a.refs('0x400f00', null));
+  assert.deepEqual([r.pointers.length, r.truncated], [200, true]);
+});
+
+test('refs: of the instructions that could hold the bytes, the one that really refers to the target is taken', () => {
+  const target = 0x400200;
+  // 48 8d 15 <disp>: lea rdx, [rip + disp]. Its last five bytes also decode, as "adc eax, imm32".
+  const at = 0x410020;
+  const code = bytesAt(0x100, [[0x20, [0x48, 0x8d, 0x15, ...le32(target - (at + 7))]]]);
+  const a = imageModule(new Uint8Array(0x400).fill(0xff), code, { insns: {
+    0x410022: { size: 5, mnemonic: 'adc', opStr: 'eax, 0xfffe01d9' },
+    0x410020: { size: 7, mnemonic: 'lea', opStr: 'rdx, [rip - 0xfe27]' },
+  } });
+  assert.deepEqual(j(a.refs('0x400200', null)).code, [{ address: '0x410020', where: 'app.exe+0x10020', text: 'lea rdx, [rip - 0xfe27]' }]);
+  // A call or jump names its target outright.
+  const call = bytesAt(0x100, [[0x40, [0xe8, ...le32(0x410080 - (0x410040 + 5))]]]);
+  const b = imageModule(new Uint8Array(0x400).fill(0xff), call, { insns: { 0x410040: { size: 5, mnemonic: 'call', opStr: '0x410080' } } });
+  assert.deepEqual(j(b.refs('0x410080', null)).code.map((c) => c.text), ['call 0x410080']);
+  // Only the look-alike decodes: not a reference.
+  const c = imageModule(new Uint8Array(0x400).fill(0xff), code, { insns: { 0x410022: { size: 5, mnemonic: 'adc', opStr: 'eax, 0xfffe01d9' } } });
+  assert.deepEqual([j(c.refs('0x400200', null)).code.length, j(c.refs('0x400200', null)).unconfirmed], [0, 1]);
+});
+
+test('refs: 32-bit code names an address outright; such an instruction is listed as code, not as a pointer', () => {
+  // 68 <addr>: push 0x400200, at 0x410030. And a pointer in data.
+  const code = bytesAt(0x100, [[0x30, [0x68, ...le32(0x400200)]]]);
+  const data = bytesAt(0x400, [[0x80, le32(0x400200)]]);
+  const a = imageModule(data, code, { Process: { arch: 'ia32', pointerSize: 4 }, insns: { 0x410030: { size: 5, mnemonic: 'push', opStr: '0x400200' } } });
+  const r = j(a.refs('0x400200', null));
+  assert.deepEqual(r.code, [{ address: '0x410030', where: 'app.exe+0x10030', text: 'push 0x400200' }]);
+  assert.deepEqual(r.pointers, [{ address: '0x400080', where: 'app.exe+0x80' }]);
+});
+
+test('refs: when the same bytes decode with and without a prefix, the longer instruction is the one reported', () => {
+  // 48 8d 15 <disp> is "lea rdx, [rip+d]"; without the 48 it is "lea edx, [rip+d]", which also refers to the target.
+  const target = 0x400200;
+  const code = bytesAt(0x100, [[0x20, [0x48, 0x8d, 0x15, ...le32(target - 0x410027)]]]);
+  const a = imageModule(new Uint8Array(0x400).fill(0xff), code, { insns: {
+    0x410021: { size: 6, mnemonic: 'lea', opStr: 'edx, [rip - 0xfe27]' },
+    0x410020: { size: 7, mnemonic: 'lea', opStr: 'rdx, [rip - 0xfe27]' },
+  } });
+  assert.deepEqual(j(a.refs('0x400200', null)).code.map((c) => [c.address, c.text]), [['0x410020', 'lea rdx, [rip - 0xfe27]']]);
 });

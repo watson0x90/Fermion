@@ -62,7 +62,7 @@ export function AddressMenu() {
   const done = (fn: () => unknown) => () => { setRequest(null); fn(); };
 
   const copy = () => { try { navigator.clipboard?.writeText(address); } catch { /* clipboard unavailable */ } };
-  const open = (view: 'memory' | 'code' | 'watch' | 'heap') => dispatch(uiActions.openAddress({ view, address }));
+  const open = (view: 'memory' | 'code' | 'watch' | 'heap' | 'refs') => dispatch(uiActions.openAddress({ view, address }));
   const hook = async () => {
     try {
       // The target describes the address (module + offset, name) so the hook
@@ -150,6 +150,7 @@ export function AddressMenu() {
       <button role="menuitem" data-testid="addr-menu-memory" disabled={!isAttached} title={needsTarget} onClick={done(() => open('memory'))}>Open in Memory</button>
       <button role="menuitem" data-testid="addr-menu-code" disabled={!isAttached} title={needsTarget} onClick={done(() => open('code'))}>Open in Disassembly</button>
       <button role="menuitem" data-testid="addr-menu-hook" disabled={!isAttached} title={needsTarget} onClick={done(hook)}>Hook this address</button>
+      <button role="menuitem" data-testid="addr-menu-refs" disabled={!isAttached} title={needsTarget ?? 'The instructions and pointers in its module that refer to this address'} onClick={done(() => open('refs'))}>Find references</button>
       <button role="menuitem" data-testid="addr-menu-watch" disabled={!isAttached} title={needsTarget ?? 'See which code reads or writes the data at this address'} onClick={done(() => open('watch'))}>Watch reads and writes</button>
       <button role="menuitem" data-testid="addr-menu-heap" disabled={!isAttached} title={needsTarget ?? 'Which heap block is this address in, who allocated it and who freed it'} onClick={done(() => open('heap'))}>Find heap block</button>
       <button role="menuitem" data-testid="addr-menu-name" disabled={!isAttached} title={needsTarget ?? 'Give this address a name of your own. Every view then shows it.'} onClick={startNaming}>Name this address…</button>

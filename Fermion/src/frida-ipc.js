@@ -51,6 +51,10 @@ const INVOKE_METHODS = new Set([
 	'inspectHeapStop',
 	// Read-only: disassemble instructions at an address (validated, capped).
 	'inspectDisassemble',
+	// Read-only: a module's strings, and what in a module refers to an
+	// address (validated in the service; bounded in the agent).
+	'inspectStrings',
+	'inspectRefs',
 	// Roadmap — follow one thread with Stalker and count its calls.
 	'inspectFollow',
 	'inspectUnfollow',
