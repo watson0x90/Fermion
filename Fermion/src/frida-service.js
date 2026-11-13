@@ -228,6 +228,14 @@ function checkHeapAllocators(allocators) {
 	});
 }
 
+// How heap tracking takes call stacks: one of three words. Left out, the full way.
+const HEAP_STACKS = ['full', 'fast', 'none'];
+function checkHeapStacks(stacks) {
+	if (stacks === undefined || stacks === null) return 'full';
+	if (typeof stacks !== 'string' || !HEAP_STACKS.includes(stacks)) throw new Error('invalid heap stacks (expected full, fast or none)');
+	return stacks;
+}
+
 function checkHeapSizes(sizes) {
 	if (sizes === undefined || sizes === null) return { min: 0, max: 0 };
 	const bad = () => new Error('invalid heap sizes (expected { min, max } in bytes, max 0 for no limit)');
@@ -779,8 +787,8 @@ class FridaService extends EventEmitter {
 	// Record the blocks the program allocates and frees, with call stacks, and
 	// answer which block an address is or was in. Bounded in the agent (10
 	// minutes, 200,000 live blocks, the newest 20,000 freed ones).
-	async inspectHeapStart(sizes, allocators) {
-		return this._inspect('heapStart', checkHeapSizes(sizes), { ms: this._recordMs(), live: this._limits.heapLive, freed: this._limits.heapFreed }, checkHeapAllocators(allocators));
+	async inspectHeapStart(sizes, allocators, stacks) {
+		return this._inspect('heapStart', checkHeapSizes(sizes), { ms: this._recordMs(), live: this._limits.heapLive, freed: this._limits.heapFreed }, checkHeapAllocators(allocators), checkHeapStacks(stacks));
 	}
 	async inspectHeapStatus() { return this._inspect('heapStatus'); }
 	async inspectHeapFind(address) { return this._inspect('heapFind', checkAddress(address)); }

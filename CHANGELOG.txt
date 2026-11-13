@@ -244,3 +244,4 @@
 * Settings, Inspector: text size, in four sizes
 * Settings, Appearance: the arrow keys move between the theme cards
 * Inspector, Heap: Own allocators tracks a pool or arena allocator of the program's own, named as module!function or module+0xoffset with the argument that is the size and the one that is the block
+* Inspector, Heap: Call stacks can be Full (as before), Fast (no measurable slowdown; the first frames are right, later ones can be wrong, and the view says so) or None

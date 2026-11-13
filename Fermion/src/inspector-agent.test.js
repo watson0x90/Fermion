@@ -160,7 +160,7 @@ function load(over = {}) {
     Map, Number, String, parseInt,
     MemoryAccessMonitor: monitor,
     rpc: {}, Process, Memory, ptr: (v) => new Ptr(v),
-    Thread: { backtrace: (context, mode) => { if (mode === 'accurate' && over.accurateFails) throw new Error('no unwind info'); if (over.onBacktrace) over.onBacktrace(); return context && context.stack ? context.stack : [new Ptr(0x7ff123), new Ptr(0x500)]; } },
+    Thread: { backtrace: (context, mode) => { if (mode === 'accurate' && over.accurateFails) throw new Error('no unwind info'); if (over.onBacktrace) over.onBacktrace(mode); return context && context.stack ? context.stack : [new Ptr(0x7ff123), new Ptr(0x500)]; } },
     Backtracer: { ACCURATE: 'accurate', FUZZY: 'fuzzy' },
     DebugSymbol: { fromAddress: (a) => (a.v === 0x500n ? { address: a, name: null, moduleName: null } : { address: a, name: 'CreateFileW', moduleName: 'kernel32.dll' }) },
     JSON, Date: over.clock ? { now: over.clock } : Date, Uint8Array, Math, Promise,
@@ -964,12 +964,12 @@ function leave(a, name, ctx, ret = 0) {
   if (cbs.onLeave) cbs.onLeave.call(ctx, new Ptr(ret));
 }
 const run = (a, name, args, ret, tid, stack) => leave(a, name, enter(a, name, args, tid, stack), ret);
-const NO_BLOCKS = { tracking: false, endedBy: 'none', seconds: 0, min: 0, max: 0, functions: [], allocs: 0, frees: 0, live: 0, liveBytes: 0, freedKept: 0, overflow: false, siteCount: 0, sites: [] };
+const NO_BLOCKS = { tracking: false, endedBy: 'none', seconds: 0, min: 0, max: 0, functions: [], allocs: 0, frees: 0, live: 0, liveBytes: 0, freedKept: 0, overflow: false, siteCount: 0, sites: [], stacks: 'full' };
 
 test('heapStart: the allocator functions of the platform are hooked, and unhooked by heapStop', () => {
   const a = load();
   assert.deepEqual(j(a.heapStatus()), NO_BLOCKS);
-  assert.deepEqual(j(a.heapStart({ min: 0, max: 0 })), { tracking: true, functions: ['malloc', 'calloc', 'realloc', 'aligned_alloc', 'memalign', 'posix_memalign', 'free'], min: 0, max: 0, maxSeconds: 600, maxLive: 200000, maxFreed: 20000 });
+  assert.deepEqual(j(a.heapStart({ min: 0, max: 0 })), { tracking: true, functions: ['malloc', 'calloc', 'realloc', 'aligned_alloc', 'memalign', 'posix_memalign', 'free'], min: 0, max: 0, maxSeconds: 600, maxLive: 200000, maxFreed: 20000, stacks: 'full' });
   assert.deepEqual(Object.keys(a.hooked), ['malloc', 'calloc', 'realloc', 'aligned_alloc', 'memalign', 'posix_memalign', 'free']);
   // A C library without some of them (macOS has no memalign): the rest are hooked.
   assert.deepEqual(j(load({ missing: ['memalign', 'aligned_alloc'] }).heapStart({ min: 0, max: 0 })).functions, ['malloc', 'calloc', 'realloc', 'posix_memalign', 'free']);
@@ -1630,4 +1630,43 @@ test('heap, own allocators: a function that cannot be found, or is named twice o
     assert.equal(j(a.heapStatus()).tracking, false);
     assert.deepEqual(Object.keys(a.hooked), []);
   }
+});
+
+// ---- heap: how call stacks are taken ----
+test('heapStart: call stacks are taken the full way, the fast way, or not at all', () => {
+  let modes = [];
+  const seen = { onBacktrace: (m) => modes.push(m) };
+  const full = load(seen);
+  assert.equal(j(full.heapStart({ min: 0, max: 0 })).stacks, 'full');
+  run(full, 'malloc', [64], 0x900000, 11);
+  assert.deepEqual(modes, ['accurate']);
+  assert.equal(j(full.heapStatus()).stacks, 'full');
+
+  // Fast never asks for the accurate walk, so it works where that one fails too.
+  modes = [];
+  const fast = load({ ...seen, accurateFails: true });
+  assert.equal(j(fast.heapStart({ min: 0, max: 0 }, null, null, 'fast')).stacks, 'fast');
+  run(fast, 'malloc', [64], 0x900000, 11);
+  run(fast, 'free', [0x900000], 0, 12);
+  assert.deepEqual(modes, ['fuzzy', 'fuzzy']);
+  let f = j(fast.heapFind('0x900000'));
+  assert.ok(f.freed[0].frames.length > 0 && f.freed[0].freed.frames.length > 0);
+  assert.equal(j(fast.heapStatus()).stacks, 'fast');
+
+  // None walks nothing: the block is known, who made it is not.
+  modes = [];
+  const none = load(seen);
+  assert.equal(j(none.heapStart({ min: 0, max: 0 }, null, null, 'none')).stacks, 'none');
+  run(none, 'malloc', [64], 0x900000, 11);
+  run(none, 'malloc', [32], 0x900100, 11);
+  run(none, 'free', [0x900100], 0, 12);
+  assert.deepEqual(modes, []);
+  f = j(none.heapFind('0x900010'));
+  assert.deepEqual([f.live.size, f.live.frames], [64, []]);
+  assert.deepEqual(j(none.heapFind('0x900100')).freed[0].freed.frames, []);
+  const s = j(none.heapStatus());
+  assert.deepEqual([s.stacks, s.sites], ['none', [{ frames: [], blocks: 1, bytes: 64 }]]);
+
+  // A word that is not one of the three is the full way.
+  assert.equal(j(load().heapStart({ min: 0, max: 0 }, null, null, 'quick')).stacks, 'full');
 });

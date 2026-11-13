@@ -383,7 +383,11 @@ Things to know:
 
 - Who allocated and who freed a block is known only for blocks allocated while tracking runs. Start tracking before the step you are interested in.
 - Asking Windows takes a few hundredths of a second and holds each heap's lock while it is read, so the program's own allocations wait that long. Elsewhere than Windows there is no such list, and only recorded blocks are known.
-- Taking a call stack for every block slows a program that allocates a lot (node ran about five times slower here). Give a size range (**Blocks from … to … bytes**; both the same for one exact size) and the other sizes cost almost nothing.
+- Taking a full call stack for every block slows a program that allocates a lot (node ran three to five times slower here). There are two ways to keep it fast:
+  - Give a size range (**Blocks from … to … bytes**; both the same for one exact size) and the other sizes cost almost nothing.
+  - Change **Call stacks** from **Full** to **Fast**, which cost nothing that could be measured here. A fast stack is right about the first few frames (who called the allocator) and can have wrong frames mixed in further up, so a block found that way says so. This was measured on Windows only.
+
+  **None** takes no call stacks at all: an address is still matched to its block, with its size and whether it was freed, but not who allocated or freed it. The choice is remembered.
 - On Windows the hooks are on `RtlAllocateHeap`, `RtlReAllocateHeap` and `RtlFreeHeap` in `ntdll.dll`, which `HeapAlloc`, `malloc` and `operator new` all end up in. Elsewhere they are on `malloc`, `calloc`, `realloc` and `free`, and on `aligned_alloc`, `memalign` and `posix_memalign` where the C library has them. Memory from `VirtualAlloc` or `mmap` is not seen.
 - **Own allocators.** A program that hands out memory from a pool or an arena of its own does not ask the system for each block, so those blocks are not seen unless you name its functions. Open **Own allocators**, add one, and give:
   - the function that allocates, as `module!function`, or `module+0xoffset` for one without a name, and which of its arguments is the size. Its result is taken as the block;

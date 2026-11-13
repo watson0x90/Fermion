@@ -1400,3 +1400,56 @@ test('Heap: remembered allocators come back; removing the last one starts tracki
   for (let i = 0; i < 9; i++) if (!(screen.getByTestId('heap-own-add') as HTMLButtonElement).disabled) fireEvent.click(screen.getByTestId('heap-own-add'));
   localStorage.removeItem('fermion.heapAllocators');
 });
+
+// ---- heap: how call stacks are taken ----
+const stacksHeap = () => withHeap({ heapStart: vi.fn(async (sizes: any, _own: any, stacks: any) => ({ tracking: true, functions: ['malloc'], ...sizes, maxSeconds: 600, maxLive: 200000, maxFreed: 20000, stacks: stacks ?? 'full' })) });
+
+test('Heap: call stacks taken the fast way are asked for, remembered, and marked as approximate', async () => {
+  localStorage.removeItem('fermion.heapStacks');
+  setup();
+  stacksHeap();
+  open('heap');
+  expect(screen.getByTestId('heap-stacks')).toHaveValue('full');
+  fireEvent.change(screen.getByTestId('heap-stacks'), { target: { value: 'fast' } });
+  expect(localStorage.getItem('fermion.heapStacks')).toBe('fast');
+  fireEvent.click(screen.getByTestId('heap-toggle'));
+  await waitFor(() => expect(inspect.heapStart).toHaveBeenCalledWith({ min: 0, max: 0 }, [], 'fast'));
+  await waitFor(() => expect(screen.getByTestId('heap-status')).toHaveTextContent('trust the first frames'));
+  expect(screen.getByTestId('heap-status')).not.toHaveTextContent('slows a program');
+  expect(screen.getByTestId('heap-stacks')).toBeDisabled(); // not while tracking runs
+  fireEvent.change(screen.getByTestId('heap-address'), { target: { value: '0x900010' } });
+  fireEvent.click(screen.getByTestId('heap-find'));
+  await screen.findByTestId('heap-found');
+  expect(screen.getAllByTestId('heap-stack-note')).toHaveLength(2); // who allocated, who freed
+  expect(screen.getAllByTestId('heap-stack-note')[0]).toHaveTextContent('later ones can be wrong');
+  localStorage.removeItem('fermion.heapStacks');
+});
+
+test('Heap: with no call stacks the block is still found, and it says why nobody is named', async () => {
+  localStorage.setItem('fermion.heapStacks', 'none');
+  setup();
+  stacksHeap();
+  inspect.heapFind = vi.fn(async (address: string) => ({ address, tracking: true, live: { ...LIVE_BLOCK, frames: [] }, freed: [], freedTotal: 0 }));
+  open('heap');
+  expect(screen.getByTestId('heap-stacks')).toHaveValue('none');
+  fireEvent.click(screen.getByTestId('heap-toggle'));
+  await waitFor(() => expect(inspect.heapStart).toHaveBeenCalledWith({ min: 0, max: 0 }, [], 'none'));
+  await waitFor(() => expect(screen.getByTestId('heap-status')).toHaveTextContent('No call stacks are taken'));
+  fireEvent.change(screen.getByTestId('heap-address'), { target: { value: '0x900010' } });
+  fireEvent.click(screen.getByTestId('heap-find'));
+  await waitFor(() => expect(screen.getByTestId('heap-found')).toHaveTextContent('Call stacks were not taken'));
+  expect(screen.queryByTestId('heap-stack-note')).toBeNull();
+  localStorage.removeItem('fermion.heapStacks');
+});
+
+test('Heap: a remembered choice that is not one of the three is the full way, and Track then starts as before', async () => {
+  localStorage.setItem('fermion.heapStacks', 'quick');
+  setup();
+  stacksHeap();
+  open('heap');
+  expect(screen.getByTestId('heap-stacks')).toHaveValue('full');
+  fireEvent.click(screen.getByTestId('heap-toggle'));
+  await waitFor(() => expect(inspect.heapStart).toHaveBeenCalledWith({ min: 0, max: 0 }));
+  await waitFor(() => expect(screen.getByTestId('heap-status')).toHaveTextContent('set Call stacks to Fast'));
+  localStorage.removeItem('fermion.heapStacks');
+});
