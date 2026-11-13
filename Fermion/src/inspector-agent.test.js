@@ -20,6 +20,8 @@ class Ptr {
   not() { return new Ptr(~this.v & 0xffffffffffffffffn); }
   isNull() { return this.v === 0n; }
   readPointer() { return new Ptr(Ptr.pointers[this.toString()] ?? 0); }
+  readU32() { return Ptr.pointers[this.toString()] ?? 0; }
+  readU16() { return Ptr.pointers[this.toString()] ?? 0; }
   writeByteArray(bytes) {
     if (Ptr.unwritable) throw new Error('access violation');
     Ptr.writes.push([this.toString(), Array.from(bytes)]);
@@ -107,6 +109,7 @@ function load(over = {}) {
   });
   const Memory = {
     // Async scan: reports matches until the callback says 'stop'.
+    alloc: (n) => { const at = nextAlloc; nextAlloc += Math.ceil(n / 16) * 16 + 16; return new Ptr(at); },
     scan: (base, size, pattern, cb) => {
       scans.push([base.toString(), size]);
       const found = matchesFor(base, size, pattern); // may throw synchronously
@@ -129,8 +132,12 @@ function load(over = {}) {
   const exported = (name) => Object.assign(new Ptr(nextExport += 16), { exportName: name });
   const ALLOCATORS = ['malloc', 'calloc', 'realloc', 'free', 'aligned_alloc', 'memalign', 'posix_memalign', 'RtlAllocateHeap', 'RtlReAllocateHeap', 'RtlFreeHeap'].filter((n) => !(over.missing || []).includes(n));
   for (const m of mods()) if (!m.findExportByName) m.findExportByName = (n) => (!over.noAllocators && /^Rtl/.test(n) && m.name === 'ntdll.dll' ? exported(n) : null);
+  // kernel32's heap functions, when a test supplies them (over.winapi: name -> function).
+  kernel.findExportByName = (n) => (over.winapi && over.winapi[n] ? exported(n) : null);
+  let nextAlloc = 0x70000000;
   const ctx = vm.createContext({
     Interceptor: { attach: (address, cbs) => { const h = { cbs, detached: false }; hooked[address.exportName] = h; return { detach: () => { h.detached = true; } }; } },
+    NativeFunction: function (address) { return over.winapi[address.exportName]; },
     Module: { findGlobalExportByName: (n) => (!over.noAllocators && ALLOCATORS.includes(n) && !/^Rtl/.test(n) ? exported(n) : null) },
     ModuleMap: function () { this.update = () => {}; this.find = (a) => Process.findModuleByAddress(a); },
     Map, Number,
@@ -1270,4 +1277,94 @@ test('heap: aligned allocations are recorded too, whichever function made them',
   b.heapStart({ min: 1000, max: 0 });
   run(b, 'aligned_alloc', [64, 256], 0x930000);
   assert.equal(j(b.heapStatus()).allocs, 0);
+});
+
+// ---- finding a block by walking the Windows heaps ----
+// The four heap functions of kernel32, over heaps given as lists of entries
+// [address, size, flags] (flags: 4 busy, 1 region, 2 uncommitted, 0 free).
+function winHeaps(heaps, over = {}) {
+  const log = { locks: 0, unlocks: 0, walks: 0 };
+  const cursor = {};
+  const cell = (p, off = 0) => '0x' + (p.v + BigInt(off)).toString(16);
+  const winapi = {
+    GetProcessHeaps: (n, buf) => { const hs = Object.keys(heaps); hs.slice(0, n).forEach((h, i) => { Ptr.pointers[cell(buf, i * 8)] = Number(h); }); return hs.length; },
+    HeapLock: (h) => { log.locks++; return over.lockFails && over.lockFails.includes(Number(h.v)) ? 0 : 1; },
+    HeapUnlock: () => { log.unlocks++; return 1; },
+    HeapWalk: (h, e) => {
+      log.walks++;
+      if (over.walkThrows) throw new Error('access violation');
+      const key = Number(h.v);
+      const i = cursor[key] || 0;
+      // The first call for a heap has an entry whose data pointer is NULL.
+      const first = (Ptr.pointers[cell(e)] ?? 0) === 0;
+      const at = first ? 0 : i;
+      const entry = heaps[key][at];
+      if (!entry) { cursor[key] = 0; return 0; }
+      Ptr.pointers[cell(e)] = entry[0];
+      Ptr.pointers[cell(e, 8)] = entry[1];
+      Ptr.pointers[cell(e, 14)] = entry[2];
+      cursor[key] = at + 1;
+      return 1;
+    },
+  };
+  const a = load({ winapi, Process: { platform: 'windows', arch: 'x64', pointerSize: 8 }, ...(over.load || {}) });
+  return Object.assign(a, { log });
+}
+const HEAPS = {
+  0x1000000: [[0x1000000, 0x10000, 1], [0x1000100, 64, 4], [0x1000140, 200, 0], [0x1000300, 4660, 4]],
+  0x2000000: [[0x2000100, 24, 4], [0x2008000, 0x8000, 2]],
+};
+
+test('heapFind on Windows: with nothing tracked, the heaps are walked for the block', () => {
+  const a = winHeaps(HEAPS);
+  let f = j(a.heapFind('0x1000310'));
+  assert.deepEqual(f, { address: '0x1000310', tracking: false, live: null, freed: [], freedTotal: 0, system: { state: 'live', address: '0x1000300', size: 4660, offset: 16, timedOut: false } });
+  assert.equal(a.log.locks, 1);
+  assert.equal(a.log.unlocks, 1); // every lock is given back
+  f = j(a.heapFind('0x1000150'));
+  assert.deepEqual(f.system, { state: 'free', address: '0x1000140', size: 200, offset: 16, timedOut: false });
+  assert.equal(j(a.heapFind('0x2000117')).system.state, 'live');   // the last byte of a block in the second heap
+  assert.equal(j(a.heapFind('0x2000118')).system.state, 'none');   // one past it
+  assert.equal(j(a.heapFind('0x2009000')).system.state, 'none');   // uncommitted space is neither a block nor free memory
+  assert.equal(j(a.heapFind('0x1000050')).system.state, 'none');   // inside the region but in no entry of it
+  assert.equal(j(a.heapFind('0x5000000')).system.state, 'none');
+  assert.equal(a.log.locks, a.log.unlocks);
+});
+
+test('heapFind on Windows: a recorded live block needs no walk; anything else gets one beside what was recorded', () => {
+  const a = winHeaps(HEAPS, { load: { modules: [ntdll] } });
+  a.heapStart({ min: 0, max: 0 });
+  run(a, 'RtlAllocateHeap', [0x1000000, 0, 64], 0x1000100);
+  let f = j(a.heapFind('0x1000110'));
+  assert.equal(f.live.size, 64);
+  assert.equal(f.system, null);
+  assert.equal(a.log.walks, 0);
+  run(a, 'RtlFreeHeap', [0x1000000, 0, 0x1000100]);
+  f = j(a.heapFind('0x1000110'));
+  assert.equal(f.live, null);
+  assert.equal(f.freed.length, 1);
+  assert.equal(f.system.state, 'live'); // the fake heap still lists it: the walk is reported as it is
+  assert.equal(j(a.heapFind('0x1000310')).system.size, 4660); // a block from before tracking
+});
+
+test('heapFind: a heap that cannot be locked or walked is skipped; elsewhere than Windows there is no walk', () => {
+  const locked = winHeaps(HEAPS, { lockFails: [0x1000000] });
+  assert.equal(j(locked.heapFind('0x1000310')).system.state, 'none');
+  assert.equal(j(locked.heapFind('0x2000100')).system.state, 'live');
+  const broken = winHeaps(HEAPS, { walkThrows: true });
+  assert.deepEqual(j(broken.heapFind('0x1000310')).system, { state: 'none', address: null, size: 0, offset: 0, timedOut: false });
+  assert.equal(broken.log.locks, broken.log.unlocks);
+  const linux = load();
+  assert.throws(() => linux.heapFind('0x900000'), /Nothing has been tracked/);
+  linux.heapStart({ min: 0, max: 0 });
+  assert.equal(j(linux.heapFind('0x900000')).system, null);
+});
+
+test('heapFind: a walk that takes too long stops and says so', () => {
+  let now = 1000;
+  const many = { 0x1000000: Array.from({ length: 5000 }, (_, i) => [0x1000100 + i * 32, 16, 4]) };
+  const a = winHeaps(many, { load: { clock: () => (now += 2000) } }); // two seconds pass between looks at the clock
+  const s = j(a.heapFind('0x9999999')).system;
+  assert.deepEqual([s.state, s.timedOut], ['none', true]);
+  assert.equal(a.log.locks, a.log.unlocks);
 });

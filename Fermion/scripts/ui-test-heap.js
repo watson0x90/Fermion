@@ -64,10 +64,24 @@ const SETUP = String.raw`(function () {
     }
     await inTarget(SETUP);
 
-    step = 'track one size';
     await win.click('role=tab[name="Inspector"]');
     await win.click('[data-testid="insp-heap"]');
     await win.waitForSelector('[data-testid="heap-empty"]', T);
+
+    // Windows can be asked about an address with nothing tracked: it knows the block, not who made it.
+    let untrackedSeen = '';
+    if (process.platform === 'win32') {
+      step = 'nothing tracked: Windows names the block an address is in';
+      const old = await inTarget('__h.malloc(2457)');
+      await lookUp('0x' + (BigInt(old) + 0x20n).toString(16), /is inside a live block that was not recorded/, 'a block from before tracking was not found');
+      const sys = await text('heap-system');
+      if (!sys.includes('2,457 bytes at ' + old) || !sys.includes('byte +0x20')) throw new Error('the block as Windows lists it: ' + sys);
+      await inTarget('__h.free("' + old + '")');
+      untrackedSeen = await lookUp(old, /free right now|is not inside any block in use/, 'a freed block from before tracking is still called live');
+      if (await win.$('[data-testid="heap-block"]')) throw new Error('a call stack is shown for a block nothing was recorded about');
+    }
+
+    step = 'track one size';
     await win.fill('[data-testid="heap-min"]', '4660');
     await win.fill('[data-testid="heap-max"]', '4660');
     await win.click('[data-testid="heap-toggle"]');
@@ -83,11 +97,13 @@ const SETUP = String.raw`(function () {
     let got = await blocks();
     if (got.length !== 1 || got[0].kind !== 'live' || !got[0].text.includes('4,660 bytes at ' + p) || !got[0].text.includes('byte +0x10')) throw new Error('live block: ' + JSON.stringify(got));
     if (got[0].frames < 1) throw new Error('no call stack for the allocation');
-    await lookUp('0x' + (BigInt(p) + 4660n).toString(16), /is not inside any block/, 'one byte past the block was taken to be inside it');
+    // One byte past it is not in this block (it may be in the next one, which nothing was recorded about).
+    await lookUp('0x' + (BigInt(p) + 4660n).toString(16), /is not inside any block|was not recorded|free right now/, 'one byte past the block was taken to be inside it');
+    if ((await blocks()).length) throw new Error('one byte past the block shows a recorded block: ' + JSON.stringify(await blocks()));
 
     step = 'after free it is a use after free, with who freed it';
     await inTarget('__h.free("' + p + '")');
-    const verdict = await lookUp(inside, /has been freed/, 'the freed block was not found');
+    const verdict = await lookUp(inside, /has been freed|free right now/, 'the freed block was not found');
     if (!/use after free/.test(verdict)) throw new Error('verdict: ' + verdict);
     got = await blocks();
     if (got.length !== 1 || got[0].kind !== 'freed' || !/Allocated by thread \d+/.test(got[0].text) || !/Freed by thread \d+/.test(got[0].text)) throw new Error('freed block: ' + JSON.stringify(got));
@@ -104,9 +120,10 @@ const SETUP = String.raw`(function () {
     await win.click('[data-testid="heap-toggle"]');
     await win.waitForFunction(() => document.querySelector('[data-testid="heap-toggle"]').textContent === 'Track', undefined, T);
     if (!/Heap tracking \(exactly 4,660 bytes\): 1 allocated, 1 freed, 0 live/.test((await output()).replace(/\r?\n/g, ''))) throw new Error('the result was not announced');
-    await lookUp(inside, /has been freed/, 'the recording was lost at Stop');
+    await lookUp(inside, /has been freed|free right now/, 'the recording was lost at Stop');
+    if (!(await blocks()).some((b) => b.kind === 'freed')) throw new Error('the recording was lost at Stop');
     const untracked = await inTarget('__h.malloc(4660)'); // after Stop: not recorded
-    await lookUp(untracked, /has been freed|is not inside any block/, 'a block allocated after Stop was recorded');
+    await lookUp(untracked, /has been freed|is not inside any block|was not recorded/, 'a block allocated after Stop was recorded');
     if ((await blocks()).some((b) => b.kind === 'live')) throw new Error('a block allocated after Stop is shown as live');
 
     step = 'track every size: counts, places, realloc';
@@ -119,7 +136,8 @@ const SETUP = String.raw`(function () {
     if (small === big) throw new Error('the reallocation did not move the block');
     await lookUp(big, /is inside a live block/, 'the reallocated block was not found');
     if (!(await blocks())[0].text.includes('1,048,576 bytes at ' + big)) throw new Error('reallocated block: ' + JSON.stringify(await blocks()));
-    await lookUp(small, /freed/, 'the old block of the reallocation is not known as freed');
+    await lookUp(small, /freed|free right now|was not recorded/, 'the old block of the reallocation is not known as freed');
+    if (!(await blocks()).some((b) => b.kind === 'freed')) throw new Error('the old block of the reallocation is not listed as freed');
     await win.waitForFunction(() => { const m = /^([\d,]+) allocated/.exec(document.querySelector('[data-testid="heap-counts"]')?.textContent ?? ''); return !!m && Number(m[1].replace(/,/g, '')) > 5 && document.querySelectorAll('[data-testid="heap-site"]').length > 0; }, undefined, T);
     const counts = await text('heap-counts');
     const sites = await win.evaluate(() => document.querySelectorAll('[data-testid="heap-site"]').length);
@@ -135,7 +153,7 @@ const SETUP = String.raw`(function () {
     const after = await inTarget('__h.malloc(64)');
     if (!/^0x[0-9a-f]+$/.test(after)) throw new Error('the target cannot allocate after detaching mid-tracking: ' + after);
 
-    console.log('HEAP_OK one size tracked + live block found from an inner address, with its call stack + one past the end is outside + freed block called a use after free, with who freed it + address menu looks up + stop keeps the record + every size: ' + counts + ', ' + sites + ' places + realloc moves the block + detach mid-tracking leaves the target unharmed');
+    console.log('HEAP_OK ' + (untrackedSeen ? 'nothing tracked: Windows names a live block and then says: ' + untrackedSeen.replace(/^0x[0-9a-f]+ /, '').split('.')[0] + ' + ' : '') + 'one size tracked + live block found from an inner address, with its call stack + one past the end is outside + freed block called a use after free, with who freed it + address menu looks up + stop keeps the record + every size: ' + counts + ', ' + sites + ' places + realloc moves the block + detach mid-tracking leaves the target unharmed');
     await app.close();
     done(0);
   } catch (e) {

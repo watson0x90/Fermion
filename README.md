@@ -370,11 +370,18 @@ Either way only data can be watched: code is refused (hook it instead), and so i
 - **Inside a live block whose memory belonged to blocks freed earlier**: the allocator has handed the memory out again, so a pointer kept from before now reaches the new block. Both the new block and the freed ones are shown.
 - **Not inside any recorded block**: it was allocated before tracking began, is outside the size range, or is not heap memory.
 
+On Windows, an address nothing was recorded about is also put to Windows itself, which lists the blocks of its heaps. That works with no tracking at all, so **Find block** can be used straight after attaching:
+
+- **Inside a live block that was not recorded**: its size and start, but no call stack, since nobody was watching when it was allocated.
+- **In heap memory that is free right now**: a pointer to it is stale. If the block was freed while tracking ran, who freed it is shown as above.
+- **Not inside any block in use**: not heap memory, or a small block that was freed (Windows does not always list those as free space).
+
 While tracking runs the view also lists the places that hold the most live memory, each named by its nearest callers outside the allocator, which is a quick way to see what is growing.
 
 Things to know:
 
-- Only blocks allocated while tracking runs are known. Start tracking before the step you are interested in.
+- Who allocated and who freed a block is known only for blocks allocated while tracking runs. Start tracking before the step you are interested in.
+- Asking Windows takes a few hundredths of a second and holds each heap's lock while it is read, so the program's own allocations wait that long. Elsewhere than Windows there is no such list, and only recorded blocks are known.
 - Taking a call stack for every block slows a program that allocates a lot (node ran about five times slower here). Give a size range (**Blocks from … to … bytes**; both the same for one exact size) and the other sizes cost almost nothing.
 - On Windows the hooks are on `RtlAllocateHeap`, `RtlReAllocateHeap` and `RtlFreeHeap` in `ntdll.dll`, which `HeapAlloc`, `malloc` and `operator new` all end up in. Elsewhere they are on `malloc`, `calloc`, `realloc` and `free`, and on `aligned_alloc`, `memalign` and `posix_memalign` where the C library has them. Memory from `VirtualAlloc` or `mmap`, and a program's own pool allocator carving up one big block, are not seen.
 - Tracking stops by itself after 10 minutes. Up to 200,000 live blocks are recorded and the newest 20,000 freed ones are kept; the view says when a limit was reached. What was recorded can be looked up until tracking is started again or the session ends.

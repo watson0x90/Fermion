@@ -1068,7 +1068,7 @@ test('Heap: Track starts with any size by default, or the range typed in; counts
   withHeap();
   open('heap');
   expect(screen.getByTestId('heap-empty')).toHaveTextContent('which block an address is in');
-  expect(screen.getByTestId('heap-find')).toBeDisabled(); // nothing tracked yet
+  expect(screen.getByTestId('heap-find')).toBeDisabled(); // no address yet
   fireEvent.change(screen.getByTestId('heap-min'), { target: { value: 'x' } });
   expect(screen.getByTestId('heap-toggle')).toBeDisabled();
   fireEvent.change(screen.getByTestId('heap-min'), { target: { value: '64' } });
@@ -1138,15 +1138,14 @@ test('Heap: memory handed out again, a live block, and an unknown address each g
   await waitFor(() => expect(screen.getByTestId('heap-error')).toHaveTextContent('Nothing has been tracked yet'));
 });
 
-test('Heap: an address sent from the address menu opens the view and is looked up once something is tracked', async () => {
+test('Heap: an address sent from the address menu opens the view and is looked up', async () => {
   const store = setup();
   withHeap();
   act(() => { store.dispatch(uiActions.openAddress({ view: 'heap', address: '0x900010' })); });
   await waitFor(() => expect(screen.getByTestId('insp-heap')).toHaveAttribute('aria-selected', 'true'));
   expect(screen.getByTestId('heap-address')).toHaveValue('0x900010');
-  expect(inspect.heapFind).not.toHaveBeenCalled(); // nothing tracked yet
-  fireEvent.click(screen.getByTestId('heap-toggle'));
-  await waitFor(() => expect(screen.getByTestId('heap-status')).toBeInTheDocument());
+  // Looked up at once, tracked or not: on Windows the heaps themselves can answer.
+  await waitFor(() => expect(inspect.heapFind).toHaveBeenCalledWith('0x900010'));
   act(() => { store.dispatch(uiActions.openAddress({ view: 'heap', address: '0x900020' })); });
   await waitFor(() => expect(inspect.heapFind).toHaveBeenCalledWith('0x900020'));
 });
@@ -1170,4 +1169,41 @@ test('Watch: where every access can be counted the view says so; the page trap c
   await waitFor(() => expect(inspect.watchStart).toHaveBeenLastCalledWith('0x500010', 8, 'sampled'));
   await waitFor(() => expect(screen.getByTestId('watch-status')).toHaveTextContent('sampled'));
   expect(screen.getByTestId('watch-status')).not.toHaveTextContent('could not be watched exactly');
+});
+
+test('Heap: with nothing recorded about an address, what Windows itself says about it is shown', async () => {
+  setup();
+  const sys = (state: string, extra: any = {}) => ({ state, address: state === 'none' ? null : '0x900000', size: state === 'none' ? 0 : 4660, offset: state === 'none' ? 0 : 16, timedOut: false, ...extra });
+  const answer = (system: any, freed: any[] = []) => { inspect.heapFind = vi.fn(async (address: string) => ({ address, tracking: false, live: null, freed, freedTotal: freed.length, system })); };
+  withHeap();
+  open('heap');
+  fireEvent.change(screen.getByTestId('heap-address'), { target: { value: '0x900010' } });
+  expect(screen.getByTestId('heap-find')).not.toBeDisabled(); // no tracking needed to ask
+
+  answer(sys('live'));
+  fireEvent.click(screen.getByTestId('heap-find'));
+  await waitFor(() => expect(screen.getByTestId('heap-verdict')).toHaveTextContent('0x900010 is inside a live block that was not recorded'));
+  expect(screen.getByTestId('heap-system')).toHaveTextContent('4,660 bytes at 0x900000; the address is byte +0x10');
+  expect(screen.getByTestId('heap-verdict')).toHaveTextContent('no call stack is known');
+
+  answer(sys('free'));
+  fireEvent.click(screen.getByTestId('heap-find'));
+  await waitFor(() => expect(screen.getByTestId('heap-verdict')).toHaveTextContent('is in heap memory that is free right now'));
+  expect(screen.getByTestId('heap-verdict')).toHaveTextContent('use after free');
+  expect(screen.getByTestId('heap-verdict')).toHaveTextContent('freed before tracking began');
+
+  answer(sys('free'), [FREED_BLOCK]);
+  fireEvent.click(screen.getByTestId('heap-find'));
+  await waitFor(() => expect(screen.getByTestId('heap-block')).toBeInTheDocument());
+  expect(screen.getByTestId('heap-verdict')).toHaveTextContent('is in heap memory that is free right now');
+  expect(screen.getByTestId('heap-verdict')).not.toHaveTextContent('before tracking began');
+
+  answer(sys('none'));
+  fireEvent.click(screen.getByTestId('heap-find'));
+  await waitFor(() => expect(screen.getByTestId('heap-verdict')).toHaveTextContent('is not inside any block in use'));
+  expect(screen.queryByTestId('heap-system')).toBeNull();
+
+  answer(sys('none', { timedOut: true }));
+  fireEvent.click(screen.getByTestId('heap-find'));
+  await waitFor(() => expect(screen.getByTestId('heap-verdict')).toHaveTextContent('could not all be walked in time'));
 });
