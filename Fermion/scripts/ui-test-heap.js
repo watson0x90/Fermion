@@ -76,8 +76,17 @@ const SETUP = String.raw`(function () {
       await lookUp('0x' + (BigInt(old) + 0x20n).toString(16), /is inside a live block that was not recorded/, 'a block from before tracking was not found');
       const sys = await text('heap-system');
       if (!sys.includes('2,457 bytes at ' + old) || !sys.includes('byte +0x20')) throw new Error('the block as Windows lists it: ' + sys);
-      await inTarget('__h.free("' + old + '")');
-      untrackedSeen = await lookUp(old, /free right now|is not inside any block in use/, 'a freed block from before tracking is still called live');
+      // The target may hand a freed address out again before it is looked up, and it is then
+      // rightly called live: only a block still called live on every try is a failure.
+      for (let tries = 4, gone = old; ; gone = await inTarget('__h.malloc(2457)')) {
+        await inTarget('__h.free("' + gone + '")');
+        try {
+          untrackedSeen = await lookUp(gone, /free right now|is not inside any block in use/, 'a freed block from before tracking is still called live');
+          break;
+        } catch (e) {
+          if (--tries === 0) throw e;
+        }
+      }
       if (await win.$('[data-testid="heap-block"]')) throw new Error('a call stack is shown for a block nothing was recorded about');
     }
 
