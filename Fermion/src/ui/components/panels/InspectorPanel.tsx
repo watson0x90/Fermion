@@ -6,16 +6,18 @@ import { MemoryTab, Goto } from './inspector/MemoryTab';
 import { CoverageTab } from './inspector/CoverageTab';
 import { WatchTab } from './inspector/WatchTab';
 import { HeapTab } from './inspector/HeapTab';
+import { RefsTab } from './inspector/RefsTab';
 import { ThreadsTab } from './inspector/ThreadsTab';
 import { CodeTab } from './inspector/CodeTab';
 import { BookmarksTab } from './inspector/BookmarksTab';
 
-type Sub = 'modules' | 'memory' | 'code' | 'threads' | 'coverage' | 'watch' | 'heap' | 'bookmarks';
+type Sub = 'modules' | 'memory' | 'code' | 'threads' | 'refs' | 'coverage' | 'watch' | 'heap' | 'bookmarks';
 const SUBS: { id: Sub; label: string }[] = [
   { id: 'modules', label: 'Modules' },
   { id: 'memory', label: 'Memory' },
   { id: 'code', label: 'Disassembly' },
   { id: 'threads', label: 'Threads' },
+  { id: 'refs', label: 'References' },
   { id: 'coverage', label: 'Coverage' },
   { id: 'watch', label: 'Watch' },
   { id: 'heap', label: 'Heap' },
@@ -82,6 +84,7 @@ export function InspectorPanel() {
           <div className="insp-slot" hidden={sub !== 'coverage'}><CoverageTab active={panelActive && sub === 'coverage'} /></div>
           <div className="insp-slot" hidden={sub !== 'watch'}><WatchTab goto={gotoFor('watch')} /></div>
           <div className="insp-slot" hidden={sub !== 'heap'}><HeapTab goto={gotoFor('heap')} /></div>
+          <div className="insp-slot" hidden={sub !== 'refs'}><RefsTab goto={gotoFor('refs')} onOpen={openAddress} /></div>
         </div>
       )}
     </div>

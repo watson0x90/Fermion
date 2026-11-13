@@ -41,7 +41,7 @@ test('evaluate (REPL) is allow-listed and forwards its code argument', async () 
 });
 
 test('the Inspector operations are allow-listed, and only inspectWrite writes bytes', async () => {
-  const names = ['inspectModules', 'inspectExports', 'inspectImports', 'inspectThreads', 'inspectBacktrace', 'inspectRanges', 'inspectRead', 'inspectScan', 'inspectFollow', 'inspectUnfollow', 'inspectDisassemble'];
+  const names = ['inspectModules', 'inspectExports', 'inspectImports', 'inspectThreads', 'inspectBacktrace', 'inspectRanges', 'inspectRead', 'inspectScan', 'inspectFollow', 'inspectUnfollow', 'inspectDisassemble', 'inspectStrings', 'inspectRefs'];
   const svc = {};
   for (const n of names) svc[n] = async (...a) => [n, ...a];
   const dispatch = createDispatch(svc);

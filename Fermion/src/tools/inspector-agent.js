@@ -967,6 +967,170 @@
 		};
 	}
 
+	// ---- strings and references ----
+	// The strings of a module, and what refers to an address: the two usual
+	// ways into a program nothing is known about. Both only read the module's
+	// memory, a megabyte at a time, and both are bounded in time and in how
+	// much they return.
+	var STR_CHUNK = 1 << 20;
+	var STR_OVERLAP = 512;         // a string that starts near the end of a chunk is read into the next
+	var MAX_STRINGS = 2000;        // strings returned
+	var MAX_STRING_CHARS = 200;    // characters returned of one string
+	var MAX_STRINGS_MS = 8000;
+	var MAX_REFS = 200;            // references returned of each kind
+	var MAX_REFS_MS = 10000;
+
+	function printable(c) { return c >= 0x20 && c < 0x7f; }
+
+	// query: { text, min }. -> { module, items: [{ address, where, kind, length, text }], total, truncated, scanned, timedOut }
+	function moduleStrings(name, query) {
+		var m = moduleByName(name);
+		var min = query && query.min > 0 ? Math.floor(query.min) : 5;
+		var needle = query && query.text ? String(query.text).toLowerCase() : '';
+		var started = Date.now();
+		var items = [];
+		var total = 0, scanned = 0, timedOut = false;
+
+		function found(address, kind, length, bytes, from, step) {
+			var n = Math.min(length, MAX_STRING_CHARS);
+			var text = '';
+			for (var i = 0; i < n; i++) text += String.fromCharCode(bytes[from + i * step]);
+			if (needle && text.toLowerCase().indexOf(needle) < 0) return;
+			total++;
+			if (items.length < MAX_STRINGS) items.push({ address: hex(address), where: where(address), kind: kind, length: length, text: text });
+		}
+
+		var ranges = m.enumerateRanges('r--');
+		for (var r = 0; r < ranges.length && !timedOut; r++) {
+			var range = ranges[r];
+			if (range.protection.charAt(2) === 'x') continue; // code: its bytes spell things by accident
+			// A run that reaches the end of a chunk is finished in the next one:
+			// each chunk is read a little past its end, and runs only start inside it.
+			var asciiOpen = false, wideOpen = false;
+			for (var off = 0; off < range.size; off += STR_CHUNK) {
+				var body = Math.min(STR_CHUNK, range.size - off);
+				var n = Math.min(body + STR_OVERLAP, range.size - off);
+				var bytes;
+				try { bytes = new Uint8Array(range.base.add(off).readByteArray(n)); } catch (e) { asciiOpen = wideOpen = false; continue; }
+				scanned += body;
+				var i = 0;
+				if (asciiOpen) { while (i < n && printable(bytes[i])) i++; } // the rest of a run already reported
+				while (i < body) {
+					if (!printable(bytes[i])) { i++; continue; }
+					var start = i;
+					while (i < n && printable(bytes[i])) i++;
+					if (i - start >= min) found(range.base.add(off + start), 'ascii', i - start, bytes, start, 1);
+				}
+				asciiOpen = i >= body && body < n && printable(bytes[body - 1]) && printable(bytes[body]);
+				// UTF-16, little endian, characters that are ASCII: a printable byte then a zero byte.
+				var k = 0;
+				if (wideOpen) { while (k + 1 < n && bytes[k + 1] === 0 && printable(bytes[k])) k += 2; }
+				while (k + 1 < body + 1 && k < body) {
+					if (!(bytes[k + 1] === 0 && printable(bytes[k]))) { k += 2; continue; }
+					var ws = k;
+					while (k + 1 < n && bytes[k + 1] === 0 && printable(bytes[k])) k += 2;
+					if ((k - ws) / 2 >= min) found(range.base.add(off + ws), 'utf16', (k - ws) / 2, bytes, ws, 2);
+				}
+				wideOpen = k >= body && body + 1 < n && bytes[body + 1] === 0 && printable(bytes[body]) && body >= 2 && bytes[body - 1] === 0 && printable(bytes[body - 2]);
+				if (Date.now() - started > MAX_STRINGS_MS) { timedOut = true; break; }
+			}
+		}
+		// The two kinds are found in separate passes over each chunk: put them in address order.
+		items.sort(function (x, y) { return parseInt(x.address, 16) - parseInt(y.address, 16); });
+		return { module: m.name, items: items, total: total, truncated: total > items.length, scanned: scanned, timedOut: timedOut };
+	}
+
+	// An address as the bytes of a pointer in memory (little endian), for Memory.scan.
+	function pointerPattern(p) {
+		var digits = p.toString(16);
+		while (digits.length < Process.pointerSize * 2) digits = '0' + digits;
+		var out = [];
+		for (var i = digits.length - 2; i >= 0; i -= 2) out.push(digits.substr(i, 2));
+		return out.join(' ');
+	}
+
+	// The instruction that holds the four bytes at `at` as (the end of) its
+	// operand, with `after` bytes of immediate following them, and that
+	// really refers to `target`. Several starts before `at` can decode to an
+	// instruction ending in the right place (the tail of `lea rdx, [rip+d]`
+	// is also `adc eax, imm32`): only one that names the target, or reaches
+	// it relative to the instruction pointer, is a reference.
+	// -> the instruction, or null. (Short jumps inside a function, with a
+	// one-byte distance, are not looked for.)
+	function instructionHolding(at, after, target) {
+		var end = at.add(4 + after);
+		var named = '0x' + target.toString(16);
+		var best = null;
+		for (var back = 1; back <= 11; back++) {
+			try {
+				var insn = Instruction.parse(at.sub(back));
+				if (insn.next.compare(end) !== 0) continue;
+				var operands = String(insn.opStr || '').toLowerCase();
+				// The longest that fits: the same bytes without their prefix decode too.
+				if (operands.indexOf('rip') >= 0 || operands.indexOf(named) >= 0) best = insn;
+			} catch (e) { /* not an instruction start */ }
+		}
+		return best;
+	}
+
+	// What refers to an address inside one module: pointers to it (in data and
+	// in code), and x86 instructions that reach it relative to themselves
+	// (calls, jumps, and on 64-bit every lea/mov of a global or a string).
+	function moduleRefs(address, name) {
+		var target = ptr(address);
+		var m = name ? moduleByName(name) : Process.findModuleByAddress(target);
+		if (!m) throw new Error(hex(target) + ' is not inside a module. Name the module to search.');
+		var started = Date.now();
+		var pointers = [], code = [];
+		var truncated = false, timedOut = false, unconfirmed = 0;
+		var ranges = m.enumerateRanges('r--');
+		var pattern = pointerPattern(target);
+		for (var r = 0; r < ranges.length; r++) {
+			var hits;
+			try { hits = Memory.scanSync(ranges[r].base, ranges[r].size, pattern); } catch (e) { continue; }
+			var inCode = ranges[r].protection.charAt(2) === 'x';
+			for (var h = 0; h < hits.length; h++) {
+				// In code, the address is the operand of an instruction (32-bit
+				// code names addresses outright): list the instruction.
+				var holder = null;
+				if (inCode) {
+					var gaps = [0, 1, 2, 4];
+					for (var g = 0; g < gaps.length && !holder; g++) holder = instructionHolding(hits[h].address, gaps[g] + Process.pointerSize - 4, target);
+				}
+				if (holder) {
+					if (code.length >= MAX_REFS) { truncated = true; continue; }
+					code.push({ address: hex(holder.address), where: where(holder.address), text: holder.mnemonic + (holder.opStr ? ' ' + holder.opStr : '') });
+					continue;
+				}
+				if (pointers.length >= MAX_REFS) { truncated = true; break; }
+				pointers.push({ address: hex(hits[h].address), where: where(hits[h].address) });
+			}
+		}
+		var relative = Process.arch === 'x64' || Process.arch === 'ia32';
+		var targetNumber = parseInt(target.toString(16), 16);
+		for (var x = 0; relative && x < ranges.length && !timedOut; x++) {
+			if (ranges[x].protection.charAt(2) !== 'x') continue;
+			for (var off = 0; off < ranges[x].size; off += STR_CHUNK) {
+				var n = Math.min(STR_CHUNK + 3, ranges[x].size - off);
+				var bytes;
+				try { bytes = new Uint8Array(ranges[x].base.add(off).readByteArray(n)); } catch (e) { continue; }
+				var chunkBase = ranges[x].base.add(off);
+				// A displacement d at index i refers to: chunk + i + 4 + (bytes of immediate after it) + d.
+				var want = targetNumber - parseInt(chunkBase.toString(16), 16) - 4;
+				for (var i = 0; i + 3 < n; i++) {
+					var gap = want - i - (bytes[i] | (bytes[i + 1] << 8) | (bytes[i + 2] << 16) | (bytes[i + 3] << 24));
+					if (gap !== 0 && gap !== 1 && gap !== 2 && gap !== 4) continue;
+					var insn = instructionHolding(chunkBase.add(i), gap, target);
+					if (!insn) { unconfirmed++; continue; }
+					if (code.length >= MAX_REFS) { truncated = true; continue; }
+					code.push({ address: hex(insn.address), where: where(insn.address), text: insn.mnemonic + (insn.opStr ? ' ' + insn.opStr : '') });
+				}
+				if (Date.now() - started > MAX_REFS_MS) { timedOut = true; break; }
+			}
+		}
+		return { address: hex(target), module: m.name, pointers: pointers, code: code, relative: relative, unconfirmed: unconfirmed, truncated: truncated, timedOut: timedOut };
+	}
+
 	// ---- asking Windows which block an address is in ----
 	// Windows can list the entries of its heaps (HeapWalk): the blocks in use
 	// and the free space between them. That answers for an address nothing
@@ -1053,6 +1217,10 @@
 	}
 
 	rpc.exports = {
+		strings: function (name, query) { return moduleStrings(name, query); },
+
+		refs: function (address, name) { return moduleRefs(address, name); },
+
 		// sizes: { min, max } in bytes; max 0 means no upper limit.
 		heapStart: function (sizes) {
 			if (heapTracking()) throw new Error('The heap is already being tracked. Stop that first.');

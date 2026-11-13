@@ -121,6 +121,10 @@ function buildApi(ipcRenderer) {
 			// bytes: hex pairs. Resolves to what was there before (`original`).
 			write: (address, bytes) => invoke('inspectWrite', address, bytes),
 			disassemble: (address, count) => invoke('inspectDisassemble', address, count),
+			// query: { text, min }. Strings of a module that contain `text`.
+			strings: (moduleName, query) => invoke('inspectStrings', moduleName, query),
+			// What refers to an address, in its own module or the one named.
+			refs: (address, moduleName) => (moduleName ? invoke('inspectRefs', address, moduleName) : invoke('inspectRefs', address)),
 			follow: (threadId, scope) => invoke('inspectFollow', threadId, scope),
 			unfollow: () => invoke('inspectUnfollow'),
 			// Coverage: threads is 'all' or a thread id. Save asks the operator

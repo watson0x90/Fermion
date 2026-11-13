@@ -1188,3 +1188,31 @@ test('the heap tracking calls are on the allow-list the window can call', () => 
   const { INVOKE_METHODS } = require('./frida-ipc.js');
   for (const m of ['inspectHeapStart', 'inspectHeapStatus', 'inspectHeapFind', 'inspectHeapStop']) assert.ok(INVOKE_METHODS.has(m), m);
 });
+
+// ---- strings and references ----
+test('strings and references: module, search text, minimum length and address are validated in main', async () => {
+  const { svc } = attachedService();
+  const calls = [];
+  const agent = { exports: {
+    strings: async (...a) => { calls.push(['strings', ...a]); return { total: 0 }; },
+    refs: async (...a) => { calls.push(['refs', ...a]); return { code: [] }; },
+  } };
+  svc._getAgent = async () => agent;
+  await svc.attach(1);
+  for (const bad of [undefined, null, '', 5, {}]) await assert.rejects(() => svc.inspectStrings(bad, { text: '', min: 5 }), /module/i);
+  for (const bad of ['text', 5, [], { text: 5 }, { text: 'x'.repeat(101) }, { min: 3 }, { min: 65 }, { min: 4.5 }, { min: '5' }]) await assert.rejects(() => svc.inspectStrings('app.exe', bad), /string search/);
+  for (const bad of ['400200', 0x400200, null, undefined]) await assert.rejects(() => svc.inspectRefs(bad), /invalid address/);
+  for (const bad of [5, {}, []]) await assert.rejects(() => svc.inspectRefs('0x400200', bad), /module/i);
+  assert.equal(calls.length, 0);
+  await svc.inspectStrings('app.exe');
+  await svc.inspectStrings('app.exe', { text: 'Config', min: 8, junk: 1 });
+  await svc.inspectRefs('0x40ABC0');
+  await svc.inspectRefs('0x40ABC0', null);
+  await svc.inspectRefs('0x40ABC0', 'app.exe');
+  assert.deepEqual(calls, [['strings', 'app.exe', { text: '', min: 5 }], ['strings', 'app.exe', { text: 'Config', min: 8 }], ['refs', '0x40abc0', null], ['refs', '0x40abc0', null], ['refs', '0x40abc0', 'app.exe']]);
+});
+
+test('the strings and references calls are on the allow-list the window can call', () => {
+  const { INVOKE_METHODS } = require('./frida-ipc.js');
+  for (const m of ['inspectStrings', 'inspectRefs']) assert.ok(INVOKE_METHODS.has(m), m);
+});

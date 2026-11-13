@@ -5,7 +5,7 @@ export type ToolboxTab = 'editor' | 'repl' | 'hooks' | 'graph' | 'tree' | 'inspe
 
 // "Show this address": which Inspector view, and a counter so asking for the
 // same address twice is still a new request.
-export type AddressView = 'memory' | 'code' | 'watch' | 'heap';
+export type AddressView = 'memory' | 'code' | 'watch' | 'heap' | 'refs';
 export interface AddressRequest { view: AddressView; address: string; n: number; }
 
 export interface UiState {

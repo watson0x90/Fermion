@@ -598,6 +598,12 @@ input.mini.heap-size:focus, input.mini.heap-address:focus { border-color: var(--
 .heap-stack-head { padding: 5px 12px 2px; font-size: 11px; color: var(--muted); }
 .heap-frame { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); padding-left: 22px; }
 .heap-cols { display: grid; grid-template-columns: minmax(0, 1fr) 64px 76px; column-gap: 10px; align-items: center; }
+input.mini.refs-address, input.mini.refs-module { height: 26px; font-size: 11.5px; color: var(--fg); background: var(--elev); border: 1px solid var(--border); border-radius: 6px; padding: 0 7px; outline: 0; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+input.mini.refs-address { flex: 0 1 200px; min-width: 120px; }
+input.mini.refs-module { flex: 0 1 130px; min-width: 90px; }
+input.mini.refs-address:focus, input.mini.refs-module:focus { border-color: var(--accent); }
+.refs-cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1.4fr) 132px; column-gap: 10px; align-items: center; }
+.refs-tab .insp-row { cursor: pointer; }
 .watch-tab .ptool select { max-width: 190px; }
 .watch-near { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .watch-stack { flex: 0 1 auto; max-height: 45%; overflow: auto; border-top: 1px solid var(--border); background: var(--panel); }
