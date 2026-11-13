@@ -228,3 +228,4 @@
 * Inspector, Heap: track allocations and frees with their call stacks, then look an address up to see the block it is in, who allocated it and who freed it (use after free, memory handed out again). A size range keeps a busy program fast; the places holding the most live memory are listed
 * Inspector, Watch: on Windows a few aligned bytes are now watched exactly, with hardware watchpoints: every access is counted and system calls on the memory keep working. Larger or unaligned ranges, and other systems, are sampled as before; the view says which and why
 * Inspector, Heap: aligned allocations (aligned_alloc, memalign, posix_memalign) are tracked on Linux and macOS
+* Inspector, Heap: on Windows an address nothing was recorded about is looked up in the heaps themselves, with or without tracking: a live block from before tracking is found with its size, and memory that is free right now is called that

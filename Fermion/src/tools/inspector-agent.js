@@ -967,6 +967,87 @@
 		};
 	}
 
+	// ---- asking Windows which block an address is in ----
+	// Windows can list the entries of its heaps (HeapWalk): the blocks in use
+	// and the free space between them. That answers for an address nothing
+	// was recorded about: a block from before tracking began, or memory that
+	// is free right now. It says nothing about who allocated or freed it.
+	var MAX_WALK_MS = 3000;   // a walk gives up after this long
+	var MAX_WALK_HEAPS = 256;
+	var HEAP_ENTRY_BUSY = 4, HEAP_REGION = 1, HEAP_UNCOMMITTED = 2;
+	var winHeap; // the four functions, null where they are not to be had; undefined until looked for
+
+	function winHeapApi() {
+		if (winHeap !== undefined) return winHeap;
+		winHeap = null;
+		if (Process.platform !== 'windows') return null;
+		try {
+			var k32 = Process.findModuleByName('kernel32.dll');
+			if (!k32) return null;
+			var abi = Process.pointerSize === 4 ? 'stdcall' : 'default';
+			var get = function (name, ret, args) {
+				var address = k32.findExportByName(name);
+				if (!address) throw new Error(name + ' not found');
+				return new NativeFunction(address, ret, args, abi);
+			};
+			winHeap = {
+				heaps: get('GetProcessHeaps', 'uint32', ['uint32', 'pointer']),
+				lock: get('HeapLock', 'int', ['pointer']),
+				unlock: get('HeapUnlock', 'int', ['pointer']),
+				walk: get('HeapWalk', 'int', ['pointer', 'pointer']),
+			};
+		} catch (e) {
+			winHeap = null;
+		}
+		return winHeap;
+	}
+
+	// -> { state: 'live' | 'free' | 'none', address, size, offset, timedOut },
+	// or null where the heaps cannot be walked (not Windows).
+	function heapWalk(p) {
+		var api = winHeapApi();
+		if (!api) return null;
+		var P = Process.pointerSize;
+		var result = { state: 'none', address: null, size: 0, offset: 0, timedOut: false };
+		var started = Date.now();
+		var seen = 0;
+		try {
+			var list = Memory.alloc(P * MAX_WALK_HEAPS);
+			var count = Math.min(api.heaps(MAX_WALK_HEAPS, list), MAX_WALK_HEAPS);
+			for (var h = 0; h < count; h++) {
+				var heapHandle = list.add(h * P).readPointer();
+				// PROCESS_HEAP_ENTRY, zeroed: lpData, cbData (u32), cbOverhead (u8),
+				// iRegionIndex (u8), wFlags (u16), then a union.
+				var entry = Memory.alloc(P === 8 ? 40 : 28);
+				if (!api.lock(heapHandle)) continue; // other threads wait for this heap meanwhile: be quick
+				try {
+					while (api.walk(heapHandle, entry)) {
+						var flags = entry.add(P + 6).readU16();
+						if (!(flags & (HEAP_REGION | HEAP_UNCOMMITTED))) {
+							var data = entry.readPointer();
+							var size = entry.add(P).readU32();
+							if (p.compare(data) >= 0 && p.compare(data.add(size > 0 ? size : 1)) < 0) {
+								result.state = (flags & HEAP_ENTRY_BUSY) ? 'live' : 'free';
+								result.address = hex(data);
+								result.size = size;
+								result.offset = num(p.sub(data));
+								return result;
+							}
+						}
+						if ((++seen & 1023) === 0 && Date.now() - started > MAX_WALK_MS) { result.timedOut = true; return result; }
+					}
+				} catch (e) {
+					// A damaged heap can fault under the walk: leave it and go on to the next.
+				} finally {
+					api.unlock(heapHandle);
+				}
+			}
+		} catch (e) {
+			// Nothing to report beyond "not found".
+		}
+		return result;
+	}
+
 	function heapHolds(block, p) {
 		return p.compare(block.a) >= 0 && p.compare(block.a.add(block.size > 0 ? block.size : 1)) < 0;
 	}
@@ -1009,11 +1090,18 @@
 		},
 
 		// The block an address is in now, and the freed blocks it was in
-		// before (newest first). Works on what the last tracking recorded.
+		// before (newest first), from what the last tracking recorded. For an
+		// address not in a recorded live block, Windows is asked as well
+		// (`system`): that works with nothing tracked at all.
 		heapFind: function (address) {
-			if (!heap) throw new Error('Nothing has been tracked yet. Start tracking first.');
-			var state = heap;
 			var p = ptr(address);
+			if (!heap) {
+				// Nothing recorded: on Windows the heaps themselves can still be asked.
+				var asked = heapWalk(p);
+				if (asked === null) throw new Error('Nothing has been tracked yet. Start tracking first.');
+				return { address: hex(p), tracking: false, live: null, freed: [], freedTotal: 0, system: asked };
+			}
+			var state = heap;
 			var live = null;
 			state.live.forEach(function (block) { if (live === null && heapHolds(block, p)) live = block; });
 			var found = [];
@@ -1026,7 +1114,8 @@
 				total++;
 				if (found.length < MAX_HEAP_FOUND) found.push(heapBlock(state, block, p));
 			}
-			return { address: hex(p), tracking: !state.endedBy, live: live ? heapBlock(state, live, p) : null, freed: found, freedTotal: total };
+			// A block that was recorded and is live needs no second opinion.
+			return { address: hex(p), tracking: !state.endedBy, live: live ? heapBlock(state, live, p) : null, freed: found, freedTotal: total, system: live ? null : heapWalk(p) };
 		},
 
 		// Watch `size` bytes at `address`: exactly where that is possible,

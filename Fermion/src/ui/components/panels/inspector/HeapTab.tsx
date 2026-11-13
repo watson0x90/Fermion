@@ -12,7 +12,9 @@ export interface HeapStatus {
   allocs: number; frees: number; live: number; liveBytes: number; freedKept: number; overflow: boolean; siteCount: number; sites: Site[];
 }
 export interface HeapBlock { address: string; size: number; offset: number; thread: number; at: number; frames: Frame[]; freed: { thread: number; at: number; frames: Frame[] } | null; }
-export interface HeapFound { address: string; tracking: boolean; live: HeapBlock | null; freed: HeapBlock[]; freedTotal: number; }
+// What Windows itself says about the address, from a walk of its heaps.
+export interface HeapSystem { state: 'live' | 'free' | 'none'; address: string | null; size: number; offset: number; timedOut: boolean; }
+export interface HeapFound { address: string; tracking: boolean; live: HeapBlock | null; freed: HeapBlock[]; freedTotal: number; system?: HeapSystem | null; }
 interface Started { tracking: boolean; functions: string[]; min: number; max: number; maxSeconds: number; maxLive: number; maxFreed: number; }
 
 const MAX_SIZE = 0xffffffff;
@@ -53,7 +55,20 @@ export function heapVerdict(f: HeapFound): string {
     return `${f.address} is inside a live block. The same memory belonged to ${plural(f.freedTotal, 'block')} freed earlier: a pointer kept from before now reaches the new block.`;
   }
   if (f.live) return `${f.address} is inside a live block.`;
+  const sys = f.system ?? null;
+  if (sys?.state === 'live') {
+    return `${f.address} is inside a live block that was not recorded: it was allocated before tracking began or is outside the size range, so no call stack is known.`
+      + (f.freed.length ? ` The same memory belonged to ${plural(f.freedTotal, 'recorded block')} freed earlier.` : '');
+  }
+  if (sys?.state === 'free') {
+    return `${f.address} is in heap memory that is free right now. A pointer to it is stale: using it is a use after free.`
+      + (f.freed.length ? '' : ' The block it was in was freed before tracking began, so who freed it is not known.');
+  }
   if (f.freed.length) return `${f.address} is inside a block that has been freed. Using it now is a use after free.`;
+  if (sys) {
+    return `${f.address} is not inside any block in use.`
+      + (sys.timedOut ? ' The heaps could not all be walked in time, so this is not certain.' : ' It may not be heap memory at all, or it may be a small block that was freed: those are not always listed as free space.');
+  }
   return `${f.address} is not inside any block recorded since tracking began. Blocks allocated before that, or outside the size range, are not known.`;
 }
 
@@ -99,12 +114,9 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
   const [found, setFound] = useState<HeapFound | null>(null);
   const trackingRef = useRef(false);
   trackingRef.current = started !== null;
-  const knownRef = useRef(false);
-  knownRef.current = started !== null || status !== null;
 
   const sizes = parseHeapSizes(minText, maxText);
   const parsed = parseAddress(address.trim());
-  const known = started !== null || status !== null; // something has been recorded to ask about
 
   const find = async (at: string | null) => {
     if (!at) return;
@@ -117,13 +129,13 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
     }
   };
 
-  // An address handed over from the address menu: look it up if there is anything to look in.
+  // An address handed over from the address menu: look it up.
   const findRef = useRef(find);
   findRef.current = find;
   useEffect(() => {
     if (!goto) return;
     setAddress(goto.address);
-    if (knownRef.current) findRef.current(parseAddress(goto.address));
+    findRef.current(parseAddress(goto.address));
   }, [goto?.n]); // keyed on the hand-off counter only
 
   const finish = (s: HeapStatus) => {
@@ -203,8 +215,8 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
       </div>
       <div className="ptool">
         <input className="mini heap-address" data-testid="heap-address" aria-label="Address to find the block of" placeholder="address to look up, e.g. 0x1d2f2c68010" spellCheck={false} value={address}
-          onChange={(e) => setAddress(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && parsed && known) find(parsed); }} />
-        <button className="pill" data-testid="heap-find" disabled={!parsed || !known} title={known ? 'Which block is this address in, or was it in?' : 'Track the heap first'} onClick={() => find(parsed)}>Find block</button>
+          onChange={(e) => setAddress(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && parsed) find(parsed); }} />
+        <button className="pill" data-testid="heap-find" disabled={!parsed} title="Which block is this address in, or was it in?" onClick={() => find(parsed)}>Find block</button>
       </div>
 
       {error && <div className="insp-note err" role="alert" data-testid="heap-error">{error}</div>}
@@ -218,10 +230,11 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
       {ended === 'limit' && <div className="insp-note" data-testid="heap-ended">Tracking stopped at its time limit. What was recorded can still be looked up.</div>}
       {status?.overflow && <div className="insp-note err" data-testid="heap-overflow">More than {n(started?.maxLive ?? 200000)} blocks were live at once: later ones were not recorded. Give a size range.</div>}
 
-      {!known && !error && (
+      {!started && !status && !found && !error && (
         <div className="insp-empty big" data-testid="heap-empty">
           Find out which block an address is in, who allocated it and who freed it. Press Track, use the program, then look an address up
-          (or right-click one anywhere and choose Find heap block). Only blocks allocated while tracking runs are known.
+          (or right-click one anywhere and choose Find heap block). Who allocated and freed a block is known only for blocks allocated while tracking runs;
+          on Windows an address can be looked up without tracking, and you are told the block it is in.
         </div>
       )}
 
@@ -229,6 +242,15 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
         {found && (
           <div className="heap-found" data-testid="heap-found">
             <div className={'heap-verdict' + (!found.live && found.freed.length ? ' uaf' : '')} data-testid="heap-verdict">{heapVerdict(found)}</div>
+            {found.system && found.system.state !== 'none' && !found.live && (
+              <div className="heap-block" data-testid="heap-system">
+                <div className="heap-block-head">
+                  <span className={'tag ' + (found.system.state === 'live' ? 'live' : 'freed')}>{found.system.state === 'live' ? 'live' : 'free'}</span>
+                  <span>{plural(found.system.size, 'byte')} at <span className="mono" {...addrMenu(found.system.address)}>{found.system.address}</span>; the address is byte +0x{found.system.offset.toString(16)}</span>
+                  <span className="dim">as Windows lists it now</span>
+                </div>
+              </div>
+            )}
             {found.live && <Block block={found.live} kind="live" />}
             {found.freed.map((b, i) => <Block key={i + b.address + b.at} block={b} kind="freed" />)}
             {found.freedTotal > found.freed.length && <div className="insp-empty">{n(found.freedTotal - found.freed.length)} older freed blocks at this address are not shown.</div>}
