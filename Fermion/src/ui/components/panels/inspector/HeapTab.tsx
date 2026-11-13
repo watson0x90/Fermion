@@ -4,6 +4,7 @@ import { inspectApi } from '../../../inspector/useInspect';
 import { addrMenu } from '../../../addressMenu';
 import { writeTerminal } from '../../../bridge';
 import { Goto } from './MemoryTab';
+import { useNames, NameIndex } from '../../../names';
 
 interface Frame { address: string | null; where: string; symbol: string; }
 interface Site { frames: Frame[]; blocks: number; bytes: number; }
@@ -72,14 +73,16 @@ export function heapVerdict(f: HeapFound): string {
   return `${f.address} is not inside any block recorded since tracking began. Blocks allocated before that, or outside the size range, are not known.`;
 }
 
-const frameName = (f: Frame) => f.symbol || f.where;
+// The operator's name for the place, else the target's symbol, else where it is.
+const frameName = (names: NameIndex, f: Frame) => names.show(f.where, f.address, f.symbol);
 
 function Frames({ title, frames }: { title: string; frames: Frame[] }) {
+  const names = useNames();
   return (
     <div className="heap-stack">
       <div className="heap-stack-head">{title}</div>
       {frames.map((f, i) => (
-        <div key={i + (f.address ?? '')} className="insp-row heap-frame" data-testid="heap-frame" {...addrMenu(f.address)}><span className="nm">{frameName(f)}</span><span className="nm mono dim">{f.address}</span></div>
+        <div key={i + (f.address ?? '')} className="insp-row heap-frame" data-testid="heap-frame" {...addrMenu(f.address)}><span className="nm">{frameName(names, f)}</span><span className="nm mono dim">{f.address}</span></div>
       ))}
       {!frames.length && <div className="insp-empty">No call stack could be taken.</div>}
     </div>
@@ -104,6 +107,7 @@ function Block({ block, kind }: { block: HeapBlock; kind: 'live' | 'freed' }) {
 // question behind a use after free: who allocated this, who freed it, and has
 // the memory been handed out again?
 export function HeapTab({ goto }: { goto: Goto | null }) {
+  const names = useNames();
   const [minText, setMinText] = useState('');
   const [maxText, setMaxText] = useState('');
   const [started, setStarted] = useState<Started | null>(null);
@@ -260,8 +264,8 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
           <div className="heap-sites">
             <div className="insp-head heap-cols" aria-hidden="true"><span>Live memory was allocated by</span><span className="num">Blocks</span><span className="num">Bytes</span></div>
             {status.sites.map((s, i) => (
-              <div key={i + (s.frames[0]?.address ?? '')} className="insp-row heap-cols" data-testid="heap-site" title={s.frames.map(frameName).join('  <  ')} {...addrMenu(s.frames[0]?.address)}>
-                <span className="nm">{s.frames.length ? s.frames.map(frameName).join('  <  ') : '(no call stack)'}</span>
+              <div key={i + (s.frames[0]?.address ?? '')} className="insp-row heap-cols" data-testid="heap-site" title={s.frames.map((f) => frameName(names, f)).join('  <  ')} {...addrMenu(s.frames[0]?.address)}>
+                <span className="nm">{s.frames.length ? s.frames.map((f) => frameName(names, f)).join('  <  ') : '(no call stack)'}</span>
                 <span className="num mono">{n(s.blocks)}</span>
                 <span className="num mono dim">{fmtSize(s.bytes)}</span>
               </div>

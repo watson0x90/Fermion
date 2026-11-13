@@ -1225,3 +1225,35 @@ test('the Inspector views start from the preferences: coverage scope, watch mode
   open('threads');
   expect(screen.getByTestId('thr-auto')).toHaveAttribute('title', expect.stringContaining('every 7 seconds'));
 });
+
+// ---- names the operator gave to addresses ----
+test('a named address is shown by its name in a backtrace and in a memory watch, in place of the symbol', async () => {
+  const store = setup();
+  withWatch();
+  act(() => { store.dispatch(bookmarksActions.added({ id: 'n1', label: 'my_sleep', module: 'kernelbase.dll', offset: 0xc2900, address: '0x7fff933f2900', view: 'code', note: '' })); });
+  act(() => { store.dispatch(bookmarksActions.added({ id: 'n2', label: 'copy_settings', module: 'ntdll.dll', offset: 0x31234, address: '0x7fff96101234', view: 'code', note: '' })); });
+  open('threads');
+  fireEvent.click(await screen.findByTestId('thr-row-5156'));
+  const rows = await screen.findAllByTestId('bt-row');
+  expect(rows[0]).toHaveTextContent('my_sleep+0x4f'); // KERNELBASE.dll+0xc294f, which the target called KERNELBASE.dll!Sleep
+  expect(rows[0]).not.toHaveTextContent('KERNELBASE.dll!Sleep');
+  expect(rows[1]).toHaveTextContent('0x500'); // nothing named there: as before
+  open('watch');
+  fireEvent.change(screen.getByTestId('watch-address'), { target: { value: '0x500010' } });
+  fireEvent.click(screen.getByTestId('watch-toggle'));
+  expect(await screen.findByTestId('watch-row')).toHaveTextContent('copy_settings'); // ntdll.dll+0x31234 exactly
+  expect(screen.getByTestId('watch-row')).not.toHaveTextContent('memcpy');
+});
+
+test('Disassembly: the heading gives the name of a named place and, after it, what the target calls it', async () => {
+  const store = setup();
+  inspect.disassemble = vi.fn(async (address: string) => ({ address, next: '0x7ff62c711008', stopped: '', where: 'node.exe+0x1000', symbol: 'node.exe!uv_fs_stat', protection: 'r-x',
+    items: [{ address, size: 4, bytes: '90909090', text: 'nop', kind: '', target: null, targetName: '' }, { address: '0x7ff62c711004', size: 4, bytes: 'e8000000', text: 'call 0x7ff62c711040', kind: 'call', target: '0x7ff62c711040', targetName: 'node.exe!uv_fs_stat' }] }));
+  act(() => { store.dispatch(uiActions.openAddress({ view: 'code', address: '0x7ff62c711000' })); });
+  await waitFor(() => expect(screen.getByTestId('code-where')).toHaveTextContent('node.exe!uv_fs_stat · r-x'));
+  expect(screen.queryByTestId('code-label')).toBeNull();
+  act(() => { store.dispatch(bookmarksActions.added({ id: 'n1', label: 'stat entry', module: 'node.exe', offset: 0x1000, address: '0x7ff62c711000', view: 'code', note: '' })); });
+  expect(screen.getByTestId('code-where')).toHaveTextContent('stat entry · node.exe!uv_fs_stat · r-x');
+  expect(screen.getByTestId('code-label')).toHaveTextContent('stat entry:');
+  expect(screen.getByTestId('code-target')).toHaveTextContent('stat entry+0x40'); // a call to a place just after the named one
+});

@@ -4,6 +4,7 @@ import { inspectApi } from '../../../inspector/useInspect';
 import { addrMenu } from '../../../addressMenu';
 import { writeTerminal } from '../../../bridge';
 import { usePrefs } from '../../../store/prefsSlice';
+import { useNames } from '../../../names';
 import { Goto } from './MemoryTab';
 
 interface Frame { address: string; where: string; symbol: string; }
@@ -43,6 +44,7 @@ export function WatchTab({ goto }: { goto: Goto | null }) {
   const [address, setAddress] = useState('');
   const [size, setSize] = useState('8');
   const prefs = usePrefs();
+  const names = useNames();
   const [mode, setMode] = useState<WatchMode>(prefs.watchMode);
   const [started, setStarted] = useState<Started | null>(null);
   const [result, setResult] = useState<WatchResult | null>(null);
@@ -180,7 +182,7 @@ export function WatchTab({ goto }: { goto: Goto | null }) {
               <div key={placeKey(p)} className={'insp-row watch-cols' + (placeKey(p) === selected ? ' sel' : '')} role="option" aria-selected={placeKey(p) === selected} tabIndex={0} data-testid="watch-row"
                 title={p.from} onClick={() => setSelected(placeKey(p))} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSelected(placeKey(p)); } }} {...addrMenu(p.from)}>
                 <span className={'op ' + p.op}>{p.op}</span>
-                <span className="nm">{p.symbol || p.where}</span>
+                <span className="nm">{names.show(p.where, p.from, p.symbol)}</span>
                 <span className="num mono">{n(p.hits)}{showNear && p.near ? ' + ' + n(p.near) : ''}</span>
                 <span className="nm mono dim">{p.last ?? ''}</span>
                 <span className="nm dim">{p.threads.join(', ')}</span>
@@ -195,7 +197,7 @@ export function WatchTab({ goto }: { goto: Goto | null }) {
                 Call stack of the first {picked.op} from <span className="mono" {...addrMenu(picked.from)}>{picked.where}</span>
               </div>
               {picked.frames.map((f, i) => (
-                <div key={i + f.address} className="insp-row watch-frame" data-testid="watch-frame" {...addrMenu(f.address)}><span className="nm">{f.symbol || f.where}</span><span className="nm mono dim">{f.address}</span></div>
+                <div key={i + f.address} className="insp-row watch-frame" data-testid="watch-frame" {...addrMenu(f.address)}><span className="nm">{names.show(f.where, f.address, f.symbol)}</span><span className="nm mono dim">{f.address}</span></div>
               ))}
               {!picked.frames.length && <div className="insp-empty">No call stack was taken for this place: it only touched other bytes of the page.</div>}
             </div>

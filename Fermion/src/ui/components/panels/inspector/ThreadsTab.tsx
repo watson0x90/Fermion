@@ -6,6 +6,7 @@ import { inspectApi, useInspect, Listing } from '../../../inspector/useInspect';
 import { FollowItem, FollowModule, FollowMode, FollowScope, scopeText } from '../../../inspector/follow';
 import { FollowResults } from './FollowResults';
 import { usePrefs } from '../../../store/prefsSlice';
+import { useNames } from '../../../names';
 
 interface Thr { id: number; name: string; state: string; pc: string | null; where: string; registers: Record<string, string>; }
 
@@ -18,6 +19,7 @@ interface Frame { address: string; where: string; symbol: string; }
 export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMemory: (address: string) => void }) {
   const [auto, setAuto] = useState(false);
   const prefs = usePrefs();
+  const names = useNames();
   const threads = useInspect<Listing<Thr>>(() => inspectApi().threads(), 'threads', active, auto ? prefs.autoRefreshSeconds * 1000 : 0);
   const [selected, setSelected] = useState<number | null>(null);
   const thread = threads.data?.items.find((t) => t.id === selected) ?? null;
@@ -204,7 +206,7 @@ export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMe
               {(trace.data?.items ?? []).map((f, i) => (
                 <div className="frame" key={f.address + i} data-testid="bt-row">
                   <span className="fi">{i}</span>
-                  <button className="fsym mono" title={`${f.address} · ${f.where} — open in the Memory tab (right-click for more)`} {...addrMenu(f.address)} onClick={() => onViewMemory(f.address)}>{f.symbol || f.where}</button>
+                  <button className="fsym mono" title={`${f.address} · ${f.where} — open in the Memory tab (right-click for more)`} {...addrMenu(f.address)} onClick={() => onViewMemory(f.address)}>{names.show(f.where, f.address, f.symbol)}</button>
                 </div>
               ))}
             </div>

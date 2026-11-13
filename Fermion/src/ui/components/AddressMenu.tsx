@@ -20,9 +20,11 @@ export function AddressMenu() {
   const bookmarks = useAppSelector((s) => s.bookmarks?.items ?? []);
   const [request, setRequest] = useState<MenuRequest | null>(null);
   const [pos, setPos] = useState({ left: 0, top: 0 });
+  // Naming: the place being named and the text typed so far (null: not naming).
+  const [naming, setNaming] = useState<{ target: Target; label: string } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
-  useEffect(() => onAddressMenu(setRequest), []);
+  useEffect(() => onAddressMenu((r) => { setNaming(null); setRequest(r); }), []);
 
   // Closing: a click elsewhere, Escape, scrolling, resizing, losing focus.
   useEffect(() => {
@@ -96,7 +98,34 @@ export function AddressMenu() {
     }
   };
 
+  // A name is a bookmark's label: every view then shows it for this address.
+  const startNaming = async () => {
+    try {
+      const found = await api().hooks.search('exports', address);
+      const target: Target | undefined = found?.items?.[0];
+      if (!target) throw new Error('Nothing is known about ' + address);
+      const existing = bookmarks.find((b) => samePlace(b, target));
+      setNaming({ target, label: existing ? existing.label : '' });
+    } catch (e) {
+      setRequest(null);
+      writeTerminal('ERR', '[!] Could not name ' + address + ': ' + cleanIpcError(e));
+    }
+  };
+  const saveName = () => {
+    if (!naming) return;
+    const label = naming.label.trim();
+    const { target } = naming;
+    setNaming(null);
+    setRequest(null);
+    if (!label) return;
+    const existing = bookmarks.find((b) => samePlace(b, target));
+    if (existing) dispatch(bookmarksActions.changed({ id: existing.id, label }));
+    else dispatch(bookmarksActions.added({ id: newBookmarkId(), label, module: target.module, offset: target.offset, address: target.address, view: 'code', note: '' }));
+    writeTerminal('STATUS', '[+] ' + address + ' is now shown as ' + label);
+  };
+
   const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (naming) return; // typing a name: the arrows belong to the field
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
     e.preventDefault();
     const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>('button:not(:disabled)') ?? [])];
@@ -108,13 +137,25 @@ export function AddressMenu() {
   return (
     <div className="addr-menu" role="menu" aria-label={'Address ' + address} data-testid="addr-menu" ref={ref} style={pos} onKeyDown={onKey}>
       <div className="addr-menu-head mono">{address}</div>
+      {naming && (
+        <div className="addr-menu-name">
+          <input data-testid="addr-menu-name-input" aria-label={'Name for ' + address} placeholder="name, e.g. parse_packet" spellCheck={false} maxLength={200} autoFocus value={naming.label}
+            onChange={(e) => setNaming({ ...naming, label: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveName(); } }} />
+          <button data-testid="addr-menu-name-save" onClick={saveName}>Save</button>
+        </div>
+      )}
+      {!naming && (
+      <>
       <button role="menuitem" data-testid="addr-menu-copy" onClick={done(copy)}>Copy address</button>
       <button role="menuitem" data-testid="addr-menu-memory" disabled={!isAttached} title={needsTarget} onClick={done(() => open('memory'))}>Open in Memory</button>
       <button role="menuitem" data-testid="addr-menu-code" disabled={!isAttached} title={needsTarget} onClick={done(() => open('code'))}>Open in Disassembly</button>
       <button role="menuitem" data-testid="addr-menu-hook" disabled={!isAttached} title={needsTarget} onClick={done(hook)}>Hook this address</button>
       <button role="menuitem" data-testid="addr-menu-watch" disabled={!isAttached} title={needsTarget ?? 'See which code reads or writes the data at this address'} onClick={done(() => open('watch'))}>Watch reads and writes</button>
       <button role="menuitem" data-testid="addr-menu-heap" disabled={!isAttached} title={needsTarget ?? 'Which heap block is this address in, who allocated it and who freed it'} onClick={done(() => open('heap'))}>Find heap block</button>
+      <button role="menuitem" data-testid="addr-menu-name" disabled={!isAttached} title={needsTarget ?? 'Give this address a name of your own. Every view then shows it.'} onClick={startNaming}>Name this address…</button>
       <button role="menuitem" data-testid="addr-menu-bookmark" disabled={!isAttached} title={needsTarget} onClick={done(bookmark)}>Bookmark</button>
+      </>
+      )}
     </div>
   );
 }

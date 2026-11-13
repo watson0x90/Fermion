@@ -9,6 +9,8 @@ interface Insn { address: string; size: number; bytes: string; text: string; kin
 interface Listing { address: string; next: string; stopped: string; where: string; symbol: string; protection: string; items: Insn[]; }
 
 const CHUNK = 60;       // instructions per request
+import { useNames, parseWhere, nameText } from '../../../names';
+
 const MAX_SHOWN = 2000; // instructions kept in one listing
 
 const STOPPED: Record<string, string> = {
@@ -28,6 +30,34 @@ export function CodeTab({ goto }: { goto: Goto | null }) {
   const [history, setHistory] = useState<string[]>([]); // where Back goes
   const request = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
+  // Names the operator gave to addresses. The listing says where its first
+  // instruction is (module + offset); any other address of that module
+  // follows from it, which is how an instruction or a call target is matched.
+  const names = useNames();
+  const place = listing ? parseWhere(listing.where) : null;
+  const whereOf = (address: string | null): string | null => {
+    if (!place || !listing || !address || !names.size) return null;
+    try {
+      const offset = BigInt(address) - BigInt(listing.address) + BigInt(place.offset);
+      return offset >= 0n ? `${place.module}+0x${offset.toString(16)}` : null;
+    } catch { return null; }
+  };
+  // The operator's name for where the listing starts, then what the target calls it.
+  const heading = (l: Listing): string => {
+    const theirs = l.symbol || l.where;
+    const named = names.find(l.where, l.address);
+    return named ? `${nameText(named)} · ${theirs}` : theirs;
+  };
+  const labelAt = (address: string): string => {
+    if (!names.size) return '';
+    const n = names.find(whereOf(address), address);
+    return n && n.delta === 0 ? n.label : '';
+  };
+  const targetLabel = (target: string | null): string => {
+    if (!names.size || !target) return '';
+    const n = names.find(whereOf(target), target);
+    return n ? nameText(n) : '';
+  };
 
   const load = async (address: string, from: Listing | null) => {
     const id = ++request.current;
@@ -93,7 +123,7 @@ export function CodeTab({ goto }: { goto: Goto | null }) {
         </span>
         <button className="pill" data-testid="code-go" onClick={go}>Go</button>
         <span className="grow" />
-        {listing && <span className="count" data-testid="code-where" title={listing.where}>{listing.symbol || listing.where} · {listing.protection}</span>}
+        {listing && <span className="count" data-testid="code-where" title={listing.where}>{heading(listing)} · {listing.protection}</span>}
       </div>
       {inputError && <div className="insp-note err" role="alert">{inputError}</div>}
       {error && <div className="insp-note err" role="alert" data-testid="code-error">{error}</div>}
@@ -102,6 +132,8 @@ export function CodeTab({ goto }: { goto: Goto | null }) {
       <div className="code-list mono" ref={listRef} data-testid="code-list">
         {(listing?.items ?? []).map((i) => (
           <div className={'code-row' + (i.kind ? ' k-' + i.kind : '')} key={i.address} data-testid="code-row">
+            {/* A name the operator gave this very instruction is shown above it, like a label. */}
+            {labelAt(i.address) && <span className="clabel" data-testid="code-label">{labelAt(i.address)}:</span>}
             <span className="ca" {...addrMenu(i.address)} tabIndex={0} title="Right-click for the address menu">{i.address}</span>
             <span className="cb">{i.bytes}</span>
             <span className="ct">
@@ -115,7 +147,7 @@ export function CodeTab({ goto }: { goto: Goto | null }) {
                   onClick={() => show(i.target as string, true)}
                   {...addrMenu(i.target)}
                 >
-                  <Icon name="chevron" size={10} />{i.targetName || i.target}
+                  <Icon name="chevron" size={10} />{targetLabel(i.target) || i.targetName || i.target}
                 </button>
               )}
             </span>
