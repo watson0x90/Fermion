@@ -1343,3 +1343,60 @@ test('References: another module can be named; limits, a missing module and an e
   fireEvent.click(screen.getByTestId('refs-find'));
   await waitFor(() => expect(screen.getByTestId('refs-error')).toHaveTextContent('is not inside a module. Name the module to search.'));
 });
+
+// ---- heap: allocators of the program's own ----
+test('Heap: an allocator of the program\'s own is named, checked, remembered, and tracking starts with it', async () => {
+  localStorage.removeItem('fermion.heapAllocators');
+  setup();
+  withHeap();
+  open('heap');
+  expect(screen.queryByTestId('heap-own')).toBeNull();
+  fireEvent.click(screen.getByTestId('heap-own-toggle'));
+  expect(screen.getByTestId('heap-own')).toHaveTextContent('a pool or an arena of its own');
+  fireEvent.click(screen.getByTestId('heap-own-add'));
+  // A row that is not finished holds tracking back, and says why once something is typed.
+  expect(screen.getByTestId('heap-toggle')).toBeDisabled();
+  expect(screen.getByTestId('heap-own-pending')).toBeInTheDocument();
+  fireEvent.change(screen.getByTestId('heap-own-alloc'), { target: { value: 'pool_alloc' } });
+  expect(screen.getByTestId('heap-own-wrong')).toHaveTextContent('module!function or module+0xoffset');
+  fireEvent.change(screen.getByTestId('heap-own-alloc'), { target: { value: ' game.dll!pool_alloc ' } });
+  expect(screen.queryByTestId('heap-own-wrong')).toBeNull();
+  expect(screen.getByTestId('heap-own-pointer')).toBeDisabled(); // nothing frees yet
+  fireEvent.change(screen.getByTestId('heap-own-size'), { target: { value: '1' } });
+  fireEvent.change(screen.getByTestId('heap-own-free'), { target: { value: 'game.dll+4f20' } });
+  expect(screen.getByTestId('heap-own-wrong')).toHaveTextContent('Write the freeing function as');
+  fireEvent.change(screen.getByTestId('heap-own-free'), { target: { value: 'game.dll+0x4f20' } });
+  fireEvent.change(screen.getByTestId('heap-own-pointer'), { target: { value: '1' } });
+  expect(screen.getByTestId('heap-own-toggle')).toHaveTextContent('Own allocators (1)');
+  expect(JSON.parse(localStorage.getItem('fermion.heapAllocators') as string)).toEqual([{ alloc: ' game.dll!pool_alloc ', size: 1, free: 'game.dll+0x4f20', pointer: 1 }]);
+  fireEvent.click(screen.getByTestId('heap-toggle'));
+  await waitFor(() => expect(inspect.heapStart).toHaveBeenCalledWith({ min: 0, max: 0 }, [{ alloc: 'game.dll!pool_alloc', size: 1, free: 'game.dll+0x4f20', pointer: 1 }]));
+  await screen.findByTestId('heap-status');
+  expect(screen.getByTestId('heap-own-alloc')).toBeDisabled(); // not while tracking runs
+  expect(screen.getByTestId('heap-own-remove')).toBeDisabled();
+  localStorage.removeItem('fermion.heapAllocators');
+});
+
+test('Heap: remembered allocators come back; removing the last one starts tracking as before; a refusal from the target is shown', async () => {
+  localStorage.setItem('fermion.heapAllocators', JSON.stringify([{ alloc: 'game.dll!arena_new', size: 2, free: '', pointer: 0 }, { alloc: 7, size: 99 }, 'junk']));
+  setup();
+  withHeap({ heapStart: vi.fn(async () => { throw new Error("Error invoking remote method 'fermion:invoke': Error: The module game.dll is not loaded.") }) });
+  open('heap');
+  expect(screen.getByTestId('heap-own-toggle')).toHaveTextContent('Own allocators (2)');
+  fireEvent.click(screen.getByTestId('heap-own-toggle'));
+  const rows = screen.getAllByTestId('heap-own-row');
+  expect(within(rows[0]).getByTestId('heap-own-alloc')).toHaveValue('game.dll!arena_new');
+  expect(within(rows[0]).getByTestId('heap-own-size')).toHaveValue('2');
+  expect(within(rows[1]).getByTestId('heap-own-alloc')).toHaveValue(''); // what was not a row's is dropped
+  fireEvent.click(within(rows[1]).getByTestId('heap-own-remove'));
+  fireEvent.click(screen.getByTestId('heap-toggle'));
+  await waitFor(() => expect(screen.getByTestId('heap-error')).toHaveTextContent('The module game.dll is not loaded.'));
+  expect(inspect.heapStart).toHaveBeenCalledWith({ min: 0, max: 0 }, [{ alloc: 'game.dll!arena_new', size: 2, free: null, pointer: 0 }]);
+  fireEvent.click(screen.getByTestId('heap-own-remove'));
+  withHeap();
+  fireEvent.click(screen.getByTestId('heap-toggle'));
+  await waitFor(() => expect(inspect.heapStart).toHaveBeenCalledWith({ min: 0, max: 0 }));
+  expect(inspect.heapStart.mock.calls[0]).toHaveLength(1);
+  for (let i = 0; i < 9; i++) if (!(screen.getByTestId('heap-own-add') as HTMLButtonElement).disabled) fireEvent.click(screen.getByTestId('heap-own-add'));
+  localStorage.removeItem('fermion.heapAllocators');
+});

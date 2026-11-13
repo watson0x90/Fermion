@@ -1181,7 +1181,7 @@ test('heap tracking: sizes and the address are validated in main; status and sto
   assert.deepEqual(await svc.inspectHeapStatus('ignored'), { did: 'heapStatus' });
   assert.deepEqual(await svc.inspectHeapFind('0x90ABC0'), { did: 'heapFind' });
   assert.deepEqual(await svc.inspectHeapStop('ignored'), { did: 'heapStop' });
-  assert.deepEqual(calls, [['heapStart', { min: 0, max: 0 }, HEAP_LIMITS], ['heapStart', { min: 32, max: 64 }, HEAP_LIMITS], ['heapStart', { min: 32, max: 0 }, HEAP_LIMITS], ['heapStatus'], ['heapFind', '0x90abc0'], ['heapStop']]);
+  assert.deepEqual(calls, [['heapStart', { min: 0, max: 0 }, HEAP_LIMITS, []], ['heapStart', { min: 32, max: 64 }, HEAP_LIMITS, []], ['heapStart', { min: 32, max: 0 }, HEAP_LIMITS, []], ['heapStatus'], ['heapFind', '0x90abc0'], ['heapStop']]);
 });
 
 test('the heap tracking calls are on the allow-list the window can call', () => {
@@ -1240,7 +1240,8 @@ test('setLimits: the limits in force are handed to the agent with the next recor
   const { svc } = attachedService();
   const calls = [];
   const agent = { exports: {} };
-  for (const m of ['coverStart', 'watchStart', 'heapStart']) agent.exports[m] = async (...a) => { calls.push([m, a[a.length - 1]]); return {}; };
+  let heapLimits = null;
+  for (const m of ['coverStart', 'watchStart', 'heapStart']) agent.exports[m] = async (...a) => { calls.push([m, a[a.length - 1]]); if (m === 'heapStart') heapLimits = a[1]; return {}; };
   svc._getAgent = async () => agent;
   await svc.attach(1);
   await svc.setLimits({ replTimeoutSeconds: 45, recordMinutes: 5, coverBlocks: 500000, watchHits: 50000, heapLive: 50000, heapFreed: 5000 });
@@ -1248,10 +1249,33 @@ test('setLimits: the limits in force are handed to the agent with the next recor
   await svc.inspectCoverStart('all', { mode: 'all' });
   await svc.inspectWatchStart('0x50abc0', 8);
   await svc.inspectHeapStart();
-  assert.deepEqual(calls, [['coverStart', { ms: 300000, blocks: 500000 }], ['watchStart', { ms: 300000, hits: 50000 }], ['heapStart', { ms: 300000, live: 50000, freed: 5000 }]]);
+  assert.deepEqual(calls, [['coverStart', { ms: 300000, blocks: 500000 }], ['watchStart', { ms: 300000, hits: 50000 }], ['heapStart', []]]);
+  assert.deepEqual(heapLimits, { ms: 300000, live: 50000, freed: 5000 });
 });
 
 test('setLimits is on the allow-list the window can call', () => {
   const { INVOKE_METHODS } = require('./frida-ipc.js');
   assert.ok(INVOKE_METHODS.has('setLimits'));
+});
+
+// ---- heap tracking: the program's own allocators ----
+test('inspectHeapStart: allocators of the program\'s own are validated in main before the agent hears of them', async () => {
+  const { svc } = attachedService();
+  const calls = [];
+  const agent = { exports: { heapStart: async (...a) => { calls.push(a[2]); return {}; } } };
+  svc._getAgent = async () => agent;
+  await svc.attach(1);
+  const ok = { alloc: 'game.dll!pool_alloc', size: 1, free: 'game.dll+0x4f20', pointer: 0 };
+  const bad = [
+    'game.dll!pool_alloc', {}, [ok, 5], [null], [[]],
+    [{ ...ok, alloc: 'pool_alloc' }], [{ ...ok, alloc: 'game.dll!' }], [{ ...ok, alloc: '!x' }], [{ ...ok, alloc: 'game.dll+4f20' }], [{ ...ok, alloc: 'game.dll+0xzz' }],
+    [{ ...ok, alloc: 'a!b!c' }], [{ ...ok, alloc: 'game.dll!has space' }], [{ ...ok, alloc: 5 }], [{ ...ok, alloc: undefined }], [{ ...ok, alloc: 'm!' + 'x'.repeat(257) }],
+    [{ ...ok, free: 'nope' }], [{ ...ok, free: 7 }],
+    [{ ...ok, size: 8 }], [{ ...ok, size: -1 }], [{ ...ok, size: 1.5 }], [{ ...ok, size: '1' }], [{ ...ok, pointer: 8 }],
+    Array.from({ length: 9 }, () => ok),
+  ];
+  for (const b of bad) await assert.rejects(() => svc.inspectHeapStart({ min: 0, max: 0 }, b), /invalid heap allocators/, JSON.stringify(b).slice(0, 80));
+  assert.equal(calls.length, 0);
+  await svc.inspectHeapStart({ min: 0, max: 0 }, [ok, { alloc: 'libgame.so!arena_new', size: 0, junk: true }, { alloc: 'a.dll+0x10', free: '' }]);
+  assert.deepEqual(calls, [[ok, { alloc: 'libgame.so!arena_new', size: 0, free: null, pointer: 0 }, { alloc: 'a.dll+0x10', size: 0, free: null, pointer: 0 }]]);
 });

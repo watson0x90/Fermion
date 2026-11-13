@@ -737,6 +737,7 @@
 	var MAX_HEAP_SITES = 100;      // allocation places reported
 	var HEAP_SITE_FRAMES = 3;      // callers that make up a place
 	var MAX_HEAP_FOUND = 20;       // freed blocks reported for one address
+	var MAX_HEAP_CUSTOM = 8;       // allocators of the program's own, named by the operator
 	// Modules a block is allocated through, not by: the place that asked is
 	// the first caller outside them.
 	var ALLOCATOR_MODULE = /^(ntdll|kernel32|kernelbase|ucrtbase(d)?|msvcrt|vcruntime\d*d?|msvcp\d*d?|libc[.-]|libc\+\+|libstdc\+\+|libsystem_malloc|libsystem_c|libc\.so)/i;
@@ -778,6 +779,45 @@
 		return out;
 	}
 
+	// A function named by the operator: 'module!function' (an export, or a
+	// symbol when the module has them) or 'module+0xoffset'.
+	function heapPlace(text) {
+		var off = /^(.+)\+0x([0-9a-f]+)$/i.exec(text);
+		var bang = text.indexOf('!');
+		var name = off ? off[1] : text.slice(0, bang);
+		var mod = Process.findModuleByName(name);
+		if (!mod) throw new Error('The module ' + name + ' is not loaded.');
+		if (off) {
+			var at = parseInt(off[2], 16);
+			if (!(at < mod.size)) throw new Error(text + ' is outside ' + mod.name + '.');
+			return mod.base.add(at);
+		}
+		var fn = text.slice(bang + 1);
+		var found = mod.findExportByName(fn);
+		if (!found && mod.findSymbolByName) { try { found = mod.findSymbolByName(fn); } catch (e) { found = null; } }
+		if (!found) throw new Error(fn + ' was not found in ' + mod.name + '. Give it as ' + mod.name + '+0xoffset instead.');
+		return found;
+	}
+
+	// The operator's own allocators, as functions to hook: each gives one that
+	// allocates (its size is the argument numbered `size`, its result the block)
+	// and, when it has one, one that frees (the block is the argument numbered `pointer`).
+	function heapCustom(allocators, taken) {
+		var out = [];
+		function add(text, kind, arg) {
+			var address = heapPlace(text);
+			var key = address.toString();
+			if (taken[key]) throw new Error(text + ' is ' + (taken[key] === true ? 'named twice' : 'already tracked as ' + taken[key]) + '.');
+			taken[key] = true;
+			out.push({ name: text, kind: kind, address: address, arg: arg });
+		}
+		for (var i = 0; i < allocators.length && i < MAX_HEAP_CUSTOM; i++) {
+			add(allocators[i].alloc, 'custom', allocators[i].size);
+			if (allocators[i].free) add(allocators[i].free, 'customfree', allocators[i].pointer);
+		}
+		return out;
+	}
+
 	function heapWanted(state, size) { return size >= state.min && (state.max === 0 || size <= state.max); }
 
 	function heapRecord(state, address, size, tid, stack) {
@@ -805,10 +845,10 @@
 	// The callbacks for one function. An allocator function called from inside
 	// another one on the same thread (realloc getting its memory, the heap
 	// growing itself) is not the program's doing: only the outermost counts.
-	function heapListener(state, kind) {
-		var allocates = kind !== 'free' && kind !== 'winfree';
+	function heapListener(state, kind, arg) {
+		var allocates = kind !== 'free' && kind !== 'winfree' && kind !== 'customfree';
 		if (!allocates) {
-			var at = kind === 'winfree' ? 2 : 0;
+			var at = kind === 'winfree' ? 2 : kind === 'customfree' ? arg : 0;
 			return {
 				onEnter: function (args) {
 					if (heap !== state || state.endedBy || state.depth[this.threadId] > 0) return;
@@ -833,6 +873,7 @@
 				else if (kind === 'malloc') this.size = num(args[0]);
 				else if (kind === 'calloc') this.size = num(args[0]) * num(args[1]);
 				else if (kind === 'aligned') this.size = num(args[1]);
+				else if (kind === 'custom') this.size = num(args[arg]);
 				else if (kind === 'posix_memalign') { this.out = ptr(args[0].toString()); this.size = num(args[2]); }
 				else if (kind === 'winrealloc') { this.old = args[2].isNull() ? null : args[2].toString(); this.size = num(args[3]); }
 				else { this.old = args[0].isNull() ? null : args[0].toString(); this.size = num(args[1]); }
@@ -1232,12 +1273,18 @@
 		refs: function (address, name) { return moduleRefs(address, name); },
 
 		// sizes: { min, max } in bytes; max 0 means no upper limit.
-		heapStart: function (sizes, limits) {
+		heapStart: function (sizes, limits, allocators) {
 			if (heapTracking()) throw new Error('The heap is already being tracked. Stop that first.');
 			var min = sizes && sizes.min > 0 ? Math.floor(sizes.min) : 0;
 			var max = sizes && sizes.max > 0 ? Math.floor(sizes.max) : 0;
 			if (max !== 0 && max < min) throw new Error('The largest size must not be below the smallest');
 			var functions = heapFunctions();
+			if (allocators && allocators.length) {
+				var taken = {};
+				for (var t = 0; t < functions.length; t++) taken[functions[t].address.toString()] = functions[t].name;
+				// Before the system's: an allocator of the program's own is the outer call, and what it takes from the system inside is its business.
+				functions = heapCustom(allocators, taken).concat(functions);
+			}
 			if (!functions.length) throw new Error('No allocator function was found in this process.');
 			var state = {
 				min: min, max: max, live: new Map(), liveBytes: 0, freed: [], freedNext: 0, allocs: 0, frees: 0, overflow: false,
@@ -1250,7 +1297,7 @@
 			heap = state;
 			try {
 				for (var i = 0; i < functions.length; i++) {
-					state.listeners.push(Interceptor.attach(functions[i].address, heapListener(state, functions[i].kind)));
+					state.listeners.push(Interceptor.attach(functions[i].address, heapListener(state, functions[i].kind, functions[i].arg)));
 					state.functions.push(functions[i].name);
 				}
 			} catch (e) {

@@ -1561,3 +1561,73 @@ test('limits: heap tracking keeps no more freed blocks than its limit, the newes
   assert.equal(j(a.heapFind('0x900010')).freed.length, 0);            // the oldest was pushed out
   assert.equal(j(a.heapFind('0x' + (0x900000 + 149 * 0x100 + 16).toString(16))).freed.length, 1); // the newest is there
 });
+
+// ---- heap tracking: allocators of the program's own ----
+// A module with a pool allocator: pool_alloc(pool, size) and pool_free(pool, block) are exports,
+// and a function without a name sits at +0x4f20.
+function gameModule() {
+  const named = (name, v) => Object.assign(new Ptr(v), { exportName: name });
+  const base = new Ptr(0x66000000);
+  const add = base.add.bind(base);
+  base.add = (n) => (Number(n) === 0x4f20 ? named('game.dll+0x4f20', 0x66004f20) : add(n));
+  return { name: 'game.dll', base, size: 0x10000, path: 'C:/game/game.dll', enumerateExports: () => [], enumerateImports: () => [],
+    findExportByName: (n) => (n === 'pool_alloc' ? named('pool_alloc', 0x66001000) : n === 'pool_free' ? named('pool_free', 0x66002000) : null),
+    findSymbolByName: (n) => (n === 'arena_new' ? named('arena_new', 0x66003000) : null) };
+}
+const POOL = [{ alloc: 'game.dll!pool_alloc', size: 1, free: 'game.dll!pool_free', pointer: 1 }];
+
+test('heap, own allocators: the named functions are hooked beside the system\'s, and their blocks are recorded and freed', () => {
+  const a = load({ modules: [gameModule()] });
+  const started = j(a.heapStart({ min: 0, max: 0 }, null, POOL));
+  assert.deepEqual(started.functions.slice(0, 2), ['game.dll!pool_alloc', 'game.dll!pool_free']);
+  assert.ok(started.functions.includes('malloc'));
+  run(a, 'pool_alloc', [0xaaaa, 0x180], 0x81000000, 7, [0x66005000]); // (pool, size) -> block
+  let f = j(a.heapFind('0x81000100'));
+  assert.equal(f.live.address, '0x81000000');
+  assert.equal(f.live.size, 0x180);
+  run(a, 'pool_free', [0xaaaa, 0x81000000], 0, 8, [0x66006000]);          // (pool, block)
+  f = j(a.heapFind('0x81000100'));
+  assert.equal(f.live, null);
+  assert.equal(f.freed.length, 1);
+  assert.equal(f.freed[0].freed.thread, 8);
+  assert.deepEqual([j(a.heapStatus()).allocs, j(a.heapStatus()).frees], [1, 1]);
+  a.heapStop();
+  assert.ok(a.hooked.pool_alloc.detached && a.hooked.pool_free.detached);
+});
+
+test('heap, own allocators: what the allocator takes from the system inside its own call is not counted twice', () => {
+  const a = load({ modules: [gameModule()] });
+  a.heapStart({ min: 0, max: 0 }, null, POOL);
+  const outer = enter(a, 'pool_alloc', [0xaaaa, 0x40], 7, [0x66005000]);
+  run(a, 'malloc', [0x10000], 0x82000000, 7, [0x66001010]); // the pool grows itself
+  leave(a, 'pool_alloc', outer, 0x82000040);
+  const s = j(a.heapStatus());
+  assert.equal(s.allocs, 1);
+  assert.equal(j(a.heapFind('0x82000040')).live.size, 0x40);
+  assert.equal(j(a.heapFind('0x82000000')).live, null);     // the system's block under it was not recorded
+});
+
+test('heap, own allocators: a function can be given by offset or found as a symbol; one without a free only allocates', () => {
+  const a = load({ modules: [gameModule()] });
+  const started = j(a.heapStart({ min: 0, max: 0 }, null, [{ alloc: 'game.dll+0x4f20', size: 0, free: null, pointer: 0 }, { alloc: 'GAME.DLL!arena_new', size: 2, free: null, pointer: 0 }]));
+  assert.deepEqual(started.functions.slice(0, 2), ['game.dll+0x4f20', 'GAME.DLL!arena_new']);
+  run(a, 'game.dll+0x4f20', [0x30], 0x83000000, 7, []);
+  run(a, 'arena_new', [1, 2, 0x99], 0x84000000, 7, []);
+  assert.equal(j(a.heapFind('0x83000000')).live.size, 0x30);
+  assert.equal(j(a.heapFind('0x84000000')).live.size, 0x99);
+});
+
+test('heap, own allocators: a function that cannot be found, or is named twice or already tracked, is refused and nothing stays hooked', () => {
+  const cases = [
+    [[{ alloc: 'nope.dll!x', size: 0 }], /The module nope\.dll is not loaded/],
+    [[{ alloc: 'game.dll!missing', size: 0 }], /missing was not found in game\.dll\. Give it as game\.dll\+0xoffset instead/],
+    [[{ alloc: 'game.dll+0x20000', size: 0 }], /is outside game\.dll/],
+    [[{ alloc: 'game.dll!pool_alloc', size: 0, free: 'game.dll!pool_alloc', pointer: 0 }], /named twice/],
+  ];
+  for (const [list, why] of cases) {
+    const a = load({ modules: [gameModule()] });
+    assert.throws(() => a.heapStart({ min: 0, max: 0 }, null, list), why);
+    assert.equal(j(a.heapStatus()).tracking, false);
+    assert.deepEqual(Object.keys(a.hooked), []);
+  }
+});

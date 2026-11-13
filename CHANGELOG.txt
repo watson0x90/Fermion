@@ -243,3 +243,4 @@
 * Settings, Limits: the REPL time limit, how long a recording (coverage, memory watch, heap tracking) runs, and how much each holds can be changed, inside fixed ranges that the main process enforces
 * Settings, Inspector: text size, in four sizes
 * Settings, Appearance: the arrow keys move between the theme cards
+* Inspector, Heap: Own allocators tracks a pool or arena allocator of the program's own, named as module!function or module+0xoffset with the argument that is the size and the one that is the block

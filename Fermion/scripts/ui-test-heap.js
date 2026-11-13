@@ -143,6 +143,50 @@ const SETUP = String.raw`(function () {
     const sites = await win.evaluate(() => document.querySelectorAll('[data-testid="heap-site"]').length);
     if (shot) await win.screenshot({ path: shot + '-tracking.png' });
 
+    step = 'an allocator of the program\'s own';
+    // The C library's malloc and free stand in for a program's own allocator: on Windows they
+    // sit on top of the system heap, so they are the outer call and the system's is inside.
+    await win.click('[data-testid="heap-toggle"]');
+    await win.waitForFunction(() => document.querySelector('[data-testid="heap-toggle"]').textContent === 'Track', undefined, T);
+    const crt = await inTarget('Process.findModuleByAddress(Module.getGlobalExportByName("malloc")).name');
+    await win.click('[data-testid="heap-own-toggle"]');
+    await win.click('[data-testid="heap-own-add"]');
+    if (!(await win.isDisabled('[data-testid="heap-toggle"]'))) throw new Error('tracking can start with an unfinished allocator');
+    await win.fill('[data-testid="heap-own-alloc"]', crt + '!malloc');
+    await win.fill('[data-testid="heap-own-free"]', crt + '!free');
+    await win.fill('[data-testid="heap-min"]', '4661');
+    await win.fill('[data-testid="heap-max"]', '4661');
+    await win.click('[data-testid="heap-toggle"]');
+    let ownNote;
+    if (process.platform === 'win32') {
+      await win.waitForFunction((name) => (document.querySelector('[data-testid="heap-status"]')?.textContent ?? '').includes('through ' + name + '!malloc, ' + name + '!free, RtlAllocateHeap'), crt, T);
+      const mine = await inTarget('__h.malloc(4661)');
+      await lookUp('0x' + (BigInt(mine) + 8n).toString(16), /is inside a live block\.$/, 'a block from the named allocator was not found');
+      const one = await blocks();
+      if (one.length !== 1 || !one[0].text.includes('4,661 bytes at ' + mine) || one[0].frames < 1) throw new Error('block of the named allocator: ' + JSON.stringify(one));
+      await inTarget('__h.free("' + mine + '")');
+      await lookUp(mine, /has been freed|free right now/, 'the free through the named function was not seen');
+      // Counted once: by the named allocator, not again by the system heap under it.
+      await win.waitForFunction(() => /^1 allocated, 1 freed, 0 live/.test(document.querySelector('[data-testid="heap-counts"]')?.textContent ?? ''), undefined, T);
+      await win.click('[data-testid="heap-toggle"]');
+      await win.waitForFunction(() => document.querySelector('[data-testid="heap-toggle"]').textContent === 'Track', undefined, T);
+      ownNote = 'own allocator (' + crt + '!malloc): block found, freed, counted once';
+    } else {
+      // Here malloc is the system's own, which is tracked already: naming it again is refused, in words.
+      await win.waitForFunction(() => /already tracked as malloc/.test(document.querySelector('[data-testid="heap-error"]')?.textContent ?? ''), undefined, T);
+      ownNote = 'naming an allocator that is already tracked is refused';
+    }
+    await win.fill('[data-testid="heap-own-alloc"]', 'no-such-module.dll!pool_alloc');
+    await win.fill('[data-testid="heap-own-free"]', '');
+    await win.click('[data-testid="heap-toggle"]');
+    await win.waitForFunction(() => /The module no-such-module\.dll is not loaded/.test(document.querySelector('[data-testid="heap-error"]')?.textContent ?? ''), undefined, T);
+    await win.click('[data-testid="heap-own-remove"]');
+    await win.click('[data-testid="heap-own-toggle"]');
+    await win.fill('[data-testid="heap-min"]', '');
+    await win.fill('[data-testid="heap-max"]', '');
+    await win.click('[data-testid="heap-toggle"]');
+    await win.waitForFunction(() => /Tracking blocks of any size/.test(document.querySelector('[data-testid="heap-status"]')?.textContent ?? ''), undefined, T);
+
     step = 'detaching while tracking leaves the target running';
     await win.click('[data-testid="detach"]');
     await win.waitForFunction(() => !document.querySelector('[data-testid="heap-status"]'), undefined, T);
@@ -153,7 +197,7 @@ const SETUP = String.raw`(function () {
     const after = await inTarget('__h.malloc(64)');
     if (!/^0x[0-9a-f]+$/.test(after)) throw new Error('the target cannot allocate after detaching mid-tracking: ' + after);
 
-    console.log('HEAP_OK ' + (untrackedSeen ? 'nothing tracked: Windows names a live block and then says: ' + untrackedSeen.replace(/^0x[0-9a-f]+ /, '').split('.')[0] + ' + ' : '') + 'one size tracked + live block found from an inner address, with its call stack + one past the end is outside + freed block called a use after free, with who freed it + address menu looks up + stop keeps the record + every size: ' + counts + ', ' + sites + ' places + realloc moves the block + detach mid-tracking leaves the target unharmed');
+    console.log('HEAP_OK ' + (untrackedSeen ? 'nothing tracked: Windows names a live block and then says: ' + untrackedSeen.replace(/^0x[0-9a-f]+ /, '').split('.')[0] + ' + ' : '') + ownNote + ' + one size tracked + live block found from an inner address, with its call stack + one past the end is outside + freed block called a use after free, with who freed it + address menu looks up + stop keeps the record + every size: ' + counts + ', ' + sites + ' places + realloc moves the block + detach mid-tracking leaves the target unharmed');
     await app.close();
     done(0);
   } catch (e) {
