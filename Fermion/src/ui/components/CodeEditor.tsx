@@ -1,5 +1,6 @@
 import { useEffect, useRef, KeyboardEvent } from 'react';
 import { configureMonaco } from '../hooks/useMonaco';
+import { handlerOptions, loadPrefs } from '../prefs';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -48,8 +49,8 @@ function MonacoBox({ value, onChange, onApply, label, testId, exposeAs }: Props)
         scrollBeyondLastLine: false,
         minimap: { enabled: false },
         lineNumbersMinChars: 3,
-        fontSize: 12,
         tabSize: 2,
+        ...handlerOptions(loadPrefs()),
         ariaLabel: label,
       });
       editorRef.current = editor;

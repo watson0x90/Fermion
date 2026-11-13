@@ -3,6 +3,7 @@ import { cleanIpcError, parseAddress } from '../../../inspector/format';
 import { inspectApi } from '../../../inspector/useInspect';
 import { addrMenu } from '../../../addressMenu';
 import { writeTerminal } from '../../../bridge';
+import { usePrefs } from '../../../store/prefsSlice';
 import { Goto } from './MemoryTab';
 
 interface Frame { address: string; where: string; symbol: string; }
@@ -41,7 +42,8 @@ const placeKey = (p: WatchPlace) => p.op + '|' + p.from;
 export function WatchTab({ goto }: { goto: Goto | null }) {
   const [address, setAddress] = useState('');
   const [size, setSize] = useState('8');
-  const [mode, setMode] = useState<WatchMode>('auto');
+  const prefs = usePrefs();
+  const [mode, setMode] = useState<WatchMode>(prefs.watchMode);
   const [started, setStarted] = useState<Started | null>(null);
   const [result, setResult] = useState<WatchResult | null>(null);
   const [busy, setBusy] = useState(false);

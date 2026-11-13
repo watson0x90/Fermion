@@ -10,6 +10,8 @@ import { AddressMenu } from './AddressMenu';
 import { useKeybinds } from '../hooks/useKeybinds';
 import { useAppSelector } from '../store';
 import { applyTheme } from '../theme/themeEngine';
+import { usePrefs } from '../store/prefsSlice';
+import { savePrefs, applyPrefs } from '../prefs';
 import '../styles/shell.css';
 
 // The A/L1 frame: title bar on top; then [activity rail | Session sidebar |
@@ -23,6 +25,9 @@ export function Layout() {
   // Re-skin the whole app whenever the theme changes (and on first mount, so the
   // chrome is themed before Monaco exists).
   useEffect(() => { applyTheme(theme); }, [theme]);
+  // Preferences are saved and applied to the editors and the terminal as they change.
+  const prefs = usePrefs();
+  useEffect(() => { savePrefs(prefs); applyPrefs(prefs); }, [prefs]);
   return (
     <div className={'app' + (railOpen ? ' rail-open' : '') + (outputDetached ? ' output-detached' : '')} data-testid="app-root">
       <TitleBar />

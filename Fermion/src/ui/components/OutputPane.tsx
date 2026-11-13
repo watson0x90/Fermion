@@ -3,6 +3,7 @@ import { useAppSelector } from '../store';
 import { KINDS } from '../store/outputSlice';
 import { setTerminalSink } from '../bridge';
 import { applyTheme, loadSavedTheme } from '../theme/themeEngine';
+import { loadPrefs } from '../prefs';
 import { OutputToolbar } from './OutputToolbar';
 // The existing xterm controller (reused, mounted imperatively).
 import { createTerminal } from '../../terminal.js';
@@ -32,6 +33,7 @@ export function OutputPane({ standalone = false }: { standalone?: boolean }) {
     (window as any).__fermion = { ...(window as any).__fermion, terminal: ctrl };
     // Theme the freshly-created terminal to match the active app theme.
     applyTheme(loadSavedTheme());
+    ctrl.setFontSize?.(loadPrefs().outputFontSize);
     ctrl.fit();
     // Throttle fit() to one call per frame. xterm's fit is synchronous and
     // reflows the terminal; running it on every resize event during a live drag

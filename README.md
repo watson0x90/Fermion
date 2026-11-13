@@ -24,6 +24,7 @@ Fermion is a desktop IDE for [Frida](https://frida.re). It wraps [frida-node](ht
 - [Graph](#graph)
 - [Remote and USB devices](#remote-and-usb-devices)
 - [Keyboard shortcuts](#keyboard-shortcuts)
+- [Settings](#settings)
 - [Themes](#themes)
 - [Writing scripts for Frida 17](#writing-scripts-for-frida-17)
 - [FAQ](#faq)
@@ -462,9 +463,27 @@ To reach a `frida-server` over the network, type its address in **Remote host:po
 
 On macOS use `Cmd` in place of `Ctrl`. `F5` and `Ctrl-R` are disabled on purpose: reloading the window would drop the session.
 
+## Settings
+
+Open **Settings** with the gear at the bottom of the rail. Changes apply as you make them and are remembered.
+
+| Setting | What it changes |
+| --- | --- |
+| **Editor: font size** | The script editor, 9 to 24 pixels. Hook handlers are shown two sizes smaller. |
+| **Editor: minimap** | The overview of the whole script at the right edge of the editor. |
+| **Editor: wrap long lines** | How the editor starts; the **Wrap** button above the editor still switches it for the moment. |
+| **Output: font size** | The Output pane, 9 to 24 pixels. |
+| **Inspector: coverage records** | What a coverage recording covers unless you choose otherwise. |
+| **Inspector: follow goes into** | What following a thread goes into unless you choose otherwise. |
+| **Inspector: memory watch** | Exact when possible, or always the page trap. |
+| **Inspector: auto refresh every** | How often **Auto** on Threads and Memory re-reads, 1 to 30 seconds. |
+| **Session: catch child processes** | Whether that box is ticked when Fermion starts. |
+
+The three Inspector defaults are what each view starts with, so they take effect in the next session; the rest apply at once. **Reset to defaults** puts everything back. Preferences are kept on this computer, in the window's own storage: they are not sent to the target, and a stored value that is not a valid choice is replaced by the default.
+
 ## Themes
 
-Open **Settings** (the gear at the bottom of the rail) to choose a colour theme. There are 16, light and dark, and each one restyles the whole app: editor, Output, panels and window frame. The default, Kuroir, is the original Fermion look. The choice is remembered.
+The same panel has the colour theme. There are 16, light and dark, and each one restyles the whole app: editor, Output, panels and window frame. The default, Kuroir, is the original Fermion look. The choice is remembered.
 
 ![The theme list, with a dark theme applied](Images/fermion-themes.png)
 
@@ -538,7 +557,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, memory watch, heap tracking, hook presets, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, memory watch, heap tracking, hook presets, settings, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.
