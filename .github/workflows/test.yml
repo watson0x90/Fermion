@@ -117,6 +117,9 @@ jobs:
       - name: Memory watch names who reads and writes some bytes
         run: xvfb-run -a node scripts/ui-test-watch.js
 
+      - name: Heap tracking finds the block an address is or was in
+        run: xvfb-run -a node scripts/ui-test-heap.js
+
       # Windows APIs: skips on this Linux runner; runs in full on a Windows machine.
       - name: Hook presets decode real Windows API calls
         run: xvfb-run -a node scripts/ui-test-presets.js

@@ -1157,3 +1157,28 @@ test('the memory watch calls are on the allow-list the window can call', () => {
   const { INVOKE_METHODS } = require('./frida-ipc.js');
   for (const m of ['inspectWatchStart', 'inspectWatchHits', 'inspectWatchStop']) assert.ok(INVOKE_METHODS.has(m), m);
 });
+
+// ---- tracking the heap ----
+test('heap tracking: sizes and the address are validated in main; status and stop pass through', async () => {
+  const { svc } = attachedService();
+  const calls = [];
+  const agent = { exports: {} };
+  for (const m of ['heapStart', 'heapStatus', 'heapFind', 'heapStop']) agent.exports[m] = async (...a) => { calls.push([m, ...a]); return { did: m }; };
+  svc._getAgent = async () => agent;
+  await svc.attach(1);
+  for (const bad of ['all', 5, [], { min: -1 }, { min: 1.5 }, { max: '64' }, { min: 100, max: 50 }, { max: 2 ** 40 }, { min: NaN }]) await assert.rejects(() => svc.inspectHeapStart(bad), /sizes/);
+  for (const bad of ['900000', 0x900000, '0x9z', null, undefined]) await assert.rejects(() => svc.inspectHeapFind(bad), /invalid address/);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(await svc.inspectHeapStart(), { did: 'heapStart' });
+  await svc.inspectHeapStart({ min: 32, max: 64, junk: 1 });
+  await svc.inspectHeapStart({ min: 32 });
+  assert.deepEqual(await svc.inspectHeapStatus('ignored'), { did: 'heapStatus' });
+  assert.deepEqual(await svc.inspectHeapFind('0x90ABC0'), { did: 'heapFind' });
+  assert.deepEqual(await svc.inspectHeapStop('ignored'), { did: 'heapStop' });
+  assert.deepEqual(calls, [['heapStart', { min: 0, max: 0 }], ['heapStart', { min: 32, max: 64 }], ['heapStart', { min: 32, max: 0 }], ['heapStatus'], ['heapFind', '0x90abc0'], ['heapStop']]);
+});
+
+test('the heap tracking calls are on the allow-list the window can call', () => {
+  const { INVOKE_METHODS } = require('./frida-ipc.js');
+  for (const m of ['inspectHeapStart', 'inspectHeapStatus', 'inspectHeapFind', 'inspectHeapStop']) assert.ok(INVOKE_METHODS.has(m), m);
+});

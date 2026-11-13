@@ -42,6 +42,13 @@ const INVOKE_METHODS = new Set([
 	'inspectWatchStart',
 	'inspectWatchHits',
 	'inspectWatchStop',
+	// Heap tracking: record allocations and frees with call stacks, and find
+	// the block an address is or was in (sizes and address validated in the
+	// service; bounded in the agent).
+	'inspectHeapStart',
+	'inspectHeapStatus',
+	'inspectHeapFind',
+	'inspectHeapStop',
 	// Read-only: disassemble instructions at an address (validated, capped).
 	'inspectDisassemble',
 	// Roadmap — follow one thread with Stalker and count its calls.

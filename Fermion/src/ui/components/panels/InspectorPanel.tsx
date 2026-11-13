@@ -5,11 +5,12 @@ import { ModulesTab } from './inspector/ModulesTab';
 import { MemoryTab, Goto } from './inspector/MemoryTab';
 import { CoverageTab } from './inspector/CoverageTab';
 import { WatchTab } from './inspector/WatchTab';
+import { HeapTab } from './inspector/HeapTab';
 import { ThreadsTab } from './inspector/ThreadsTab';
 import { CodeTab } from './inspector/CodeTab';
 import { BookmarksTab } from './inspector/BookmarksTab';
 
-type Sub = 'modules' | 'memory' | 'code' | 'threads' | 'coverage' | 'watch' | 'bookmarks';
+type Sub = 'modules' | 'memory' | 'code' | 'threads' | 'coverage' | 'watch' | 'heap' | 'bookmarks';
 const SUBS: { id: Sub; label: string }[] = [
   { id: 'modules', label: 'Modules' },
   { id: 'memory', label: 'Memory' },
@@ -17,6 +18,7 @@ const SUBS: { id: Sub; label: string }[] = [
   { id: 'threads', label: 'Threads' },
   { id: 'coverage', label: 'Coverage' },
   { id: 'watch', label: 'Watch' },
+  { id: 'heap', label: 'Heap' },
   { id: 'bookmarks', label: 'Bookmarks' },
 ];
 
@@ -32,7 +34,7 @@ export function InspectorPanel() {
   const [sub, setSub] = useState<Sub>('modules');
   const dispatch = useAppDispatch();
   const request = useAppSelector((s) => s.ui.addressRequest);
-  // An address handed to the Memory, Disassembly or Watch view; it belongs to the
+  // An address handed to the Memory, Disassembly, Watch or Heap view; it belongs to the
   // session it came from.
   const [goto, setGoto] = useState<(Goto & { view: AddressView; pid: string | null }) | null>(null);
 
@@ -79,6 +81,7 @@ export function InspectorPanel() {
           <div className="insp-slot" hidden={sub !== 'threads'}><ThreadsTab active={panelActive && sub === 'threads'} onViewMemory={viewMemory} /></div>
           <div className="insp-slot" hidden={sub !== 'coverage'}><CoverageTab active={panelActive && sub === 'coverage'} /></div>
           <div className="insp-slot" hidden={sub !== 'watch'}><WatchTab goto={gotoFor('watch')} /></div>
+          <div className="insp-slot" hidden={sub !== 'heap'}><HeapTab goto={gotoFor('heap')} /></div>
         </div>
       )}
     </div>

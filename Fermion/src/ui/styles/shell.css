@@ -568,6 +568,22 @@ input.mini.watch-address:focus, input.mini.watch-size:focus { border-color: var(
 .watch-cols { display: grid; grid-template-columns: 48px minmax(0, 2fr) 56px minmax(0, 1.3fr) minmax(0, 1fr); column-gap: 10px; align-items: center; }
 .watch-cols .op.write { color: var(--warn, var(--accent)); }
 .watch-cols .op.read { color: var(--muted); }
+input.mini.heap-size, input.mini.heap-address { height: 26px; font-size: 11.5px; color: var(--fg); background: var(--elev); border: 1px solid var(--border); border-radius: 6px; padding: 0 7px; outline: 0; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+input.mini.heap-size { width: 74px; text-align: right; }
+input.mini.heap-address { flex: 1 1 220px; min-width: 120px; max-width: 320px; }
+input.mini.heap-size:focus, input.mini.heap-address:focus { border-color: var(--accent); }
+.heap-body { flex: 1 1 0; min-height: 60px; overflow: auto; }
+.heap-found { border-bottom: 1px solid var(--border); }
+.heap-verdict { padding: 9px 12px; font-size: 12px; color: var(--fg); background: var(--panel); border-bottom: 1px solid var(--border); }
+.heap-verdict.uaf { color: var(--err); }
+.heap-block { border-bottom: 1px solid var(--border); padding-bottom: 4px; }
+.heap-block-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 7px 12px 2px; font-size: 12px; color: var(--fg); }
+.heap-block-head .tag { padding: 0 6px; }
+.heap-block-head .tag.freed { color: var(--err); border-color: var(--err); }
+.heap-block-head .tag.live { color: var(--log); border-color: var(--log); }
+.heap-stack-head { padding: 5px 12px 2px; font-size: 11px; color: var(--muted); }
+.heap-frame { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); padding-left: 22px; }
+.heap-cols { display: grid; grid-template-columns: minmax(0, 1fr) 64px 76px; column-gap: 10px; align-items: center; }
 .watch-near { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .watch-stack { flex: 0 1 auto; max-height: 45%; overflow: auto; border-top: 1px solid var(--border); background: var(--panel); }
 .watch-stack-head { padding: 6px 12px; font-size: 11.5px; color: var(--muted); }

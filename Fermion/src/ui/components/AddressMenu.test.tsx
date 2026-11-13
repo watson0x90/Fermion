@@ -44,7 +44,7 @@ test('right-clicking an address opens the menu for it; anything else is left alo
   const menu = screen.getByTestId('addr-menu');
   expect(menu).toHaveAttribute('role', 'menu');
   expect(menu).toHaveTextContent('0x7ff010');
-  expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Copy address', 'Open in Memory', 'Open in Disassembly', 'Hook this address', 'Watch reads and writes', 'Bookmark']);
+  expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Copy address', 'Open in Memory', 'Open in Disassembly', 'Hook this address', 'Watch reads and writes', 'Find heap block', 'Bookmark']);
 });
 
 test('Copy address puts it on the clipboard and closes the menu', () => {
@@ -159,4 +159,11 @@ test('Watch reads and writes hands the address to the Watch view of the Inspecto
   expect(store.getState().ui.activeTab).toBe('inspector');
   expect(store.getState().ui.addressRequest).toEqual({ view: 'watch', address: '0x7ff010', n: 1 });
   expect(screen.queryByTestId('addr-menu')).toBeNull();
+});
+
+test('Find heap block hands the address to the Heap view of the Inspector', () => {
+  const store = setup();
+  openMenu();
+  fireEvent.click(screen.getByTestId('addr-menu-heap'));
+  expect(store.getState().ui.addressRequest).toEqual({ view: 'heap', address: '0x7ff010', n: 1 });
 });

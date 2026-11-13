@@ -18,6 +18,7 @@ class Ptr {
   compare(o) { return this.v < o.v ? -1 : this.v > o.v ? 1 : 0; }
   and(o) { return new Ptr(this.v & o.v); }
   not() { return new Ptr(~this.v & 0xffffffffffffffffn); }
+  isNull() { return this.v === 0n; }
   writeByteArray(bytes) {
     if (Ptr.unwritable) throw new Error('access violation');
     Ptr.writes.push([this.toString(), Array.from(bytes)]);
@@ -64,6 +65,7 @@ function load(over = {}) {
     findRangeByAddress: () => ({ base: new Ptr(0), size: 2 ** 40, protection: 'rw-' }),
     enumerateThreads: () => threads,
     getCurrentThreadId: () => 99,
+    platform: 'linux',
     enumerateRanges: (prot) => [
       { base: new Ptr(0x1000), size: 0x1000, protection: prot, file: { path: 'C:/a.dll' } },
       { base: new Ptr(0x9000), size: 0x2000, protection: prot },
@@ -106,10 +108,20 @@ function load(over = {}) {
     enable: (ranges, cb) => { if (over.armThrows && over.armThrows(monitor.enables)) throw new Error('unable to protect'); monitor.armed = { ranges: ranges.map((r) => [r.base.toString(), r.size]), cb: cb.onAccess }; monitor.enables++; },
     disable: () => { monitor.disables++; monitor.armed = null; },
   };
+  // Like Interceptor and the export lookups: a hooked function is known by name.
+  const hooked = {};
+  let nextExport = 0x6000000;
+  const exported = (name) => Object.assign(new Ptr(nextExport += 16), { exportName: name });
+  const ALLOCATORS = ['malloc', 'calloc', 'realloc', 'free', 'RtlAllocateHeap', 'RtlReAllocateHeap', 'RtlFreeHeap'];
+  for (const m of mods()) if (!m.findExportByName) m.findExportByName = (n) => (!over.noAllocators && /^Rtl/.test(n) && m.name === 'ntdll.dll' ? exported(n) : null);
   const ctx = vm.createContext({
+    Interceptor: { attach: (address, cbs) => { const h = { cbs, detached: false }; hooked[address.exportName] = h; return { detach: () => { h.detached = true; } }; } },
+    Module: { findGlobalExportByName: (n) => (!over.noAllocators && ALLOCATORS.includes(n) && !/^Rtl/.test(n) ? exported(n) : null) },
+    ModuleMap: function () { this.update = () => {}; this.find = (a) => Process.findModuleByAddress(a); },
+    Map, Number,
     MemoryAccessMonitor: monitor,
     rpc: {}, Process, Memory, ptr: (v) => new Ptr(v),
-    Thread: { backtrace: (context, mode) => { if (mode === 'accurate' && over.accurateFails) throw new Error('no unwind info'); return [new Ptr(0x7ff123), new Ptr(0x500)]; } },
+    Thread: { backtrace: (context, mode) => { if (mode === 'accurate' && over.accurateFails) throw new Error('no unwind info'); if (over.onBacktrace) over.onBacktrace(); return context && context.stack ? context.stack : [new Ptr(0x7ff123), new Ptr(0x500)]; } },
     Backtracer: { ACCURATE: 'accurate', FUZZY: 'fuzzy' },
     DebugSymbol: { fromAddress: (a) => (a.v === 0x500n ? { address: a, name: null, moduleName: null } : { address: a, name: 'CreateFileW', moduleName: 'kernel32.dll' }) },
     JSON, Date: over.clock ? { now: over.clock } : Date, Uint8Array, Math, Promise,
@@ -128,7 +140,7 @@ function load(over = {}) {
     Stalker: stalker, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].cancelled = true; },
   });
   vm.runInContext(SOURCE, ctx);
-  return Object.assign({ scans, stalker, timers, intervals, monitor }, ctx.rpc.exports);
+  return Object.assign({ scans, stalker, timers, intervals, monitor, hooked }, ctx.rpc.exports);
 }
 // Results cross rpc as JSON; compare them the same way.
 const j = (v) => JSON.parse(JSON.stringify(v));
@@ -894,3 +906,192 @@ function unmapped(gone) {
   assert.equal(r.hits, 1);
   assert.equal(a.monitor.armed, null);
 }
+
+// ---- tracking the heap ----
+// One call of a hooked allocator function: enter, then leave with a result.
+function enter(a, name, args, tid = 11, stack) {
+  const ctx = { threadId: tid, context: stack ? { stack: stack.map((v) => new Ptr(v)) } : {} };
+  const cbs = a.hooked[name].cbs;
+  if (cbs.onEnter) cbs.onEnter.call(ctx, args.map((v) => new Ptr(v)));
+  return ctx;
+}
+function leave(a, name, ctx, ret = 0) {
+  const cbs = a.hooked[name].cbs;
+  if (cbs.onLeave) cbs.onLeave.call(ctx, new Ptr(ret));
+}
+const run = (a, name, args, ret, tid, stack) => leave(a, name, enter(a, name, args, tid, stack), ret);
+const NO_BLOCKS = { tracking: false, endedBy: 'none', seconds: 0, min: 0, max: 0, functions: [], allocs: 0, frees: 0, live: 0, liveBytes: 0, freedKept: 0, overflow: false, siteCount: 0, sites: [] };
+
+test('heapStart: the allocator functions of the platform are hooked, and unhooked by heapStop', () => {
+  const a = load();
+  assert.deepEqual(j(a.heapStatus()), NO_BLOCKS);
+  assert.deepEqual(j(a.heapStart({ min: 0, max: 0 })), { tracking: true, functions: ['malloc', 'calloc', 'realloc', 'free'], min: 0, max: 0, maxSeconds: 600, maxLive: 200000, maxFreed: 20000 });
+  assert.deepEqual(Object.keys(a.hooked), ['malloc', 'calloc', 'realloc', 'free']);
+  assert.throws(() => a.heapStart({ min: 0, max: 0 }), /already being tracked/);
+  const r = j(a.heapStop());
+  assert.equal(r.tracking, false);
+  assert.equal(r.endedBy, 'stop');
+  assert.ok(Object.values(a.hooked).every((h) => h.detached));
+  assert.equal(j(a.heapStop()).endedBy, 'stop'); // stopping twice changes nothing
+
+  const win = load({ modules: [ntdll], Process: { platform: 'windows' } });
+  assert.deepEqual(j(win.heapStart({ min: 0, max: 0 })).functions, ['RtlAllocateHeap', 'RtlReAllocateHeap', 'RtlFreeHeap']);
+  assert.throws(() => load({ noAllocators: true }).heapStart({ min: 0, max: 0 }), /No allocator function was found/);
+});
+
+test('heap: blocks are recorded when allocated and move to the freed list when freed', () => {
+  const a = load();
+  a.heapStart({ min: 0, max: 0 });
+  run(a, 'malloc', [64], 0x900000, 11);
+  run(a, 'calloc', [4, 8], 0x900100, 12);
+  run(a, 'malloc', [16], 0); // a failed allocation is nothing
+  let s = j(a.heapStatus());
+  assert.deepEqual([s.allocs, s.frees, s.live, s.liveBytes, s.freedKept], [2, 0, 2, 96, 0]);
+  run(a, 'free', [0x900000], 0, 12);
+  run(a, 'free', [0x123456]); // a block from before tracking began
+  run(a, 'free', [0]);
+  s = j(a.heapStatus());
+  assert.deepEqual([s.allocs, s.frees, s.live, s.liveBytes, s.freedKept], [2, 1, 1, 32, 1]);
+});
+
+test('heapFind: the block an address is in, with who allocated it and who freed it', () => {
+  const a = load();
+  a.heapStart({ min: 0, max: 0 });
+  run(a, 'malloc', [64], 0x900000, 11);
+  let f = j(a.heapFind('0x900010'));
+  assert.equal(f.address, '0x900010');
+  assert.equal(f.live.address, '0x900000');
+  assert.equal(f.live.size, 64);
+  assert.equal(f.live.offset, 16);
+  assert.equal(f.live.thread, 11);
+  assert.equal(f.live.freed, null);
+  assert.deepEqual(f.live.frames, [{ address: '0x7ff123', where: 'kernel32.dll+0x123', symbol: 'kernel32.dll!CreateFileW' }, { address: '0x500', where: '0x500', symbol: '' }]);
+  assert.deepEqual(f.freed, []);
+  assert.equal(j(a.heapFind('0x900040')).live, null); // one past the end
+  assert.equal(j(a.heapFind('0x8fffff')).live, null);
+
+  run(a, 'free', [0x900000], 0, 12);
+  f = j(a.heapFind('0x900010'));
+  assert.equal(f.live, null);
+  assert.equal(f.freed.length, 1);
+  assert.equal(f.freed[0].freed.thread, 12);
+  assert.equal(f.freed[0].freed.frames.length, 2);
+
+  // The same memory is handed out again: a stale pointer now lands in the new block.
+  run(a, 'malloc', [48], 0x900000, 13);
+  f = j(a.heapFind('0x900010'));
+  assert.equal(f.live.size, 48);
+  assert.equal(f.live.thread, 13);
+  assert.equal(f.freed.length, 1);
+  assert.equal(j(a.heapFind('0x900038')).live, null);   // past the new, smaller block
+  assert.equal(j(a.heapFind('0x900038')).freed.length, 1); // but inside the old one
+  a.heapStop();
+  assert.equal(j(a.heapFind('0x900010')).live.size, 48); // what was recorded can still be asked about
+});
+
+test('heapFind: nothing tracked yet is an error; freed blocks are listed newest first and capped', () => {
+  const a = load();
+  assert.throws(() => a.heapFind('0x900000'), /Nothing has been tracked/);
+  a.heapStart({ min: 0, max: 0 });
+  for (let i = 0; i < 25; i++) { run(a, 'malloc', [8 + i], 0x900000); run(a, 'free', [0x900000]); }
+  const f = j(a.heapFind('0x900000'));
+  assert.equal(f.freed.length, 20);
+  assert.equal(f.freedTotal, 25);
+  assert.equal(f.freed[0].size, 32); // the last one freed
+});
+
+test('heap: only sizes in the range are recorded, and no call stack is taken for the others', () => {
+  let stacks = 0;
+  const a = load({ onBacktrace: () => { stacks++; } });
+  a.heapStart({ min: 32, max: 64 });
+  run(a, 'malloc', [16], 0x900000);
+  run(a, 'malloc', [128], 0x900100);
+  assert.equal(stacks, 0);
+  run(a, 'malloc', [32], 0x900200);
+  run(a, 'malloc', [64], 0x900300);
+  run(a, 'free', [0x900000]); // not recorded: nothing to do, no stack
+  assert.equal(stacks, 2);
+  const s = j(a.heapStatus());
+  assert.deepEqual([s.allocs, s.live, s.min, s.max], [2, 2, 32, 64]);
+});
+
+test('heap: realloc frees the old block and records the new one; in place, the block just changes size', () => {
+  const a = load();
+  a.heapStart({ min: 0, max: 0 });
+  run(a, 'malloc', [64], 0x900000);
+  run(a, 'realloc', [0x900000, 128], 0x900000); // grown in place
+  let s = j(a.heapStatus());
+  assert.deepEqual([s.live, s.liveBytes, s.frees], [1, 128, 0]);
+  run(a, 'realloc', [0x900000, 256], 0x910000); // moved
+  s = j(a.heapStatus());
+  assert.deepEqual([s.live, s.liveBytes, s.frees, s.allocs], [1, 256, 1, 2]);
+  assert.equal(j(a.heapFind('0x900000')).freed[0].size, 128);
+  assert.equal(j(a.heapFind('0x910080')).live.size, 256);
+  run(a, 'realloc', [0, 8], 0x920000); // realloc(NULL) is an allocation
+  run(a, 'realloc', [0x920000, 4096], 0); // failed: the old block stays
+  assert.equal(j(a.heapFind('0x920000')).live.size, 8);
+});
+
+test('heap: what an allocator function does inside itself is not recorded twice', () => {
+  const a = load();
+  a.heapStart({ min: 0, max: 0 });
+  const outer = enter(a, 'realloc', [0, 64]);
+  run(a, 'malloc', [64], 0x900000); // realloc getting its memory
+  run(a, 'free', [0x900000]);       // and a free inside it
+  leave(a, 'realloc', outer, 0x900000);
+  const inner = enter(a, 'malloc', [32], 12);
+  run(a, 'malloc', [4096], 0x950000, 12); // the heap growing itself
+  leave(a, 'malloc', inner, 0x900100);
+  run(a, 'malloc', [8], 0x900200, 13);    // another thread is not held back
+  const s = j(a.heapStatus());
+  assert.deepEqual([s.allocs, s.frees, s.live], [3, 0, 3]);
+  assert.equal(j(a.heapFind('0x950000')).live, null);
+});
+
+test('heapStatus: live blocks are grouped by the code that asked for them, biggest first', () => {
+  const app = { name: 'app.exe', base: new Ptr(0x400000), size: 0x10000, path: 'C:/app/app.exe', enumerateExports: () => [], enumerateImports: () => [] };
+  const a = load({ modules: [app, ntdll] });
+  a.heapStart({ min: 0, max: 0 });
+  // The allocator's own modules are skipped: the place is the first caller outside them.
+  run(a, 'malloc', [100], 0x900000, 11, [0x7fe010, 0x7ff020, 0x401000, 0x402000]);
+  run(a, 'malloc', [100], 0x900100, 11, [0x7fe010, 0x401000, 0x402000]);
+  run(a, 'malloc', [500], 0x900200, 11, [0x405000]);
+  run(a, 'malloc', [7], 0x900300, 11, [0x7fe010]); // nothing outside: the first frame stands in
+  const s = j(a.heapStatus());
+  assert.equal(s.siteCount, 3);
+  assert.equal(typeof a.hooked.malloc, 'object');
+  assert.deepEqual(s.sites.map((x) => [x.frames.map((f) => f.where).join(' < '), x.blocks, x.bytes]), [['app.exe+0x5000', 1, 500], ['app.exe+0x1000 < app.exe+0x2000', 2, 200], ['ntdll.dll+0x10', 1, 7]]);
+  assert.deepEqual(s.sites[0].frames[0], { address: '0x405000', where: 'app.exe+0x5000', symbol: 'kernel32.dll!CreateFileW' });
+  // A place is up to three callers: one more caller is another place.
+  run(a, 'malloc', [1], 0x900400, 11, [0x401000, 0x402000, 0x403000, 0x404000]);
+  assert.equal(j(a.heapStatus()).sites.find((x) => x.bytes === 1).frames.length, 3);
+  run(a, 'free', [0x900200]);
+  assert.equal(j(a.heapStatus()).sites[0].frames[0].address, '0x401000');
+});
+
+test('heap: tracking stops by itself at the time limit; past the block limits it says so and keeps the newest frees', () => {
+  const a = load();
+  a.heapStart({ min: 0, max: 0 });
+  run(a, 'malloc', [8], 0x900000);
+  a.timers.find((t) => t.ms === 600000).fn();
+  assert.equal(j(a.heapStatus()).endedBy, 'limit');
+  assert.ok(Object.values(a.hooked).every((h) => h.detached));
+  a.heapStart({ min: 0, max: 0 }); // a new one starts empty
+  assert.equal(j(a.heapStatus()).live, 0);
+  for (let i = 0; i < 20005; i++) { run(a, 'malloc', [8], 0xa00000 + i * 16); run(a, 'free', [0xa00000 + i * 16]); }
+  let s = j(a.heapStatus());
+  assert.deepEqual([s.frees, s.freedKept, s.overflow], [20005, 20000, false]);
+  assert.equal(j(a.heapFind('0xa00000')).freed.length, 0);                   // the oldest fell out
+  assert.equal(j(a.heapFind('0x' + (0xa00000 + 20004 * 16).toString(16))).freed.length, 1);
+  for (let i = 0; i < 200003; i++) run(a, 'malloc', [8], 0x10000000 + i * 16);
+  s = j(a.heapStatus());
+  assert.deepEqual([s.live, s.overflow], [200000, true]);
+});
+
+test('heap: a follow that needs a fresh agent is refused while the heap is tracked', () => {
+  const a = load({ modules: [ntdll] });
+  a.follow(11, { mode: 'app' });
+  a.unfollow();
+  a.heapStart({ min: 0, max: 0 });
+  assert.throws(() => a.follow(11, { mode: 'all' }), /Heap tracking is running/);
+});

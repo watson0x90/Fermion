@@ -222,3 +222,7 @@
 * Inspector, Coverage: record which basic blocks run (all threads or one; everything, non-system modules, or one module) and save the result as a drcov file for Lighthouse or Dragondance, or as a plain-text report of the modules and functions that ran, written to be read by a person or a language model
 * Hooks: presets for Windows programs (files, registry, processes and injection, network, driver requests, named pipes, RPC). One choice places the hooks, each with a handler that decodes the arguments; the handlers are ordinary hook code and can be edited
 * Inspector, Watch: see which code reads or writes some bytes of data (from the address menu, or by address). Each place is listed with read or write, function, count, threads and the call stack of its first access. Accesses are sampled; data only
+
+-= Unreleased (after v2.1.2) =-
+
+* Inspector, Heap: track allocations and frees with their call stacks, then look an address up to see the block it is in, who allocated it and who freed it (use after free, memory handed out again). A size range keeps a busy program fast; the places holding the most live memory are listed
