@@ -216,7 +216,7 @@ Things to know:
 
 - The REPL runs in **its own scope**, separate from the script in the Editor. It cannot see that script's variables, and it keeps its own across script reloads.
 - Only `var` declarations (and assignments to undeclared names) persist between entries. `let` and `const` do not.
-- A running entry can be stopped with **Cancel** (or `Esc`), and one that has not finished after **20 seconds** is abandoned automatically. Either way the REPL is restarted, which clears its variables. A busy loop may keep running in the target until you detach.
+- A running entry can be stopped with **Cancel** (or `Esc`), and one that has not finished after **20 seconds** (adjustable in [Settings](#settings)) is abandoned automatically. Either way the REPL is restarted, which clears its variables. A busy loop may keep running in the target until you detach.
 - Completion only follows plain dotted names. It will not complete after a call or an index (`foo().ba`, `arr[0].x`), because that would mean running your code just to make suggestions.
 
 ## Hooks
@@ -330,7 +330,7 @@ Writing works on data and on code. Code is patched the way Frida patches it, so 
 
 Things to know:
 
-- The program runs slower while recording. Leaving system libraries out (the default) keeps it usable and the result readable. A recording stops by itself after 10 minutes or 2,000,000 blocks.
+- The program runs slower while recording. Leaving system libraries out (the default) keeps it usable and the result readable. A recording stops by itself after 10 minutes or 2,000,000 blocks (these are the defaults; see [Limits](#settings) in Settings).
 - A block is recorded once, the first time it runs. How often it ran is not recorded; use **Follow** on the Threads view for call counts.
 - Function names in the text report come from the symbols Frida can find. In a module without debug symbols a block is named after the nearest exported symbol before it, so trust the offsets over the names there. The report says this too.
 - Code that is not in any module (code generated at run time by a JIT, for example) is counted but cannot be put in a drcov file, which describes code by module and offset.
@@ -351,7 +351,7 @@ Things to know about an exact watch:
 - The address shown for a place is the instruction after the one that touched the bytes; the function name is right either way.
 - A read or write made by the kernel on the program's behalf (a `ReadFile` into the bytes, say) is not seen: watchpoints fire for the program's own instructions.
 - It uses the processor's four watchpoint slots. A debugger, or a script of yours, that sets hardware breakpoints on the same program will collide with it.
-- It stops by itself after 10 minutes or 200,000 accesses. Each access costs a trap, so bytes touched in a tight loop slow that loop down a lot.
+- It stops by itself after 10 minutes or 200,000 accesses (these are the defaults; see [Limits](#settings) in Settings). Each access costs a trap, so bytes touched in a tight loop slow that loop down a lot.
 - Handling a trap must not itself touch the watched bytes, or it traps again without end and the program dies. That is why stacks are refused; ordinary heap and global data are fine.
 
 Things to know about a sampled watch:
@@ -385,7 +385,7 @@ Things to know:
 - Asking Windows takes a few hundredths of a second and holds each heap's lock while it is read, so the program's own allocations wait that long. Elsewhere than Windows there is no such list, and only recorded blocks are known.
 - Taking a call stack for every block slows a program that allocates a lot (node ran about five times slower here). Give a size range (**Blocks from … to … bytes**; both the same for one exact size) and the other sizes cost almost nothing.
 - On Windows the hooks are on `RtlAllocateHeap`, `RtlReAllocateHeap` and `RtlFreeHeap` in `ntdll.dll`, which `HeapAlloc`, `malloc` and `operator new` all end up in. Elsewhere they are on `malloc`, `calloc`, `realloc` and `free`, and on `aligned_alloc`, `memalign` and `posix_memalign` where the C library has them. Memory from `VirtualAlloc` or `mmap`, and a program's own pool allocator carving up one big block, are not seen.
-- Tracking stops by itself after 10 minutes. Up to 200,000 live blocks are recorded and the newest 20,000 freed ones are kept; the view says when a limit was reached. What was recorded can be looked up until tracking is started again or the session ends.
+- Tracking stops by itself after 10 minutes. Up to 200,000 live blocks are recorded and the newest 20,000 freed ones are kept (these are the defaults; see [Limits](#settings) in Settings); the view says when a limit was reached. What was recorded can be looked up until tracking is started again or the session ends.
 - A program built without frame pointers or unwind information gives short or wrong call stacks. Trust the first frames more than the last.
 
 **Strings.** Select a module in the Modules view and choose **Strings** (beside Exports and Imports) to list the text in it: ASCII strings and UTF-16 ones, each with its address. Type in the search box to keep the strings that contain what you typed; the search runs in the target once you pause typing. The list shows the first 2,000 and says how many there are in all, so search to narrow it. Code is not searched (its bytes spell things by accident), and a very large module is given 8 seconds: the view says when that cut the search short.
@@ -489,11 +489,11 @@ On macOS use `Cmd` in place of `Ctrl`. `F5` and `Ctrl-R` are disabled on purpose
 
 ## Settings
 
-Open **Settings** with the gear at the bottom of the rail, or with `Ctrl-,`. It is a dialog with five sections listed on the left; `Esc`, the close button or a click outside closes it. Changes apply as you make them and are remembered.
+Open **Settings** with the gear at the bottom of the rail, or with `Ctrl-,`. It is a dialog with six sections listed on the left; `Esc`, the close button or a click outside closes it. Changes apply as you make them and are remembered.
 
 | Section | Setting | What it changes |
 | --- | --- | --- |
-| **Appearance** | Color theme | See [Themes](#themes). |
+| **Appearance** | Color theme | See [Themes](#themes). The arrow keys move from card to card and apply each as they go. |
 | | Data font | The fixed-width text outside the editor and Output: addresses, hex dumps, tables, the status bar. |
 | **Editor** | Font, font size | The script editor, 9 to 24 pixels. Hook handlers are shown two sizes smaller. |
 | | Line spacing | Compact, normal or relaxed. |
@@ -503,13 +503,21 @@ Open **Settings** with the gear at the bottom of the rail, or with `Ctrl-,`. It 
 | | Show spaces and tabs | Never, in the selection, or always. |
 | | Cursor | Line, block or underline. |
 | **Output** | Font, font size, line spacing, cursor | The Output pane, and the detached Output window. |
-| **Inspector** | Coverage records, Follow goes into, Memory watch | What each view starts with in a new session. |
+| **Inspector** | Text size | Everything in the Inspector, in four sizes. |
+| | Coverage records, Follow goes into, Memory watch | What each view starts with in a new session. |
 | | Auto refresh every | How often **Auto** on Threads and Memory re-reads, 1 to 30 seconds. |
 | **Session** | Catch child processes when Fermion starts | Whether that box is already ticked. |
+| **Limits** | REPL entry may run for | 5 to 600 seconds (20). |
+| | Recordings stop after | Coverage, a memory watch and heap tracking: 1 to 60 minutes (10). |
+| | Coverage holds | 500,000 to 5 million distinct blocks (2 million). |
+| | An exact memory watch counts | 50,000 to 2 million accesses (200,000). |
+| | Heap tracking records, remembers | Up to 500,000 live blocks (200,000) and 200,000 freed ones (20,000). |
 
 **Font size** has minus and plus buttons, which repeat while held. With the field focused the arrow keys step by one, `PageUp` and `PageDown` by two, and `Home` and `End` go to the limits. A number can also be typed.
 
 **Fonts.** IBM Plex Mono is built in. The list also offers the common fixed-width fonts that are installed on this computer, and the system's own; **Another installed font...** takes any family by name. Fermion does not download fonts. A family that is not installed is said so and the built-in font is used; one that is not fixed-width works, with a warning that columns will not line up. The Editor and Output sections show a sample in the chosen font, size and spacing.
+
+**Limits** apply to the next REPL entry or the next recording that is started. Higher ones cost the target memory and time. They are enforced outside the window, which cannot set one beyond the ranges above.
 
 **Reset.** A dot marks a setting that differs from its default, and the section it is in; click the dot to put that one setting back. **Reset** *section* and **Reset everything** are at the bottom, and either can be undone for a few seconds. Resetting does not change the color theme.
 

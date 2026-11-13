@@ -1,10 +1,12 @@
-import { DEFAULT_PREFS, SECTION_OF, cleanPrefs, loadPrefs, savePrefs, PREFS_KEY, editorOptions, handlerOptions, outputLook, applyPrefs } from './prefs';
+import { limitsOf, INSPECTOR_ZOOM, DEFAULT_PREFS, SECTION_OF, cleanPrefs, loadPrefs, savePrefs, PREFS_KEY, editorOptions, handlerOptions, outputLook, applyPrefs } from './prefs';
 
 beforeEach(() => localStorage.clear());
 
 test('the defaults are how Fermion behaved before there were preferences', () => {
   expect(DEFAULT_PREFS).toEqual({
     dataFontFamily: 'IBM Plex Mono', editorFontFamily: 'IBM Plex Mono', outputFontFamily: 'IBM Plex Mono',
+    inspectorTextSize: 'normal',
+    limitReplSeconds: 20, limitRecordMinutes: 10, limitCoverBlocks: 2000000, limitWatchHits: 200000, limitHeapLive: 200000, limitHeapFreed: 20000,
     editorLineSpacing: 'normal', editorLineNumbers: true, editorTabSize: 4, editorWhitespace: 'selection', editorCursor: 'line',
     outputLineSpacing: 'compact', outputCursor: 'bar',
     editorFontSize: 14, editorMinimap: true, editorWordWrap: false, outputFontSize: 13,
@@ -89,4 +91,17 @@ test('applying preferences reaches the editors, their text, the terminal and the
     delete w.MonacoCodeEditor; delete w.MonacoHookEditor; delete w.monaco; delete w.__fermion;
     document.documentElement.style.removeProperty('--mono');
   }
+});
+
+test('limits and the Inspector text size: kept inside their ranges, and handed to the main process under its names', () => {
+  expect(cleanPrefs({ limitReplSeconds: 90, limitRecordMinutes: 30, limitCoverBlocks: 500000, limitWatchHits: 50000, limitHeapLive: 50000, limitHeapFreed: 5000, inspectorTextSize: 'large' }))
+    .toMatchObject({ limitReplSeconds: 90, limitRecordMinutes: 30, limitCoverBlocks: 500000, limitWatchHits: 50000, limitHeapLive: 50000, limitHeapFreed: 5000, inspectorTextSize: 'large' });
+  expect(cleanPrefs({ limitReplSeconds: 1e9, limitRecordMinutes: 0, limitCoverBlocks: 5, limitWatchHits: 1e12, limitHeapLive: -1, limitHeapFreed: 1e12, inspectorTextSize: 'huge' }))
+    .toMatchObject({ limitReplSeconds: 600, limitRecordMinutes: 1, limitCoverBlocks: 100000, limitWatchHits: 2000000, limitHeapLive: 10000, limitHeapFreed: 200000, inspectorTextSize: 'normal' });
+  expect(cleanPrefs({ limitReplSeconds: '90', limitRecordMinutes: null })).toMatchObject({ limitReplSeconds: 20, limitRecordMinutes: 10 });
+  expect(limitsOf({ ...DEFAULT_PREFS, limitReplSeconds: 45, limitHeapFreed: 5000 })).toEqual({ replTimeoutSeconds: 45, recordMinutes: 10, coverBlocks: 2000000, watchHits: 200000, heapLive: 200000, heapFreed: 5000 });
+  applyPrefs({ ...DEFAULT_PREFS, inspectorTextSize: 'larger' });
+  expect(document.documentElement.style.getPropertyValue('--insp-zoom')).toBe(String(INSPECTOR_ZOOM.larger));
+  applyPrefs(DEFAULT_PREFS);
+  expect(document.documentElement.style.getPropertyValue('--insp-zoom')).toBe('1');
 });

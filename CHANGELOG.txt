@@ -237,3 +237,9 @@
 * Inspector, Modules: Strings lists a module's ASCII and UTF-16 strings and searches them in the target
 * Inspector, References: Find references in the address menu lists the instructions (x86 and x64) and the pointers in a module that refer to an address; each opens in Disassembly or Memory
 * Settings is now a dialog with sections (Appearance, Editor, Output, Inspector, Session), opened with the gear or Ctrl-,. Font size has minus and plus buttons; the editor, Output and data fonts can be chosen from the installed fixed-width fonts or named; line spacing, line numbers, tab width, whitespace and cursor are settable; themes are shown as cards; a changed setting is marked and can be put back alone, by section or all at once, with undo
+
+-= Unreleased (after v2.1.4) =-
+
+* Settings, Limits: the REPL time limit, how long a recording (coverage, memory watch, heap tracking) runs, and how much each holds can be changed, inside fixed ranges that the main process enforces
+* Settings, Inspector: text size, in four sizes
+* Settings, Appearance: the arrow keys move between the theme cards

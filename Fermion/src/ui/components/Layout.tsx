@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { TitleBar } from './TitleBar';
 import { Rail } from './Rail';
 import { Sidebar } from './Sidebar';
@@ -11,7 +11,7 @@ import { useKeybinds } from '../hooks/useKeybinds';
 import { useAppSelector } from '../store';
 import { applyTheme } from '../theme/themeEngine';
 import { usePrefs } from '../store/prefsSlice';
-import { savePrefs, applyPrefs } from '../prefs';
+import { savePrefs, applyPrefs, limitsOf } from '../prefs';
 import '../styles/shell.css';
 
 // The A/L1 frame: title bar on top; then [activity rail | Session sidebar |
@@ -28,6 +28,12 @@ export function Layout() {
   // Preferences are saved and applied to the editors and the terminal as they change.
   const prefs = usePrefs();
   useEffect(() => { savePrefs(prefs); applyPrefs(prefs); }, [prefs]);
+  // The limits are enforced in the main process: it is told at the start and whenever one changes.
+  const limits = useMemo(() => JSON.stringify(limitsOf(prefs)), [prefs]);
+  useEffect(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    try { Promise.resolve((window as any).fermion?.setLimits?.(JSON.parse(limits))).catch(() => {}); } catch { /* not in Electron */ }
+  }, [limits]);
   return (
     <div className={'app' + (railOpen ? ' rail-open' : '') + (outputDetached ? ' output-detached' : '')} data-testid="app-root">
       <TitleBar />

@@ -24,6 +24,7 @@ const AGENT_PATHS = {
 	inspector: path.join(__dirname, 'tools', 'inspector-agent.js'),
 	hooks: path.join(__dirname, 'tools', 'hooks-agent.js'),
 };
+const { defaultLimits, checkLimits } = require('./limits');
 const MAX_EVAL_CHARS = 200000;
 const REPLACED_WAIT_MS = 5000; // how long to wait for the program a process replaced itself with
 const MAX_CAUGHT_CHILDREN = 32; // children held suspended at once; more are let go
@@ -314,6 +315,8 @@ class FridaService extends EventEmitter {
 		this._agentSession = null;
 		this._agents = new Map();
 		this._evalTimeoutMs = EVAL_TIMEOUT_MS;
+		// Limits the operator may adjust (Settings): see ./limits.
+		this._limits = defaultLimits();
 		// Entries being evaluated right now: a function per entry that cancels it.
 		this._evalCancels = new Set();
 		// Catching child processes of the attached process (Frida child gating).
@@ -546,6 +549,16 @@ class FridaService extends EventEmitter {
 	// a dedicated agent script, so it works with or without a user script and is
 	// untouched by script reloads; its console/send output joins the normal
 	// message/log events.
+	// The adjustable limits. Whatever is passed is checked and brought into
+	// range (./limits); what is now in force is returned. The REPL's applies to
+	// the next entry, the others to the next recording that is started.
+	async setLimits(limits) {
+		this._limits = checkLimits(limits);
+		this._evalTimeoutMs = this._limits.replTimeoutSeconds * 1000;
+		return { ...this._limits };
+	}
+	_recordMs() { return this._limits.recordMinutes * 60000; }
+
 	async evaluate(code) {
 		if (typeof code !== 'string') throw new Error('evaluate: code must be a string');
 		if (!code.trim()) throw new Error('evaluate: code is empty');
@@ -677,12 +690,13 @@ class FridaService extends EventEmitter {
 		const who = threads === 'all' ? 'all' : checkThreadId(threads);
 		const checked = checkFollowScope(scope);
 		let started;
+		const limits = { ms: this._recordMs(), blocks: this._limits.coverBlocks };
 		try {
-			started = await this._inspect('coverStart', who, checked);
+			started = await this._inspect('coverStart', who, checked, limits);
 		} catch (e) {
 			if (!/FERMION_RESCOPE/.test(String(e && e.message))) throw e;
 			await this._dropAgent('inspector');
-			started = await this._inspect('coverStart', who, checked);
+			started = await this._inspect('coverStart', who, checked, limits);
 		}
 		this._coverage = null; // the agent has dropped the previous recording too
 		return started;
@@ -720,7 +734,7 @@ class FridaService extends EventEmitter {
 	// with hardware watchpoints where it can (Windows, a few aligned bytes),
 	// and otherwise traps the page and samples. One watch at a time, bounded
 	// in the agent (10 minutes; data only, never a thread's stack).
-	async inspectWatchStart(address, size, mode) { return this._inspect('watchStart', checkAddress(address), checkWatchSize(size), checkWatchMode(mode)); }
+	async inspectWatchStart(address, size, mode) { return this._inspect('watchStart', checkAddress(address), checkWatchSize(size), checkWatchMode(mode), { ms: this._recordMs(), hits: this._limits.watchHits }); }
 	async inspectWatchHits() { return this._inspect('watchHits'); }
 	async inspectWatchStop() { return this._inspect('watchStop'); }
 
@@ -738,7 +752,7 @@ class FridaService extends EventEmitter {
 	// Record the blocks the program allocates and frees, with call stacks, and
 	// answer which block an address is or was in. Bounded in the agent (10
 	// minutes, 200,000 live blocks, the newest 20,000 freed ones).
-	async inspectHeapStart(sizes) { return this._inspect('heapStart', checkHeapSizes(sizes)); }
+	async inspectHeapStart(sizes) { return this._inspect('heapStart', checkHeapSizes(sizes), { ms: this._recordMs(), live: this._limits.heapLive, freed: this._limits.heapFreed }); }
 	async inspectHeapStatus() { return this._inspect('heapStatus'); }
 	async inspectHeapFind(address) { return this._inspect('heapFind', checkAddress(address)); }
 	async inspectHeapStop() { return this._inspect('heapStop'); }

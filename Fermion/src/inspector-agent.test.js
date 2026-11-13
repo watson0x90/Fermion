@@ -788,7 +788,7 @@ const fire = (a, ms) => { const t = a.timers.filter((x) => x.ms === ms && !x.can
 
 test('watchStart: the bytes are armed and described', () => {
   const a = watchable();
-  assert.deepEqual(j(a.watchStart('0x500ff8', 8)), { watching: true, address: '0x500ff8', size: 8, mode: 'sampled', reason: 'hardware watchpoints are used on Windows only', threads: 0, pages: 1, pageSize: 4096, maxSeconds: 600, protection: 'rw-' });
+  assert.deepEqual(j(a.watchStart('0x500ff8', 8)), { watching: true, address: '0x500ff8', size: 8, mode: 'sampled', reason: 'hardware watchpoints are used on Windows only', threads: 0, pages: 1, pageSize: 4096, maxSeconds: 600, maxHits: 200000, protection: 'rw-' });
   assert.deepEqual(a.monitor.armed.ranges, [['0x500ff8', 8]]);
   assert.equal(watchable().watchStart('0x500ffc', 8).pages, 2); // the bytes cross a page edge
   assert.equal(watchable().watchStart('0x600010', 4).protection, 'r--'); // constants can be watched too
@@ -1156,7 +1156,7 @@ function trap(a, dr6, pc, tid = 11, type = 'single-step', offset = 0x68) {
 
 test('watchStart on Windows: a few aligned bytes get hardware watchpoints on every thread, and no page is trapped', () => {
   const a = exactable();
-  assert.deepEqual(j(a.watchStart('0x500010', 8)), { watching: true, address: '0x500010', size: 8, mode: 'exact', reason: '', threads: 2, pages: 1, pageSize: 4096, maxSeconds: 600, protection: 'rw-' });
+  assert.deepEqual(j(a.watchStart('0x500010', 8)), { watching: true, address: '0x500010', size: 8, mode: 'exact', reason: '', threads: 2, pages: 1, pageSize: 4096, maxSeconds: 600, maxHits: 200000, protection: 'rw-' });
   // Two per piece: one that fires on a write, one on any access, to tell the two apart.
   assert.deepEqual(a.cpu.set, [[11, 0, '0x500010', 8, 'w'], [11, 1, '0x500010', 8, 'rw'], [12, 0, '0x500010', 8, 'w'], [12, 1, '0x500010', 8, 'rw']]);
   assert.equal(a.monitor.enables, 0);
@@ -1528,4 +1528,36 @@ test('refs: when the same bytes decode with and without a prefix, the longer ins
     0x410020: { size: 7, mnemonic: 'lea', opStr: 'rdx, [rip - 0xfe27]' },
   } });
   assert.deepEqual(j(a.refs('0x400200', null)).code.map((c) => [c.address, c.text]), [['0x410020', 'lea rdx, [rip - 0xfe27]']]);
+});
+
+// ---- limits handed over by the main process ----
+test('limits: a recording uses the time and size limits it is started with, kept inside the bounds the agent accepts', () => {
+  const threads = [{ id: 11, state: 'waiting', context: {} }];
+  let a = load({ Process: { enumerateThreads: () => threads } });
+  let r = j(a.coverStart('all', { mode: 'all' }, { ms: 120000, blocks: 500000 }));
+  assert.deepEqual([r.maxSeconds, r.maxBlocks], [120, 500000]);
+  assert.ok(a.timers.some((t) => t.ms === 120000));
+  a = load({ Process: { enumerateThreads: () => threads } });
+  r = j(a.coverStart('all', { mode: 'all' }, { ms: 1, blocks: 1e12 })); // out of bounds: brought in
+  assert.deepEqual([r.maxSeconds, r.maxBlocks], [60, 5000000]);
+  a = load({ Process: { enumerateThreads: () => threads } });
+  r = j(a.coverStart('all', { mode: 'all' }, { ms: '120000', blocks: null })); // not numbers: the usual limits
+  assert.deepEqual([r.maxSeconds, r.maxBlocks], [600, 2000000]);
+
+  a = load();
+  r = j(a.heapStart({ min: 0, max: 0 }, { ms: 1800000, live: 50000, freed: 5000 }));
+  assert.deepEqual([r.maxSeconds, r.maxLive, r.maxFreed], [1800, 50000, 5000]);
+  a = load();
+  r = j(a.heapStart({ min: 0, max: 0 }, { ms: 1e12, live: 1e12, freed: 0 }));
+  assert.deepEqual([r.maxSeconds, r.maxLive, r.maxFreed], [3600, 500000, 100]);
+});
+
+test('limits: heap tracking keeps no more freed blocks than its limit, the newest', () => {
+  const a = load();
+  a.heapStart({ min: 0, max: 0 }, { freed: 100 });
+  for (let i = 0; i < 150; i++) { run(a, 'malloc', [64], 0x900000 + i * 0x100, 7, []); run(a, 'free', [0x900000 + i * 0x100], 0, 7, []); }
+  const s = j(a.heapStatus());
+  assert.equal(s.freedKept, 100);
+  assert.equal(j(a.heapFind('0x900010')).freed.length, 0);            // the oldest was pushed out
+  assert.equal(j(a.heapFind('0x' + (0x900000 + 149 * 0x100 + 16).toString(16))).freed.length, 1); // the newest is there
 });

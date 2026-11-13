@@ -190,6 +190,7 @@ button, input, select { font-family: inherit; }
 .scan-cols { grid-template-columns: 140px minmax(0, 1fr); }
 .insp-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .inspector .num { text-align: right; }
+.inspector { zoom: var(--insp-zoom, 1); } /* Settings: Inspector text size */
 .inspector .mono { font-family: var(--mono); font-size: 11.5px; }
 .inspector .dim { color: var(--faint); }
 .inspector .tag { font: 500 9.5px/15px var(--mono); text-align: center; border-radius: 4px; color: var(--muted); border: 1px solid var(--border); }
@@ -404,7 +405,7 @@ select.mini:disabled, input.mini:disabled { opacity: .5; }
 .stepper button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 16%, var(--elev)); }
 .stepper button:disabled { color: var(--faint); cursor: default; }
 .stepper .val { display: inline-flex; align-items: center; gap: 3px; padding: 0 8px 0 4px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
-.stepper input { width: 30px; height: 100%; border: 0; outline: 0; background: transparent; color: var(--fg); text-align: right; font: 12px var(--mono); }
+.stepper input { width: 34px; height: 100%; border: 0; outline: 0; background: transparent; color: var(--fg); text-align: right; font: 12px var(--mono); }
 .settings .unit { font-size: 11px; color: var(--muted); }
 .fontpick { display: flex; flex-direction: column; align-items: stretch; gap: 5px; width: 100%; }
 .fontpick .note { font-size: 11px; line-height: 1.35; color: var(--warn); }

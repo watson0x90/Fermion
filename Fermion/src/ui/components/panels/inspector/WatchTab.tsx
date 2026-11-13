@@ -14,7 +14,7 @@ export interface WatchResult {
   places: number; truncated: boolean; error: string; items: WatchPlace[];
 }
 export type WatchMode = 'auto' | 'sampled';
-interface Started { watching: boolean; address: string; size: number; mode?: string; reason?: string; threads?: number; pages: number; pageSize: number; maxSeconds: number; protection: string; }
+interface Started { watching: boolean; address: string; size: number; mode?: string; reason?: string; threads?: number; pages: number; pageSize: number; maxSeconds: number; maxHits?: number; protection: string; }
 
 export const MAX_WATCH_BYTES = 4096;
 const POLL_MS = 500;
@@ -147,7 +147,7 @@ export function WatchTab({ goto }: { goto: Goto | null }) {
       {started && started.mode === 'exact' && (
         <div className="insp-note" data-testid="watch-status">
           Watching {plural(started.size, 'byte')} at {started.address} exactly: every access is counted, on {plural(started.threads ?? 0, 'thread')} and any that start. Use the program now, then press Stop.
-          The address of a place is the instruction after the one that touched the bytes. It stops by itself after {Math.round(started.maxSeconds / 60)} minutes or 200,000 accesses.
+          The address of a place is the instruction after the one that touched the bytes. It stops by itself after {Math.round(started.maxSeconds / 60)} minutes or {(started.maxHits ?? 200000).toLocaleString('en-US')} accesses.
         </div>
       )}
       {started && started.mode !== 'exact' && (

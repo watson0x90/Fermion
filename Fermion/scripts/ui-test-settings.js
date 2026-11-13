@@ -7,6 +7,7 @@
 // Exit 0 + SETTINGS_OK ; 1 + SETTINGS_FAIL
 const { _electron: electron } = require('playwright-core');
 const electronPath = require('electron');
+const { spawn } = require('child_process');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -157,7 +158,58 @@ const same = (a, b) => sorted(a) === sorted(b);
     await win.click('[data-testid="pref-undo"]');
     await win.waitForFunction(() => window.__fermion.terminal.getFontSize() === 20, undefined, T);
 
-    console.log('SETTINGS_OK defaults at first start + a centred dialog + ' + (FONT ? 'installed font ' + FONT + ' offered and applied' : 'no system font tried here') + ' + a missing font is said so + editor size, numbers, tab width, minimap, wrap and output size and cursor follow at once + Escape and Ctrl+, + undo of a reset + out-of-range number clamped + all kept across a restart (incl. catch children, coverage scope, watch mode, refresh) + damaged store falls back to defaults + reset');
+    step = 'Inspector text size';
+    await tab(win, 'inspector');
+    await win.click('[data-testid="pref-inspector-size-larger"]');
+    await win.click('[data-testid="settings-close"]');
+    await win.click('role=tab[name="Inspector"]');
+    await win.waitForSelector('[data-testid="inspector-panel"]', T);
+    const zoom = await win.evaluate(() => getComputedStyle(document.querySelector('[data-testid="inspector-panel"]')).zoom);
+    if (String(zoom) !== '1.25') throw new Error('the Inspector is drawn at ' + zoom + ', not 1.25');
+    await win.click('role=tab[name="Editor"]');
+
+    step = 'limits reach the main process, which keeps them in range';
+    await win.click('[data-testid="open-settings"]');
+    await tab(win, 'limits');
+    await win.fill('[data-testid="pref-limit-repl"]', '6');
+    await win.press('[data-testid="pref-limit-repl"]', 'Enter');
+    await win.selectOption('[data-testid="pref-limit-heap-freed"]', '5000');
+    await win.click('[data-testid="settings-close"]');
+    await sleep(300);
+    // Whatever a window asks for, main answers with what is in force: nothing outside the ranges.
+    const forced = await win.evaluate(() => window.fermion.setLimits({ replTimeoutSeconds: 6, recordMinutes: 99999, heapLive: 1, coverBlocks: 1e15 }));
+    if (forced.recordMinutes !== 60 || forced.heapLive !== 10000 || forced.coverBlocks !== 5000000 || forced.replTimeoutSeconds !== 6) throw new Error('main accepted: ' + JSON.stringify(forced));
+    const refused = await win.evaluate(() => window.fermion.setLimits({ recordMinutes: '5' }).then(() => 'accepted', (e) => String(e.message || e)));
+    if (!/must be a number/.test(refused)) throw new Error('a limit that is not a number was ' + refused);
+
+    step = 'the limits in force are the ones Settings shows';
+    let replNote = 'REPL limit not tried (could not attach here)';
+    const target = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+    try {
+      // Settings is the source: changing a limit there sends them all again.
+      await win.click('[data-testid="open-settings"]');
+      await tab(win, 'limits');
+      await win.click('[data-testid="pref-limit-repl-minus"]');
+      await win.click('[data-testid="settings-close"]');
+      await sleep(300);
+      let attached = true;
+      await win.evaluate(() => window.MonacoCodeEditor.setValue('// settings test'));
+      try { await win.evaluate((pid) => window.__fermion.triggerAttach(pid), target.pid); } catch (_) { attached = false; }
+      if (attached) {
+        const t0 = Date.now();
+        const r = await win.evaluate(() => window.fermion.evaluate('new Promise(() => {})'));
+        const took = (Date.now() - t0) / 1000;
+        if (r.ok || !/Timed out after 5 s/.test(r.error) || took < 4 || took > 12) throw new Error('an entry that never ends: ' + JSON.stringify(r).slice(0, 200) + ' after ' + took.toFixed(1) + ' s');
+        const heap = await win.evaluate(() => window.fermion.inspect.heapStart({ min: 0, max: 0 }));
+        await win.evaluate(() => window.fermion.inspect.heapStop());
+        if (heap.maxFreed !== 5000 || heap.maxSeconds !== 600 || heap.maxLive !== 200000) throw new Error('heap tracking started with ' + JSON.stringify({ s: heap.maxSeconds, live: heap.maxLive, freed: heap.maxFreed }));
+        replNote = 'a REPL entry that never ends is given up after the 5 s set + heap tracking starts with the limits set';
+      }
+    } finally {
+      try { target.kill(); } catch (_) { /* gone */ }
+    }
+
+    console.log('SETTINGS_OK ' + replNote + ' + main keeps limits in range + Inspector text size + defaults at first start + a centred dialog + ' + (FONT ? 'installed font ' + FONT + ' offered and applied' : 'no system font tried here') + ' + a missing font is said so + editor size, numbers, tab width, minimap, wrap and output size and cursor follow at once + Escape and Ctrl+, + undo of a reset + out-of-range number clamped + all kept across a restart (incl. catch children, coverage scope, watch mode, refresh) + damaged store falls back to defaults + reset');
     await app.close();
     process.exitCode = 0;
   } catch (e) {

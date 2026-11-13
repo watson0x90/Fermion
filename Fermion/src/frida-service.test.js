@@ -1072,7 +1072,7 @@ test('inspectCoverStart: all threads or one, with a checked scope; anything else
   await t.svc.attach(1);
   assert.deepEqual(await t.svc.inspectCoverStart('all', { mode: 'app', junk: 1 }), { recording: true, threads: 3 });
   await t.svc.inspectCoverStart(11, { mode: 'module', module: 'app.exe' });
-  assert.deepEqual(t.calls, [['coverStart', 'all', { mode: 'app', module: '' }], ['coverStart', 11, { mode: 'module', module: 'app.exe' }]]);
+  assert.deepEqual(t.calls, [['coverStart', 'all', { mode: 'app', module: '' }, { ms: 600000, blocks: 2000000 }], ['coverStart', 11, { mode: 'module', module: 'app.exe' }, { ms: 600000, blocks: 2000000 }]]);
   for (const bad of ['ALL', 'every', -1, 1.5, null, undefined, {}, '11']) await assert.rejects(() => t.svc.inspectCoverStart(bad, { mode: 'all' }), /invalid thread/);
   await assert.rejects(() => t.svc.inspectCoverStart('all', { mode: 'nope' }), /scope/i);
   assert.equal(t.calls.length, 2);
@@ -1150,7 +1150,7 @@ test('inspectWatchStart validates the address and size in main; hits and stop pa
   assert.deepEqual(await svc.inspectWatchStart('0x50ABC0', 8), { watching: true });
   assert.deepEqual(await svc.inspectWatchHits('ignored'), { watching: true, hits: 2 });
   assert.deepEqual(await svc.inspectWatchStop('ignored'), { watching: false, hits: 2 });
-  assert.deepEqual(calls, [['watchStart', '0x50abc0', 8, 'auto'], ['watchHits'], ['watchStop']]);
+  assert.deepEqual(calls, [['watchStart', '0x50abc0', 8, 'auto', { ms: 600000, hits: 200000 }], ['watchHits'], ['watchStop']]);
   // How to watch: exactly where possible (the default), exactly or not at all, or by trapping the page.
   calls.length = 0;
   for (const mode of ['auto', 'exact', 'sampled']) await svc.inspectWatchStart('0x500000', 8, mode);
@@ -1181,7 +1181,7 @@ test('heap tracking: sizes and the address are validated in main; status and sto
   assert.deepEqual(await svc.inspectHeapStatus('ignored'), { did: 'heapStatus' });
   assert.deepEqual(await svc.inspectHeapFind('0x90ABC0'), { did: 'heapFind' });
   assert.deepEqual(await svc.inspectHeapStop('ignored'), { did: 'heapStop' });
-  assert.deepEqual(calls, [['heapStart', { min: 0, max: 0 }], ['heapStart', { min: 32, max: 64 }], ['heapStart', { min: 32, max: 0 }], ['heapStatus'], ['heapFind', '0x90abc0'], ['heapStop']]);
+  assert.deepEqual(calls, [['heapStart', { min: 0, max: 0 }, HEAP_LIMITS], ['heapStart', { min: 32, max: 64 }, HEAP_LIMITS], ['heapStart', { min: 32, max: 0 }, HEAP_LIMITS], ['heapStatus'], ['heapFind', '0x90abc0'], ['heapStop']]);
 });
 
 test('the heap tracking calls are on the allow-list the window can call', () => {
@@ -1190,6 +1190,7 @@ test('the heap tracking calls are on the allow-list the window can call', () => 
 });
 
 // ---- strings and references ----
+const HEAP_LIMITS = { ms: 600000, live: 200000, freed: 20000 };
 test('strings and references: module, search text, minimum length and address are validated in main', async () => {
   const { svc } = attachedService();
   const calls = [];
@@ -1215,4 +1216,42 @@ test('strings and references: module, search text, minimum length and address ar
 test('the strings and references calls are on the allow-list the window can call', () => {
   const { INVOKE_METHODS } = require('./frida-ipc.js');
   for (const m of ['inspectStrings', 'inspectRefs']) assert.ok(INVOKE_METHODS.has(m), m);
+});
+
+// ---- adjustable limits ----
+test('setLimits: every limit is brought into its range in main, a missing one gets its default, anything else is refused', async () => {
+  const { svc } = attachedService();
+  const usual = { replTimeoutSeconds: 20, recordMinutes: 10, coverBlocks: 2000000, watchHits: 200000, heapLive: 200000, heapFreed: 20000 };
+  assert.deepEqual(await svc.setLimits({}), usual);
+  assert.deepEqual(await svc.setLimits(undefined), usual);
+  assert.deepEqual(await svc.setLimits({ replTimeoutSeconds: 90, recordMinutes: 30.4, junk: 5 }), { ...usual, replTimeoutSeconds: 90, recordMinutes: 30 });
+  // The window cannot ask for more (or less) than the range allows.
+  assert.deepEqual(await svc.setLimits({ replTimeoutSeconds: 1e9, recordMinutes: 1e9, coverBlocks: 1e12, watchHits: 1e12, heapLive: 1e12, heapFreed: 1e12 }),
+    { replTimeoutSeconds: 600, recordMinutes: 60, coverBlocks: 5000000, watchHits: 2000000, heapLive: 500000, heapFreed: 200000 });
+  assert.deepEqual(await svc.setLimits({ replTimeoutSeconds: 0, recordMinutes: -3, coverBlocks: 1, watchHits: 1, heapLive: 1, heapFreed: 1 }),
+    { replTimeoutSeconds: 5, recordMinutes: 1, coverBlocks: 100000, watchHits: 10000, heapLive: 10000, heapFreed: 1000 });
+  await svc.setLimits({ recordMinutes: 30 });
+  for (const bad of ['x', 5, [], [{ recordMinutes: 5 }]]) await assert.rejects(() => svc.setLimits(bad), /limits must be an object/);
+  for (const bad of ['30', NaN, Infinity, {}, [5], true]) await assert.rejects(() => svc.setLimits({ recordMinutes: bad }), /recordMinutes must be a number/);
+  assert.equal(svc._limits.recordMinutes, 30); // a refused call changes nothing
+});
+
+test('setLimits: the limits in force are handed to the agent with the next recording, and the REPL waits that long', async () => {
+  const { svc } = attachedService();
+  const calls = [];
+  const agent = { exports: {} };
+  for (const m of ['coverStart', 'watchStart', 'heapStart']) agent.exports[m] = async (...a) => { calls.push([m, a[a.length - 1]]); return {}; };
+  svc._getAgent = async () => agent;
+  await svc.attach(1);
+  await svc.setLimits({ replTimeoutSeconds: 45, recordMinutes: 5, coverBlocks: 500000, watchHits: 50000, heapLive: 50000, heapFreed: 5000 });
+  assert.equal(svc._evalTimeoutMs, 45000);
+  await svc.inspectCoverStart('all', { mode: 'all' });
+  await svc.inspectWatchStart('0x50abc0', 8);
+  await svc.inspectHeapStart();
+  assert.deepEqual(calls, [['coverStart', { ms: 300000, blocks: 500000 }], ['watchStart', { ms: 300000, hits: 50000 }], ['heapStart', { ms: 300000, live: 50000, freed: 5000 }]]);
+});
+
+test('setLimits is on the allow-list the window can call', () => {
+  const { INVOKE_METHODS } = require('./frida-ipc.js');
+  assert.ok(INVOKE_METHODS.has('setLimits'));
 });
