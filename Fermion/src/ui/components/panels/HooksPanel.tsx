@@ -3,7 +3,9 @@ import { useAppDispatch, useAppSelector } from '../../store';
 import { hooksActions } from '../../store/hooksSlice';
 import { cleanIpcError } from '../../inspector/format';
 import { Frame, Hit, Hook, SearchKind, Target, hitTime, sameTarget } from '../../hooking/model';
-import { addTarget, applyHandler, installAll, removeHook, setEnabled } from '../../hooking/ops';
+import { addPreset, addTarget, applyHandler, installAll, presetSummary, removeHook, setEnabled } from '../../hooking/ops';
+import { PRESETS } from '../../hooking/presets';
+import { writeTerminal } from '../../bridge';
 import { Icon } from '../Icon';
 import { addrMenu } from '../../addressMenu';
 import { SetPicker } from '../SetPicker';
@@ -83,6 +85,23 @@ export function HooksPanel() {
   const add = (t: Target) => addTarget(dispatch, t, isAttached);
   const addAll = async () => { for (const t of addable.slice(0, ADD_ALL_MAX)) await addTarget(dispatch, t, isAttached); };
 
+  // ---- presets ----
+  const [presetBusy, setPresetBusy] = useState(false);
+  const [presetNote, setPresetNote] = useState('');
+  const usePreset = async (id: string) => {
+    const preset = PRESETS.find((p) => p.id === id);
+    if (!preset || !isAttached || presetBusy) return;
+    setPresetBusy(true);
+    setPresetNote('');
+    try {
+      const text = presetSummary(preset.label, await addPreset(dispatch, preset, hooksRef.current));
+      setPresetNote(text);
+      writeTerminal('STATUS', '[+] Preset ' + text);
+    } finally {
+      setPresetBusy(false);
+    }
+  };
+
   // ---- the selected hook ----
   const [view, setView] = useState<'hits' | 'handler'>('hits');
   const [allHits, setAllHits] = useState(false);
@@ -161,6 +180,18 @@ export function HooksPanel() {
           />
         </span>
         <button className="pill" data-testid="hook-search" disabled={!isAttached || !query.trim() || searching} onClick={search}>{searching ? 'Searching…' : 'Find'}</button>
+        <select
+          className="mini"
+          data-testid="hook-preset"
+          aria-label="Add a preset of hooks"
+          title={isAttached ? 'Add a ready-made set of hooks for a Windows program. Each comes with a handler that decodes the arguments.' : 'Attach to a process to add a preset'}
+          value=""
+          disabled={!isAttached || presetBusy}
+          onChange={(e) => usePreset(e.target.value)}
+        >
+          <option value="">{presetBusy ? 'Adding…' : 'Add a preset…'}</option>
+          {PRESETS.map((p) => <option key={p.id} value={p.id} title={p.about}>{p.label} ({p.hooks.length})</option>)}
+        </select>
         <SetPicker />
       </div>
       {!isAttached && (
@@ -169,6 +200,12 @@ export function HooksPanel() {
         </div>
       )}
       {searchError && <div className="insp-note err" role="alert">{searchError}</div>}
+      {presetNote && (
+        <div className="insp-note preset-note" data-testid="hook-preset-note">
+          <span>{presetNote}</span>
+          <button className="iconbtn" aria-label="Dismiss" title="Dismiss" onClick={() => setPresetNote('')}>×</button>
+        </div>
+      )}
       {found && (
         <div className="hook-results" data-testid="hook-results">
           <div className="hook-results-head">

@@ -2,7 +2,8 @@
 // hooks through window.fermion.hooks, keeping the store in step.
 import { hooksActions } from '../store/hooksSlice';
 import { cleanIpcError } from '../inspector/format';
-import { Hook, Target, hookFromTarget } from './model';
+import { Hook, Target, hookFromTarget, sameTarget } from './model';
+import { Preset } from './presets';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion?.hooks;
@@ -82,4 +83,45 @@ export async function removeHook(dispatch: Dispatch, hook: Hook, attached: boole
   if (attached && placed(hook)) {
     try { await api().remove(hook.id); } catch { /* the session went away: nothing left to remove */ }
   }
+}
+
+export interface PresetOutcome { added: string[]; present: string[]; missing: string[]; failed: string[]; }
+
+// Add a preset's hooks to the attached process. Each function is looked up
+// by its exact exported name in the modules the preset names, first hit
+// wins; one that is not there (its module is not loaded, or this is not
+// Windows) is reported as missing, and one already hooked is left alone.
+export async function addPreset(dispatch: Dispatch, preset: Preset, existing: Hook[]): Promise<PresetOutcome> {
+  const out: PresetOutcome = { added: [], present: [], missing: [], failed: [] };
+  const known: Target[] = existing.slice();
+  for (const entry of preset.hooks) {
+    let target: Target | null = null;
+    for (const module of entry.modules) {
+      let items: Target[] = [];
+      try { items = (await api().search('exports', module + '!' + entry.fn))?.items ?? []; } catch { /* treated as not found */ }
+      // The search matches patterns and ignores case: keep the exact name only.
+      target = items.find((t) => typeof t?.name === 'string' && t.name.slice(t.name.lastIndexOf('!') + 1) === entry.fn) ?? null;
+      if (target) break;
+    }
+    if (!target) { out.missing.push(entry.fn); continue; }
+    if (known.some((h) => sameTarget(h, target!))) { out.present.push(entry.fn); continue; }
+    const hook: Hook = { ...hookFromTarget(target), code: entry.handler, backtrace: entry.callers !== false };
+    known.push(hook);
+    dispatch(hooksActions.added(hook));
+    const error = await installHook(dispatch, hook);
+    if (error) out.failed.push(entry.fn); else out.added.push(entry.fn);
+  }
+  return out;
+}
+
+// One sentence saying what adding a preset did.
+export function presetSummary(label: string, o: PresetOutcome): string {
+  const parts: string[] = [];
+  const n = (count: number, what: string) => count + ' ' + what + (count === 1 ? '' : 's');
+  if (o.added.length) parts.push(n(o.added.length, 'hook') + ' added');
+  if (o.present.length) parts.push(o.present.length + ' already there');
+  if (o.failed.length) parts.push(o.failed.length + ' could not be placed (' + o.failed.join(', ') + ')');
+  if (o.missing.length) parts.push(o.missing.length + ' not found in this process (' + o.missing.join(', ') + ')');
+  if (!o.added.length && !o.present.length && !o.failed.length) return label + ': none of its functions are in this process. The presets are for Windows programs, and a module that is not loaded yet is skipped.';
+  return label + ': ' + parts.join('; ') + '.';
 }
