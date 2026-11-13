@@ -37,6 +37,11 @@ const INVOKE_METHODS = new Set([
 	'inspectCoverStart',
 	'inspectCoverStop',
 	'inspectCoverSave',
+	// Memory watch: who reads or writes some bytes of data (address and size
+	// validated in the service; bounded in the agent).
+	'inspectWatchStart',
+	'inspectWatchHits',
+	'inspectWatchStop',
 	// Read-only: disassemble instructions at an address (validated, capped).
 	'inspectDisassemble',
 	// Roadmap — follow one thread with Stalker and count its calls.

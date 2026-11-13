@@ -959,3 +959,88 @@ test('Coverage: nothing recorded says so and offers nothing to save', async () =
   await waitFor(() => expect(screen.getByTestId('cover-error')).toHaveTextContent('Nothing was recorded.'));
   expect(screen.queryByTestId('cover-save-drcov')).toBeNull();
 });
+
+// ---- memory watch ----
+const PLACE = {
+  op: 'write', from: '0x7fff96101234', where: 'ntdll.dll+0x31234', symbol: 'ntdll.dll!memcpy', hits: 5, near: 0, last: '0x500014', threads: [5156, 77],
+  frames: [{ address: '0x7ff62c711000', where: 'node.exe+0x1000', symbol: 'node.exe!save_settings' }, { address: '0x500', where: '0x500', symbol: '' }],
+};
+const NEARBY = { op: 'read', from: '0x7ff62c712000', where: 'node.exe+0x2000', symbol: '', hits: 0, near: 9, last: '0x500800', threads: [77], frames: [] };
+const WATCHED = { watching: true, endedBy: '', address: '0x500010', size: 8, seconds: 1.5, hits: 5, near: 9, places: 2, truncated: false, error: '', items: [PLACE, NEARBY] };
+function withWatch(over: any = {}) {
+  inspect.watchStart = vi.fn(async (address: string, size: number) => ({ watching: true, address, size, pages: 1, pageSize: 4096, maxSeconds: 600, protection: 'rw-' }));
+  inspect.watchHits = vi.fn(async () => WATCHED);
+  inspect.watchStop = vi.fn(async () => ({ ...WATCHED, watching: false, endedBy: 'stop', seconds: 2 }));
+  Object.assign(inspect, over);
+}
+
+test('Watch: an address and a size start a watch; who touched the bytes is listed while it runs', async () => {
+  setup();
+  withWatch();
+  open('watch');
+  expect(screen.getByTestId('watch-empty')).toHaveTextContent('which code reads or writes');
+  expect(screen.getByTestId('watch-toggle')).toBeDisabled(); // no address yet
+  fireEvent.change(screen.getByTestId('watch-address'), { target: { value: ' 0x500010 ' } });
+  expect(screen.getByTestId('watch-size')).toHaveValue('8');
+  fireEvent.click(screen.getByTestId('watch-toggle'));
+  await waitFor(() => expect(inspect.watchStart).toHaveBeenCalledWith('0x500010', 8));
+  await waitFor(() => expect(screen.getByTestId('watch-status')).toHaveTextContent('Watching 8 bytes at 0x500010'));
+  expect(screen.getByTestId('watch-status')).toHaveTextContent('sampled');
+  expect(screen.getByTestId('watch-address')).toBeDisabled();
+  const row = await screen.findByTestId('watch-row');
+  expect(row).toHaveTextContent('write');
+  expect(row).toHaveTextContent('ntdll.dll!memcpy');
+  expect(row).toHaveTextContent('5');
+  expect(screen.getAllByTestId('watch-row').length).toBe(1); // the place that only touched other bytes is not listed
+  expect(screen.getByTestId('watch-line')).toHaveTextContent('5 accesses from 1 place');
+  fireEvent.click(screen.getByTestId('watch-toggle'));
+  await waitFor(() => expect(inspect.watchStop).toHaveBeenCalled());
+  await waitFor(() => expect(screen.getByTestId('watch-toggle')).toHaveTextContent('Watch'));
+  expect(screen.getByTestId('watch-line')).toHaveTextContent('5 accesses from 1 place in 2 s');
+  expect(screen.getByTestId('watch-address')).not.toBeDisabled();
+});
+
+test('Watch: a place opens its call stack; accesses to the rest of the page can be shown', async () => {
+  setup();
+  withWatch();
+  open('watch');
+  fireEvent.change(screen.getByTestId('watch-address'), { target: { value: '0x500010' } });
+  fireEvent.click(screen.getByTestId('watch-toggle'));
+  fireEvent.click(await screen.findByTestId('watch-row'));
+  const stack = screen.getByTestId('watch-stack');
+  expect(within(stack).getAllByTestId('watch-frame').map((f) => f.textContent)).toEqual(['node.exe!save_settings0x7ff62c711000', '0x5000x500']);
+  expect(screen.getByTestId('watch-near')).toHaveTextContent('9 accesses to other bytes on the same page');
+  fireEvent.click(screen.getByTestId('watch-near-toggle'));
+  expect(screen.getAllByTestId('watch-row').length).toBe(2);
+  expect(screen.getAllByTestId('watch-row')[1]).toHaveTextContent('node.exe+0x2000');
+});
+
+test('Watch: the size must be 1..4096; a refusal from the target is shown; a watch that ends by itself is collected', async () => {
+  setup();
+  withWatch({ watchStart: vi.fn(async () => { throw new Error("Error invoking remote method 'fermion:invoke': Error: 0x500010 is code. A watch is for data; hook the code instead.") }) });
+  open('watch');
+  fireEvent.change(screen.getByTestId('watch-address'), { target: { value: '0x500010' } });
+  for (const bad of ['0', '4097', 'x', '']) {
+    fireEvent.change(screen.getByTestId('watch-size'), { target: { value: bad } });
+    expect(screen.getByTestId('watch-toggle')).toBeDisabled();
+  }
+  fireEvent.change(screen.getByTestId('watch-size'), { target: { value: '16' } });
+  fireEvent.click(screen.getByTestId('watch-toggle'));
+  await waitFor(() => expect(screen.getByTestId('watch-error')).toHaveTextContent('0x500010 is code. A watch is for data; hook the code instead.'));
+  expect(screen.getByTestId('watch-toggle')).toHaveTextContent('Watch');
+
+  withWatch({ watchHits: vi.fn(async () => ({ ...WATCHED, watching: false, endedBy: 'lost', error: 'unable to protect' })) });
+  fireEvent.click(screen.getByTestId('watch-toggle'));
+  await waitFor(() => expect(screen.getByTestId('watch-ended')).toHaveTextContent('can no longer be trapped'), { timeout: 3000 });
+  expect(screen.getByTestId('watch-toggle')).toHaveTextContent('Watch');
+  expect(screen.getAllByTestId('watch-row').length).toBe(1); // what was seen stays
+});
+
+test('Watch: an address sent from the address menu fills the field and opens the view, without starting', async () => {
+  const store = setup();
+  withWatch();
+  act(() => { store.dispatch(uiActions.openAddress({ view: 'watch', address: '0x7fff960d2000' })); });
+  await waitFor(() => expect(screen.getByTestId('insp-watch')).toHaveAttribute('aria-selected', 'true'));
+  expect(screen.getByTestId('watch-address')).toHaveValue('0x7fff960d2000');
+  expect(inspect.watchStart).not.toHaveBeenCalled();
+});

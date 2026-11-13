@@ -2,7 +2,8 @@
 // process (like the REPL agent) and called over rpc by the Inspector panel.
 // Everything here only observes the target: modules, exports/imports, threads,
 // memory ranges, memory bytes, pattern scans, and following one thread with
-// Stalker to count the calls it makes. Nothing writes to the target's memory. Results are plain JSON —
+// Stalker to count the calls it makes. Only `write` changes the target's
+// memory; a memory watch changes a page's protection while it runs. Results are plain JSON —
 // pointers are hex strings — and every list is capped so a huge target cannot
 // flood the UI.
 
@@ -432,7 +433,182 @@
 		return { summary: summary, drcov: drcov, text: coverText(state, sorted, summary) };
 	}
 
+	// ---- watching memory ----
+	// Who reads or writes some bytes. The page holding them is trapped
+	// (MemoryAccessMonitor); the first access to it is reported with the
+	// instruction it came from, and the trap is then gone. So it is put back a
+	// moment later, again and again: accesses are sampled, not all counted.
+	// The trap covers whole pages; an access to other bytes of the page is
+	// counted apart. One watch at a time, bounded in time and in places.
+	var MAX_WATCH = 4096;          // bytes watched
+	var MAX_WATCH_MS = 600000;     // a watch ends by itself after 10 minutes
+	var WATCH_REARM_MS = 5;        // the trap is put back this long after an access
+	var WATCH_KEEP_MS = 250;       // ... and this often in any case
+	var MAX_WATCH_PLACES = 500;    // distinct (operation, instruction) pairs kept
+	var MAX_WATCH_ITEMS = 200;     // ... and reported
+	var MAX_WATCH_FRAMES = 16;
+	var MAX_WATCH_THREADS = 8;     // thread ids remembered per place
+	var watch = null; // { base, end, size, protection, places, order, hits, near, overflow, timer, rearm, keep, endedBy, error, started, ended }
+
+	function watching() { return !!watch && !watch.endedBy; }
+
+	function pageOf(p) { return p.and(ptr(Process.pageSize - 1).not()); }
+
+	// Does [p, p + n) touch a page that is trapped right now?
+	function watchedPage(p, n) {
+		if (!watching()) return false;
+		var first = pageOf(watch.base);
+		var last = pageOf(watch.end.sub(1)).add(Process.pageSize);
+		return p.add(n).compare(first) > 0 && p.compare(last) < 0;
+	}
+
+	function armWatch(state) {
+		MemoryAccessMonitor.enable([{ base: state.base, size: state.size }], {
+			onAccess: function (details) { onWatchAccess(state, details); },
+		});
+	}
+
+	function stopWatch(endedBy) {
+		if (!watching()) return;
+		watch.endedBy = endedBy;
+		watch.ended = Date.now();
+		if (watch.timer !== null) { clearTimeout(watch.timer); watch.timer = null; }
+		if (watch.rearm !== null) { clearTimeout(watch.rearm); watch.rearm = null; }
+		if (watch.keep !== null) { clearInterval(watch.keep); watch.keep = null; }
+		try { MemoryAccessMonitor.disable(); } catch (e) { /* nothing armed */ }
+	}
+
+	// Put the trap back. With `look`, first make sure the memory is still
+	// there: Frida arms an unmapped page without complaint, and the watch
+	// would go on seeing nothing. (Looking is only possible with the trap
+	// off, and costs more than arming, so the quick re-arm after an access
+	// does not.) A watch that cannot go on ends and says why.
+	function rearmWatch(state, look) {
+		if (watch !== state || state.endedBy) return;
+		if (state.rearm !== null) { clearTimeout(state.rearm); state.rearm = null; }
+		try { MemoryAccessMonitor.disable(); } catch (e) { /* nothing armed */ }
+		if (look) {
+			// Freed address space is no range at all, or (Windows) a range with no access.
+			var range = Process.findRangeByAddress(state.base);
+			if (!range || range.protection.charAt(0) !== 'r') {
+				state.error = 'the memory is no longer mapped';
+				stopWatch('lost');
+				return;
+			}
+		}
+		try {
+			armWatch(state);
+		} catch (e) {
+			state.error = String(e && e.message ? e.message : e);
+			stopWatch('lost');
+		}
+	}
+
+	// Runs on the thread that touched the page, before its instruction is
+	// retried: only count here, names are looked up when the result is asked for.
+	function onWatchAccess(state, details) {
+		if (watch !== state || state.endedBy) return;
+		var inside = details.address.compare(state.base) >= 0 && details.address.compare(state.end) < 0;
+		if (inside) state.hits++; else state.near++;
+		var key = details.operation + '|' + details.from.toString();
+		var place = state.places[key];
+		if (!place) {
+			if (state.order.length >= MAX_WATCH_PLACES) {
+				state.overflow = true;
+			} else {
+				place = state.places[key] = { op: String(details.operation), from: details.from, hits: 0, near: 0, last: null, threads: [], stack: null, named: null };
+				state.order.push(key);
+			}
+		}
+		if (place) {
+			if (inside) { place.hits++; place.last = details.address; } else { place.near++; if (place.last === null) place.last = details.address; }
+			if (place.threads.indexOf(details.threadId) < 0 && place.threads.length < MAX_WATCH_THREADS) place.threads.push(details.threadId);
+			// The call stack of the first access on the bytes themselves.
+			if (inside && place.stack === null && details.context) {
+				try { place.stack = Thread.backtrace(details.context, Backtracer.ACCURATE); }
+				catch (e) { try { place.stack = Thread.backtrace(details.context, Backtracer.FUZZY); } catch (e2) { place.stack = []; } }
+			}
+		}
+		if (state.rearm === null) state.rearm = setTimeout(function () { state.rearm = null; rearmWatch(state, false); }, WATCH_REARM_MS);
+	}
+
+	function watchResult() {
+		if (!watch) return { watching: false, endedBy: 'none', address: null, size: 0, seconds: 0, hits: 0, near: 0, places: 0, truncated: false, error: '', items: [] };
+		var state = watch;
+		var keys = state.order.slice();
+		keys.sort(function (a, b) { return state.places[b].hits - state.places[a].hits || state.places[b].near - state.places[a].near; });
+		var items = [];
+		for (var i = 0; i < keys.length && items.length < MAX_WATCH_ITEMS; i++) {
+			var place = state.places[keys[i]];
+			if (!place.named) place.named = { where: where(place.from), symbol: symbolName(place.from), frames: null };
+			if (place.stack !== null && place.named.frames === null) {
+				place.named.frames = [];
+				for (var f = 0; f < place.stack.length && f < MAX_WATCH_FRAMES; f++) {
+					place.named.frames.push({ address: hex(place.stack[f]), where: where(place.stack[f]), symbol: symbolName(place.stack[f]) });
+				}
+			}
+			items.push({
+				op: place.op, from: hex(place.from), where: place.named.where, symbol: place.named.symbol,
+				hits: place.hits, near: place.near, last: hex(place.last), threads: place.threads.slice(), frames: place.named.frames || [],
+			});
+		}
+		return {
+			watching: !state.endedBy,
+			endedBy: state.endedBy,
+			address: hex(state.base),
+			size: state.size,
+			seconds: Math.round(((state.ended || Date.now()) - state.started) / 100) / 10,
+			hits: state.hits,
+			near: state.near,
+			places: keys.length,
+			truncated: keys.length > MAX_WATCH_ITEMS || state.overflow,
+			error: state.error,
+			items: items,
+		};
+	}
+
 	rpc.exports = {
+		// Trap the page(s) holding `size` bytes at `address`. Only data that is
+		// mapped and readable: code is hooked instead, and a thread's stack is
+		// left alone (the system itself uses it all the time).
+		watchStart: function (address, size) {
+			if (watching()) throw new Error(hex(watch.base) + ' is already being watched. Stop that first.');
+			if (typeof size !== 'number' || size !== Math.floor(size) || size < 1 || size > MAX_WATCH) throw new Error('A watch covers 1..' + MAX_WATCH + ' bytes');
+			var p = ptr(address);
+			var range = Process.findRangeByAddress(p);
+			if (!range) throw new Error('Memory at ' + hex(p) + ' is not in mapped memory');
+			var prot = range.protection;
+			if (prot.charAt(0) !== 'r') throw new Error('Memory at ' + hex(p) + ' is not readable');
+			if (prot.charAt(2) === 'x') throw new Error(hex(p) + ' is code. A watch is for data; hook the code instead.');
+			if (range.size - Number(p.sub(range.base).toString()) < size) throw new Error('A watch of ' + size + ' bytes at ' + hex(p) + ' crosses the end of its range');
+			var threads = Process.enumerateThreads();
+			for (var i = 0; i < threads.length; i++) {
+				var sp = threads[i].context && threads[i].context.sp;
+				var stack = sp ? Process.findRangeByAddress(sp) : null;
+				if (stack && p.compare(stack.base) >= 0 && p.compare(stack.base.add(stack.size)) < 0) {
+					throw new Error(hex(p) + ' is on the stack of thread ' + threads[i].id + '. A stack cannot be watched safely.');
+				}
+			}
+			var state = {
+				base: p, end: p.add(size), size: size, protection: prot, places: {}, order: [], hits: 0, near: 0, overflow: false,
+				timer: null, rearm: null, keep: null, endedBy: '', error: '', started: Date.now(), ended: 0,
+			};
+			armWatch(state); // throws when the page cannot be trapped
+			watch = state;
+			state.keep = setInterval(function () { rearmWatch(state, true); }, WATCH_KEEP_MS);
+			state.timer = setTimeout(function () { if (watch === state) stopWatch('limit'); }, MAX_WATCH_MS);
+			var pages = Number(pageOf(state.end.sub(1)).sub(pageOf(p)).toString()) / Process.pageSize + 1;
+			return { watching: true, address: hex(p), size: size, pages: pages, pageSize: Process.pageSize, maxSeconds: MAX_WATCH_MS / 1000, protection: prot };
+		},
+
+		// What has been seen so far (or by the last watch, once it has ended).
+		watchHits: function () { return watchResult(); },
+
+		watchStop: function () {
+			stopWatch('stop');
+			return watchResult();
+		},
+
 		modules: function () {
 			return capped(Process.enumerateModules(), MAX_RANGES, function (m) {
 				return { name: m.name, base: hex(m.base), size: m.size, path: m.path };
@@ -482,7 +658,11 @@
 			if (id === Process.getCurrentThreadId()) throw new Error("That is Frida's own thread; it cannot be followed.");
 			findThread(id); // throws for an unknown thread
 			var resolved = resolveScope(scope); // throws for an unknown module
-			if (excludedScope && excludedScope !== resolved.key) throw new Error('FERMION_RESCOPE');
+			if (excludedScope && excludedScope !== resolved.key) {
+				// A fresh agent would end the watch without a word.
+				if (watching()) throw new Error('A memory watch is running. Stop that first.');
+				throw new Error('FERMION_RESCOPE');
+			}
 			var excluded = applyScope(resolved);
 			var state = { threadId: id, scope: resolved.scope, counts: {}, calls: 0, distinct: 0, overflow: false, timer: null, endedBy: '' };
 			Stalker.follow(id, {
@@ -518,7 +698,11 @@
 				ids = [threads];
 			}
 			var resolved = resolveScope(scope); // throws for an unknown module
-			if (excludedScope && excludedScope !== resolved.key) throw new Error('FERMION_RESCOPE');
+			if (excludedScope && excludedScope !== resolved.key) {
+				// A fresh agent would end the watch without a word.
+				if (watching()) throw new Error('A memory watch is running. Stop that first.');
+				throw new Error('FERMION_RESCOPE');
+			}
 			var excluded = applyScope(resolved);
 			var state = { all: all, threads: {}, count: 0, scope: resolved.scope, skip: resolved.skip, blocks: {}, n: 0, overflow: false, timer: null, poll: null, endedBy: '', started: Date.now(), ended: 0 };
 			for (var i = 0; i < ids.length; i++) coverThread(state, ids[i]);
@@ -636,6 +820,7 @@
 			var bytes = [];
 			for (var i = 0; i < n; i++) bytes.push(parseInt(bytesHex.substr(i * 2, 2), 16));
 			var p = ptr(address);
+			if (watchedPage(p, n)) throw new Error('Memory at ' + hex(p) + ' is being watched. Stop the watch to write it.');
 			var range = Process.findRangeByAddress(p);
 			if (!range) throw new Error('Memory at ' + hex(p) + ' is not in mapped memory');
 			var prot = range.protection;
@@ -671,6 +856,8 @@
 		read: function (address, size) {
 			var n = Math.max(1, Math.min(MAX_READ, size | 0));
 			var p = ptr(address);
+			// Reading a trapped page would spring the trap (and Frida hides such a page).
+			if (watchedPage(p, n)) throw new Error('Memory at ' + hex(p) + ' is being watched. Stop the watch to read it.');
 			// Only read inside a range Frida reports as readable, and never past
 			// its end. Frida leaves guard pages out of its ranges; touching one
 			// (e.g. below a thread's stack on Windows) would clear the guard and

@@ -561,6 +561,17 @@ button.vrow:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 6%, 
 .cover-cols { display: grid; grid-template-columns: minmax(110px, 1.2fr) 80px 80px minmax(0, 2fr); column-gap: 10px; align-items: center; }
 .cover-tab .ptool { flex-wrap: wrap; row-gap: 6px; }
 .cover-tab .ptool select { max-width: 230px; }
+input.mini.watch-address, input.mini.watch-size { height: 26px; font-size: 11.5px; color: var(--fg); background: var(--elev); border: 1px solid var(--border); border-radius: 6px; padding: 0 7px; outline: 0; font-family: "IBM Plex Mono", ui-monospace, monospace; }
+input.mini.watch-address { flex: 0 1 220px; min-width: 120px; }
+input.mini.watch-size { width: 58px; text-align: right; }
+input.mini.watch-address:focus, input.mini.watch-size:focus { border-color: var(--accent); }
+.watch-cols { display: grid; grid-template-columns: 48px minmax(0, 2fr) 56px minmax(0, 1.3fr) minmax(0, 1fr); column-gap: 10px; align-items: center; }
+.watch-cols .op.write { color: var(--warn, var(--accent)); }
+.watch-cols .op.read { color: var(--muted); }
+.watch-near { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.watch-stack { flex: 0 1 auto; max-height: 45%; overflow: auto; border-top: 1px solid var(--border); background: var(--panel); }
+.watch-stack-head { padding: 6px 12px; font-size: 11.5px; color: var(--muted); }
+.watch-frame { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
 
 /* Hook presets */
 .preset-note { display: flex; gap: 8px; align-items: flex-start; }

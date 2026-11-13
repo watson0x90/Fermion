@@ -1132,3 +1132,28 @@ test('the three coverage operations are on the allow-list the window can call', 
   const { INVOKE_METHODS } = require('./frida-ipc.js');
   for (const m of ['inspectCoverStart', 'inspectCoverStop', 'inspectCoverSave']) assert.ok(INVOKE_METHODS.has(m), m);
 });
+
+// ---- watching memory ----
+test('inspectWatchStart validates the address and size in main; hits and stop pass through', async () => {
+  const { svc } = attachedService();
+  const calls = [];
+  const agent = { exports: {
+    watchStart: async (...a) => { calls.push(['watchStart', ...a]); return { watching: true }; },
+    watchHits: async (...a) => { calls.push(['watchHits', ...a]); return { watching: true, hits: 2 }; },
+    watchStop: async (...a) => { calls.push(['watchStop', ...a]); return { watching: false, hits: 2 }; },
+  } };
+  svc._getAgent = async () => agent;
+  await svc.attach(1);
+  for (const bad of [['500000', 8], [0x500000, 8], ['0x50zz', 8], [null, 8]]) await assert.rejects(() => svc.inspectWatchStart(bad[0], bad[1]), /invalid address/);
+  for (const size of [0, -1, 4097, 1.5, '8', null, undefined, NaN]) await assert.rejects(() => svc.inspectWatchStart('0x500000', size), /1\.\.4096 bytes/);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(await svc.inspectWatchStart('0x50ABC0', 8), { watching: true });
+  assert.deepEqual(await svc.inspectWatchHits('ignored'), { watching: true, hits: 2 });
+  assert.deepEqual(await svc.inspectWatchStop('ignored'), { watching: false, hits: 2 });
+  assert.deepEqual(calls, [['watchStart', '0x50abc0', 8], ['watchHits'], ['watchStop']]);
+});
+
+test('the memory watch calls are on the allow-list the window can call', () => {
+  const { INVOKE_METHODS } = require('./frida-ipc.js');
+  for (const m of ['inspectWatchStart', 'inspectWatchHits', 'inspectWatchStop']) assert.ok(INVOKE_METHODS.has(m), m);
+});

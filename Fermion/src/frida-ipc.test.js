@@ -40,7 +40,7 @@ test('evaluate (REPL) is allow-listed and forwards its code argument', async () 
   assert.deepEqual(calls, ['Process.id']);
 });
 
-test('the Inspector operations are allow-listed, and only inspectWrite writes', async () => {
+test('the Inspector operations are allow-listed, and only inspectWrite writes bytes', async () => {
   const names = ['inspectModules', 'inspectExports', 'inspectImports', 'inspectThreads', 'inspectBacktrace', 'inspectRanges', 'inspectRead', 'inspectScan', 'inspectFollow', 'inspectUnfollow', 'inspectDisassemble'];
   const svc = {};
   for (const n of names) svc[n] = async (...a) => [n, ...a];
@@ -49,9 +49,10 @@ test('the Inspector operations are allow-listed, and only inspectWrite writes', 
   // Exactly one inspect* operation writes to the target: inspectWrite
   // (approved with memory editing). The coverage three record which code
   // runs and save that to a file main chooses with the operator. Anything
-  // else under that name reads.
+  // The watch three trap a page of data to see who touches it (approved with
+  // the memory watch). Anything else under that name reads.
   const { INVOKE_METHODS } = require('./frida-ipc.js');
-  assert.deepEqual([...INVOKE_METHODS].filter((m) => m.startsWith('inspect')).sort(), [...names, 'inspectWrite', 'inspectCoverStart', 'inspectCoverStop', 'inspectCoverSave'].sort());
+  assert.deepEqual([...INVOKE_METHODS].filter((m) => m.startsWith('inspect')).sort(), [...names, 'inspectWrite', 'inspectCoverStart', 'inspectCoverStop', 'inspectCoverSave', 'inspectWatchStart', 'inspectWatchHits', 'inspectWatchStop'].sort());
 });
 
 test('cancelEvaluate is allow-listed', async () => {

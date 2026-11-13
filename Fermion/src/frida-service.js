@@ -197,6 +197,12 @@ function checkWriteBytes(bytes) {
 	}
 	return bytes.toLowerCase();
 }
+// A memory watch covers 1..4096 bytes.
+const MAX_WATCH_BYTES = 4096;
+function checkWatchSize(size) {
+	if (!Number.isSafeInteger(size) || size < 1 || size > MAX_WATCH_BYTES) throw new Error('a watch covers 1..' + MAX_WATCH_BYTES + ' bytes');
+	return size;
+}
 function checkReadSize(size) {
 	if (!Number.isSafeInteger(size) || size < 1 || size > MAX_READ_BYTES) throw new Error('invalid size (must be 1..' + MAX_READ_BYTES + ' bytes)');
 	return size;
@@ -669,6 +675,14 @@ class FridaService extends EventEmitter {
 		const path = await this._saveCoverage({ format, data, program: this._coverage.program });
 		return { path: path || null, format };
 	}
+
+	// ---- watching memory ----
+	// Who reads or writes some bytes of data: the agent traps their page and
+	// samples the accesses. One watch at a time, bounded in the agent (10
+	// minutes; data only, never a thread's stack).
+	async inspectWatchStart(address, size) { return this._inspect('watchStart', checkAddress(address), checkWatchSize(size)); }
+	async inspectWatchHits() { return this._inspect('watchHits'); }
+	async inspectWatchStop() { return this._inspect('watchStop'); }
 
 	// ---- catching child processes ----
 	// With catching on, a process started by the attached process is held
