@@ -747,10 +747,19 @@
 
 	function num(p) { return Number(p.toString()); }
 
-	function heapStack(context) {
+	// How the call stack of an allocation or a free is taken. The accurate walk
+	// is right at every frame and is most of what tracking costs; the fuzzy one
+	// costs next to nothing and is right about the first frames, with stale
+	// return addresses mixed in further up; or no stack is taken at all.
+	function heapStack(state, context) {
+		if (state.stacks === 'none') return [];
 		var frames;
-		try { frames = Thread.backtrace(context, Backtracer.ACCURATE); }
-		catch (e) { try { frames = Thread.backtrace(context, Backtracer.FUZZY); } catch (e2) { frames = []; } }
+		if (state.stacks === 'fast') {
+			try { frames = Thread.backtrace(context, Backtracer.FUZZY); } catch (e0) { frames = []; }
+		} else {
+			try { frames = Thread.backtrace(context, Backtracer.ACCURATE); }
+			catch (e) { try { frames = Thread.backtrace(context, Backtracer.FUZZY); } catch (e2) { frames = []; } }
+		}
 		return frames.length > MAX_HEAP_FRAMES ? frames.slice(0, MAX_HEAP_FRAMES) : frames;
 	}
 
@@ -856,7 +865,7 @@
 					if (p.isNull()) return;
 					var key = p.toString();
 					var block = state.live.get(key);
-					if (block) heapRelease(state, key, block, this.threadId, heapStack(this.context));
+					if (block) heapRelease(state, key, block, this.threadId, heapStack(state, this.context));
 				},
 			};
 		}
@@ -879,7 +888,7 @@
 				else { this.old = args[0].isNull() ? null : args[0].toString(); this.size = num(args[1]); }
 				this.wanted = heapWanted(state, this.size);
 				var known = this.old !== null && state.live.has(this.old);
-				if (this.wanted || known) this.stack = heapStack(this.context);
+				if (this.wanted || known) this.stack = heapStack(state, this.context);
 			},
 			onLeave: function (ret) {
 				var tid = this.threadId;
@@ -964,7 +973,7 @@
 	}
 
 	function heapStatus() {
-		if (!heap) return { tracking: false, endedBy: 'none', seconds: 0, min: 0, max: 0, functions: [], allocs: 0, frees: 0, live: 0, liveBytes: 0, freedKept: 0, overflow: false, siteCount: 0, sites: [] };
+		if (!heap) return { tracking: false, endedBy: 'none', seconds: 0, min: 0, max: 0, functions: [], allocs: 0, frees: 0, live: 0, liveBytes: 0, freedKept: 0, overflow: false, siteCount: 0, sites: [], stacks: 'full' };
 		var state = heap;
 		var modules = new ModuleMap();
 		var totals = {};
@@ -1002,6 +1011,7 @@
 			overflow: counts.overflow,
 			siteCount: keys.length,
 			sites: sites,
+			stacks: state.stacks,
 		};
 	}
 
@@ -1273,7 +1283,8 @@
 		refs: function (address, name) { return moduleRefs(address, name); },
 
 		// sizes: { min, max } in bytes; max 0 means no upper limit.
-		heapStart: function (sizes, limits, allocators) {
+		// stacks: 'full' (the accurate walk), 'fast' (the fuzzy one) or 'none'.
+		heapStart: function (sizes, limits, allocators, stacks) {
 			if (heapTracking()) throw new Error('The heap is already being tracked. Stop that first.');
 			var min = sizes && sizes.min > 0 ? Math.floor(sizes.min) : 0;
 			var max = sizes && sizes.max > 0 ? Math.floor(sizes.max) : 0;
@@ -1290,6 +1301,7 @@
 				min: min, max: max, live: new Map(), liveBytes: 0, freed: [], freedNext: 0, allocs: 0, frees: 0, overflow: false,
 				listeners: [], depth: {}, functions: [], timer: null, endedBy: '', started: Date.now(), ended: 0,
 				names: new Map(), allocatorFrame: new Map(),
+				stacks: stacks === 'fast' || stacks === 'none' ? stacks : 'full',
 				maxMs: within(limits, 'ms', MAX_HEAP_MS, MIN_RECORD_MS, MAX_RECORD_MS),
 				maxLive: within(limits, 'live', MAX_HEAP_LIVE, 1000, 500000),
 				maxFreed: within(limits, 'freed', MAX_HEAP_FREED, 100, 200000),
@@ -1306,7 +1318,7 @@
 				throw new Error('Could not hook the allocator: ' + e.message);
 			}
 			state.timer = setTimeout(function () { if (heap === state) stopHeap('limit'); }, state.maxMs);
-			return { tracking: true, functions: state.functions, min: min, max: max, maxSeconds: state.maxMs / 1000, maxLive: state.maxLive, maxFreed: state.maxFreed };
+			return { tracking: true, functions: state.functions, min: min, max: max, maxSeconds: state.maxMs / 1000, maxLive: state.maxLive, maxFreed: state.maxFreed, stacks: state.stacks };
 		},
 
 		// Counts, and the places that hold the most live memory.

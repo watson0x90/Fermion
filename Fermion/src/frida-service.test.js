@@ -1181,7 +1181,7 @@ test('heap tracking: sizes and the address are validated in main; status and sto
   assert.deepEqual(await svc.inspectHeapStatus('ignored'), { did: 'heapStatus' });
   assert.deepEqual(await svc.inspectHeapFind('0x90ABC0'), { did: 'heapFind' });
   assert.deepEqual(await svc.inspectHeapStop('ignored'), { did: 'heapStop' });
-  assert.deepEqual(calls, [['heapStart', { min: 0, max: 0 }, HEAP_LIMITS, []], ['heapStart', { min: 32, max: 64 }, HEAP_LIMITS, []], ['heapStart', { min: 32, max: 0 }, HEAP_LIMITS, []], ['heapStatus'], ['heapFind', '0x90abc0'], ['heapStop']]);
+  assert.deepEqual(calls, [['heapStart', { min: 0, max: 0 }, HEAP_LIMITS, [], 'full'], ['heapStart', { min: 32, max: 64 }, HEAP_LIMITS, [], 'full'], ['heapStart', { min: 32, max: 0 }, HEAP_LIMITS, [], 'full'], ['heapStatus'], ['heapFind', '0x90abc0'], ['heapStop']]);
 });
 
 test('the heap tracking calls are on the allow-list the window can call', () => {
@@ -1249,7 +1249,7 @@ test('setLimits: the limits in force are handed to the agent with the next recor
   await svc.inspectCoverStart('all', { mode: 'all' });
   await svc.inspectWatchStart('0x50abc0', 8);
   await svc.inspectHeapStart();
-  assert.deepEqual(calls, [['coverStart', { ms: 300000, blocks: 500000 }], ['watchStart', { ms: 300000, hits: 50000 }], ['heapStart', []]]);
+  assert.deepEqual(calls, [['coverStart', { ms: 300000, blocks: 500000 }], ['watchStart', { ms: 300000, hits: 50000 }], ['heapStart', 'full']]);
   assert.deepEqual(heapLimits, { ms: 300000, live: 50000, freed: 5000 });
 });
 
@@ -1278,4 +1278,18 @@ test('inspectHeapStart: allocators of the program\'s own are validated in main b
   assert.equal(calls.length, 0);
   await svc.inspectHeapStart({ min: 0, max: 0 }, [ok, { alloc: 'libgame.so!arena_new', size: 0, junk: true }, { alloc: 'a.dll+0x10', free: '' }]);
   assert.deepEqual(calls, [[ok, { alloc: 'libgame.so!arena_new', size: 0, free: null, pointer: 0 }, { alloc: 'a.dll+0x10', size: 0, free: null, pointer: 0 }]]);
+});
+
+test('inspectHeapStart: how call stacks are taken is one of three words, checked in main', async () => {
+  const { svc } = attachedService();
+  const calls = [];
+  const agent = { exports: { heapStart: async (...a) => { calls.push(a[3]); return {}; } } };
+  svc._getAgent = async () => agent;
+  await svc.attach(1);
+  for (const bad of ['FULL', 'quick', '', 1, 0, true, {}, [], ['fast']]) await assert.rejects(() => svc.inspectHeapStart({ min: 0, max: 0 }, [], bad), /invalid heap stacks/, JSON.stringify(bad));
+  assert.equal(calls.length, 0);
+  await svc.inspectHeapStart({ min: 0, max: 0 });
+  await svc.inspectHeapStart({ min: 0, max: 0 }, null, null);
+  for (const ok of ['full', 'fast', 'none']) await svc.inspectHeapStart({ min: 0, max: 0 }, [], ok);
+  assert.deepEqual(calls, ['full', 'full', 'full', 'fast', 'none']);
 });

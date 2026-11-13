@@ -8,16 +8,23 @@ import { useNames, NameIndex } from '../../../names';
 import { OwnAllocator, MAX_OWN, MAX_ARG, allocatorArgs, allocatorError, loadAllocators, saveAllocators } from '../../../inspector/heapAllocators';
 
 interface Frame { address: string | null; where: string; symbol: string; }
+// How call stacks are taken: the accurate walk, the quick approximate one, or none.
+export type Stacks = 'full' | 'fast' | 'none';
+export const STACKS_KEY = 'fermion.heapStacks';
+const asStacks = (v: unknown): Stacks => (v === 'fast' || v === 'none' ? v : 'full');
+function loadStacks(): Stacks {
+  try { return asStacks(localStorage.getItem(STACKS_KEY)); } catch { return 'full'; }
+}
 interface Site { frames: Frame[]; blocks: number; bytes: number; }
 export interface HeapStatus {
   tracking: boolean; endedBy: string; seconds: number; min: number; max: number; functions: string[];
-  allocs: number; frees: number; live: number; liveBytes: number; freedKept: number; overflow: boolean; siteCount: number; sites: Site[];
+  allocs: number; frees: number; live: number; liveBytes: number; freedKept: number; overflow: boolean; siteCount: number; sites: Site[]; stacks?: Stacks;
 }
 export interface HeapBlock { address: string; size: number; offset: number; thread: number; at: number; frames: Frame[]; freed: { thread: number; at: number; frames: Frame[] } | null; }
 // What Windows itself says about the address, from a walk of its heaps.
 export interface HeapSystem { state: 'live' | 'free' | 'none'; address: string | null; size: number; offset: number; timedOut: boolean; }
 export interface HeapFound { address: string; tracking: boolean; live: HeapBlock | null; freed: HeapBlock[]; freedTotal: number; system?: HeapSystem | null; }
-interface Started { tracking: boolean; functions: string[]; min: number; max: number; maxSeconds: number; maxLive: number; maxFreed: number; }
+interface Started { tracking: boolean; functions: string[]; min: number; max: number; maxSeconds: number; maxLive: number; maxFreed: number; stacks?: Stacks; }
 
 const MAX_SIZE = 0xffffffff;
 const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
@@ -79,28 +86,29 @@ export function heapVerdict(f: HeapFound): string {
 // The operator's name for the place, else the target's symbol, else where it is.
 const frameName = (names: NameIndex, f: Frame) => names.show(f.where, f.address, f.symbol);
 
-function Frames({ title, frames }: { title: string; frames: Frame[] }) {
+function Frames({ title, frames, took }: { title: string; frames: Frame[]; took: Stacks }) {
   const names = useNames();
   return (
     <div className="heap-stack">
       <div className="heap-stack-head">{title}</div>
+      {took === 'fast' && frames.length > 0 && <div className="heap-stack-note" data-testid="heap-stack-note">Taken the fast way: trust the first frames, later ones can be wrong.</div>}
       {frames.map((f, i) => (
         <div key={i + (f.address ?? '')} className="insp-row heap-frame" data-testid="heap-frame" {...addrMenu(f.address)}><span className="nm">{frameName(names, f)}</span><span className="nm mono dim">{f.address}</span></div>
       ))}
-      {!frames.length && <div className="insp-empty">No call stack could be taken.</div>}
+      {!frames.length && <div className="insp-empty">{took === 'none' ? 'Call stacks were not taken (Call stacks was set to None).' : 'No call stack could be taken.'}</div>}
     </div>
   );
 }
 
-function Block({ block, kind }: { block: HeapBlock; kind: 'live' | 'freed' }) {
+function Block({ block, kind, took }: { block: HeapBlock; kind: 'live' | 'freed'; took: Stacks }) {
   return (
     <div className={'heap-block ' + kind} data-testid="heap-block" data-kind={kind}>
       <div className="heap-block-head">
         <span className={'tag ' + kind}>{kind}</span>
         <span>{plural(block.size, 'byte')} at <span className="mono" {...addrMenu(block.address)}>{block.address}</span>; the address is byte +0x{block.offset.toString(16)}</span>
       </div>
-      <Frames title={`Allocated by thread ${block.thread}, ${block.at} s into tracking`} frames={block.frames} />
-      {block.freed && <Frames title={`Freed by thread ${block.freed.thread}, ${block.freed.at} s into tracking`} frames={block.freed.frames} />}
+      <Frames title={`Allocated by thread ${block.thread}, ${block.at} s into tracking`} frames={block.frames} took={took} />
+      {block.freed && <Frames title={`Freed by thread ${block.freed.thread}, ${block.freed.at} s into tracking`} frames={block.freed.frames} took={took} />}
     </div>
   );
 }
@@ -114,6 +122,9 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
   const [minText, setMinText] = useState('');
   const [maxText, setMaxText] = useState('');
   const [started, setStarted] = useState<Started | null>(null);
+  const [stacks, setStacks] = useState<Stacks>(loadStacks);
+  // How the stacks on show were taken: by the tracking that recorded them.
+  const [took, setTook] = useState<Stacks>('full');
   const [status, setStatus] = useState<HeapStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -176,7 +187,9 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
     setBusy(true);
     setError('');
     try {
-      const s: Started = own.length ? await inspectApi().heapStart(sizes, allocatorArgs(own)) : await inspectApi().heapStart(sizes);
+      const s: Started = stacks !== 'full' ? await inspectApi().heapStart(sizes, allocatorArgs(own), stacks)
+        : own.length ? await inspectApi().heapStart(sizes, allocatorArgs(own)) : await inspectApi().heapStart(sizes);
+      setTook(asStacks(s.stacks));
       setStatus(null);
       setFound(null);
       setStarted(s);
@@ -227,6 +240,14 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
         <button className={'pill' + (ownOpen ? ' on' : '')} data-testid="heap-own-toggle" aria-expanded={ownOpen} title="Track a pool or arena allocator of the program's own, beside the system's" onClick={() => setOwnOpen(!ownOpen)}>
           Own allocators{own.length ? ` (${own.length})` : ''}
         </button>
+        <span>Call stacks</span>
+        <select className="heap-stacks" data-testid="heap-stacks" aria-label="How call stacks are taken" disabled={!!started || busy} value={stacks}
+          title="Full: right at every frame, and slows a program that allocates a lot. Fast: costs next to nothing; the first frames are right, later ones can be wrong. None: blocks only."
+          onChange={(e) => { const v = asStacks(e.target.value); setStacks(v); try { localStorage.setItem(STACKS_KEY, v); } catch { /* storage may be unavailable */ } }}>
+          <option value="full">Full</option>
+          <option value="fast">Fast</option>
+          <option value="none">None</option>
+        </select>
         <span className="grow" />
         {status && <span className="count" data-testid="heap-counts">{countsLine(status)}</span>}
       </div>
@@ -272,7 +293,9 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
       {started && (
         <div className="insp-note" data-testid="heap-status">
           Tracking blocks of {sizesText(started.min, started.max)} through {started.functions.join(', ')}. Use the program now.
-          {!started.min && !started.max ? ' Taking a call stack for every block slows a program that allocates a lot: give a size range to keep it fast.' : ''}
+          {took === 'fast' ? ' Call stacks are taken the fast way: trust the first frames, later ones can be wrong.'
+            : took === 'none' ? ' No call stacks are taken: a block is found, but not who allocated or freed it.'
+            : !started.min && !started.max ? ' Taking a full call stack for every block slows a program that allocates a lot: give a size range, or set Call stacks to Fast.' : ''}
           {' '}It stops by itself after {Math.round(started.maxSeconds / 60)} minutes; the newest {n(started.maxFreed)} freed blocks are kept.
         </div>
       )}
@@ -300,8 +323,8 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
                 </div>
               </div>
             )}
-            {found.live && <Block block={found.live} kind="live" />}
-            {found.freed.map((b, i) => <Block key={i + b.address + b.at} block={b} kind="freed" />)}
+            {found.live && <Block block={found.live} kind="live" took={took} />}
+            {found.freed.map((b, i) => <Block key={i + b.address + b.at} block={b} kind="freed" took={took} />)}
             {found.freedTotal > found.freed.length && <div className="insp-empty">{n(found.freedTotal - found.freed.length)} older freed blocks at this address are not shown.</div>}
           </div>
         )}

@@ -143,6 +143,32 @@ const SETUP = String.raw`(function () {
     const sites = await win.evaluate(() => document.querySelectorAll('[data-testid="heap-site"]').length);
     if (shot) await win.screenshot({ path: shot + '-tracking.png' });
 
+    step = 'call stacks the fast way, and none';
+    const restart = async (how, size) => {
+      await win.click('[data-testid="heap-toggle"]');
+      await win.waitForFunction(() => document.querySelector('[data-testid="heap-toggle"]').textContent === 'Track', undefined, T);
+      await win.selectOption('[data-testid="heap-stacks"]', how);
+      await win.fill('[data-testid="heap-min"]', size ? String(size) : '');
+      await win.fill('[data-testid="heap-max"]', size ? String(size) : '');
+      await win.click('[data-testid="heap-toggle"]');
+      await win.waitForFunction((want) => (document.querySelector('[data-testid="heap-status"]')?.textContent ?? '').includes(want), size ? 'exactly ' + size.toLocaleString('en-US') + ' bytes' : 'blocks of any size', T);
+    };
+    const taken = async (how, size) => {
+      await restart(how, size);
+      const q = await inTarget('__h.malloc(' + size + ')');
+      await lookUp(q, /is inside a live block\.$/, 'a block tracked with ' + how + ' call stacks was not found');
+      const b = await blocks();
+      const notes = await win.evaluate(() => document.querySelectorAll('[data-testid="heap-stack-note"]').length);
+      const status = await text('heap-status');
+      await inTarget('__h.free("' + q + '")');
+      return { frames: b[0].frames, text: b[0].text, notes, status };
+    };
+    const quick = await taken('fast', 4663);
+    if (quick.frames < 1 || quick.notes !== 1 || !/fast way/.test(quick.status)) throw new Error('fast call stacks: ' + JSON.stringify(quick));
+    const bare = await taken('none', 4664);
+    if (bare.frames !== 0 || bare.notes !== 0 || !/Call stacks were not taken/.test(bare.text) || !/No call stacks are taken/.test(bare.status)) throw new Error('no call stacks: ' + JSON.stringify(bare));
+    await restart('full', 0);
+
     step = 'an allocator of the program\'s own';
     // The C library's malloc and free stand in for a program's own allocator: on Windows they
     // sit on top of the system heap, so they are the outer call and the system's is inside.
@@ -197,7 +223,7 @@ const SETUP = String.raw`(function () {
     const after = await inTarget('__h.malloc(64)');
     if (!/^0x[0-9a-f]+$/.test(after)) throw new Error('the target cannot allocate after detaching mid-tracking: ' + after);
 
-    console.log('HEAP_OK ' + (untrackedSeen ? 'nothing tracked: Windows names a live block and then says: ' + untrackedSeen.replace(/^0x[0-9a-f]+ /, '').split('.')[0] + ' + ' : '') + ownNote + ' + one size tracked + live block found from an inner address, with its call stack + one past the end is outside + freed block called a use after free, with who freed it + address menu looks up + stop keeps the record + every size: ' + counts + ', ' + sites + ' places + realloc moves the block + detach mid-tracking leaves the target unharmed');
+    console.log('HEAP_OK ' + (untrackedSeen ? 'nothing tracked: Windows names a live block and then says: ' + untrackedSeen.replace(/^0x[0-9a-f]+ /, '').split('.')[0] + ' + ' : '') + 'fast call stacks (' + quick.frames + ' frames, marked) and none + ' + ownNote + ' + one size tracked + live block found from an inner address, with its call stack + one past the end is outside + freed block called a use after free, with who freed it + address menu looks up + stop keeps the record + every size: ' + counts + ', ' + sites + ' places + realloc moves the block + detach mid-tracking leaves the target unharmed');
     await app.close();
     done(0);
   } catch (e) {

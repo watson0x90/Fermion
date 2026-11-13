@@ -648,6 +648,8 @@ input.mini.heap-own-fn:focus { border-color: var(--accent); }
 .heap-block-head .tag { padding: 0 6px; }
 .heap-block-head .tag.freed { color: var(--err); border-color: var(--err); }
 .heap-block-head .tag.live { color: var(--log); border-color: var(--log); }
+.heap-stack-note { padding: 0 12px 3px; font-size: 11px; color: var(--warn, var(--muted)); }
+.heap-tab .ptool select.heap-stacks { height: 26px; font-size: 11.5px; color: var(--fg); background: var(--elev); border: 1px solid var(--border); border-radius: 6px; padding: 0 5px; }
 .heap-stack-head { padding: 5px 12px 2px; font-size: 11px; color: var(--muted); }
 .heap-frame { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); padding-left: 22px; }
 .heap-cols { display: grid; grid-template-columns: minmax(0, 1fr) 64px 76px; column-gap: 10px; align-items: center; }
