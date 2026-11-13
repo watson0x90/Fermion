@@ -619,8 +619,8 @@ Releases are intentional and maintainer-driven. Pushing a version tag runs [`.gi
 
 ```
 # bump "version" in Fermion/package.json, commit, then:
-git tag v2.1.4
-git push origin v2.1.4
+git tag v2.1.5
+git push origin v2.1.5
 ```
 
 ## Notes
