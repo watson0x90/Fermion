@@ -602,15 +602,15 @@ Releases are intentional and maintainer-driven. Pushing a version tag runs [`.gi
 
 ```
 # bump "version" in Fermion/package.json, commit, then:
-git tag v2.1.3
-git push origin v2.1.3
+git tag v2.1.4
+git push origin v2.1.4
 ```
 
 ## Notes
 
 ### ChangeLog
 
-Version-by-version changes are in the [changelog](CHANGELOG.txt).
+Version-by-version changes are in the [changelog](CHANGELOG.txt). Ideas that may come next are in the [roadmap](ROADMAP.md).
 
 ### Call to action
 
