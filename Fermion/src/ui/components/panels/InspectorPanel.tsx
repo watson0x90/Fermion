@@ -4,24 +4,27 @@ import { uiActions, AddressView } from '../../store/uiSlice';
 import { ModulesTab } from './inspector/ModulesTab';
 import { MemoryTab, Goto } from './inspector/MemoryTab';
 import { CoverageTab } from './inspector/CoverageTab';
+import { WatchTab } from './inspector/WatchTab';
 import { ThreadsTab } from './inspector/ThreadsTab';
 import { CodeTab } from './inspector/CodeTab';
 import { BookmarksTab } from './inspector/BookmarksTab';
 
-type Sub = 'modules' | 'memory' | 'code' | 'threads' | 'coverage' | 'bookmarks';
+type Sub = 'modules' | 'memory' | 'code' | 'threads' | 'coverage' | 'watch' | 'bookmarks';
 const SUBS: { id: Sub; label: string }[] = [
   { id: 'modules', label: 'Modules' },
   { id: 'memory', label: 'Memory' },
   { id: 'code', label: 'Disassembly' },
   { id: 'threads', label: 'Threads' },
   { id: 'coverage', label: 'Coverage' },
+  { id: 'watch', label: 'Watch' },
   { id: 'bookmarks', label: 'Bookmarks' },
 ];
 
 // Inspector: views of the attached process — its loaded modules
 // (exports/imports), memory (ranges, hex view, scan), disassembly and threads
-// (registers, backtrace). Each view loads when first shown and on Refresh; only Memory, with Edit
-// switched on, writes to the target.
+// (registers, backtrace), coverage, and a watch on who reads or writes some
+// bytes. Each view loads when first shown and on Refresh; only Memory, with
+// Edit switched on, writes to the target.
 export function InspectorPanel() {
   const isAttached = useAppSelector((s) => s.session.isAttached);
   const currentPid = useAppSelector((s) => s.session.currentPid);
@@ -29,7 +32,7 @@ export function InspectorPanel() {
   const [sub, setSub] = useState<Sub>('modules');
   const dispatch = useAppDispatch();
   const request = useAppSelector((s) => s.ui.addressRequest);
-  // An address handed to the Memory or Disassembly view; it belongs to the
+  // An address handed to the Memory, Disassembly or Watch view; it belongs to the
   // session it came from.
   const [goto, setGoto] = useState<(Goto & { view: AddressView; pid: string | null }) | null>(null);
 
@@ -75,6 +78,7 @@ export function InspectorPanel() {
           <div className="insp-slot" hidden={sub !== 'code'}><CodeTab goto={gotoFor('code')} /></div>
           <div className="insp-slot" hidden={sub !== 'threads'}><ThreadsTab active={panelActive && sub === 'threads'} onViewMemory={viewMemory} /></div>
           <div className="insp-slot" hidden={sub !== 'coverage'}><CoverageTab active={panelActive && sub === 'coverage'} /></div>
+          <div className="insp-slot" hidden={sub !== 'watch'}><WatchTab goto={gotoFor('watch')} /></div>
         </div>
       )}
     </div>

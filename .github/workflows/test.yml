@@ -114,6 +114,9 @@ jobs:
       - name: Coverage is recorded and saved as drcov and as a text report
         run: xvfb-run -a node scripts/ui-test-coverage.js
 
+      - name: Memory watch names who reads and writes some bytes
+        run: xvfb-run -a node scripts/ui-test-watch.js
+
       # Windows APIs: skips on this Linux runner; runs in full on a Windows machine.
       - name: Hook presets decode real Windows API calls
         run: xvfb-run -a node scripts/ui-test-presets.js

@@ -128,6 +128,10 @@ function buildApi(ipcRenderer) {
 			coverStart: (threads, scope) => invoke('inspectCoverStart', threads, scope),
 			coverStop: () => invoke('inspectCoverStop'),
 			coverSave: (format) => invoke('inspectCoverSave', format),
+			// Memory watch: who reads or writes `size` bytes at `address`.
+			watchStart: (address, size) => invoke('inspectWatchStart', address, size),
+			watchHits: () => invoke('inspectWatchHits'),
+			watchStop: () => invoke('inspectWatchStop'),
 		},
 		// Hooks tab: find functions and hook them without writing a script.
 		hooks: {

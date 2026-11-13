@@ -16,6 +16,8 @@ class Ptr {
   sub(o) { return new Ptr(this.v - (o instanceof Ptr ? o.v : BigInt(o))); }
   add(o) { return new Ptr(this.v + (o instanceof Ptr ? o.v : BigInt(o))); }
   compare(o) { return this.v < o.v ? -1 : this.v > o.v ? 1 : 0; }
+  and(o) { return new Ptr(this.v & o.v); }
+  not() { return new Ptr(~this.v & 0xffffffffffffffffn); }
   writeByteArray(bytes) {
     if (Ptr.unwritable) throw new Error('access violation');
     Ptr.writes.push([this.toString(), Array.from(bytes)]);
@@ -98,7 +100,14 @@ function load(over = {}) {
     },
     ...over.Memory,
   };
+  // Like MemoryAccessMonitor: one set of ranges armed at a time.
+  const monitor = {
+    armed: null, enables: 0, disables: 0,
+    enable: (ranges, cb) => { if (over.armThrows && over.armThrows(monitor.enables)) throw new Error('unable to protect'); monitor.armed = { ranges: ranges.map((r) => [r.base.toString(), r.size]), cb: cb.onAccess }; monitor.enables++; },
+    disable: () => { monitor.disables++; monitor.armed = null; },
+  };
   const ctx = vm.createContext({
+    MemoryAccessMonitor: monitor,
     rpc: {}, Process, Memory, ptr: (v) => new Ptr(v),
     Thread: { backtrace: (context, mode) => { if (mode === 'accurate' && over.accurateFails) throw new Error('no unwind info'); return [new Ptr(0x7ff123), new Ptr(0x500)]; } },
     Backtracer: { ACCURATE: 'accurate', FUZZY: 'fuzzy' },
@@ -119,7 +128,7 @@ function load(over = {}) {
     Stalker: stalker, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].cancelled = true; },
   });
   vm.runInContext(SOURCE, ctx);
-  return Object.assign({ scans, stalker, timers, intervals }, ctx.rpc.exports);
+  return Object.assign({ scans, stalker, timers, intervals, monitor }, ctx.rpc.exports);
 }
 // Results cross rpc as JSON; compare them the same way.
 const j = (v) => JSON.parse(JSON.stringify(v));
@@ -704,3 +713,184 @@ test('coverStop: blocks inside a module the scope leaves out are dropped, wherev
   b.stalker.optsBy[11].onReceive([blk(0x400010, 4), blk(0x7fe100, 2)]);
   assert.deepEqual((await stopCover(b)).modules.map((m) => m.name), ['ntdll.dll']);
 });
+
+// ---- watching memory ----
+// A process with a heap (rw-), read-only data, code, and two thread stacks.
+const WATCH_RANGES = [
+  { base: new Ptr(0x10000 - 0x1000), size: 0x2000, protection: 'rw-' },   // thread 11's stack (sp 0x10000)
+  { base: new Ptr(0x20000 - 0x1000), size: 0x2000, protection: 'rw-' },   // thread 12's stack
+  { base: new Ptr(0x500000), size: 0x3000, protection: 'rw-' },            // heap
+  { base: new Ptr(0x600000), size: 0x1000, protection: 'r--' },            // constants
+  { base: new Ptr(0x7ff000), size: 0x1000, protection: 'r-x' },            // code
+  { base: new Ptr(0x800000), size: 0x1000, protection: '---' },
+];
+function watchable(over = {}) {
+  return load({ ...over, Process: { pageSize: 0x1000, findRangeByAddress: (a) => WATCH_RANGES.find((r) => a.v >= r.base.v && a.v < r.base.v + BigInt(r.size)) || null, ...(over.Process || {}) } });
+}
+const access = (a, op, from, address, thread = 11) => a.monitor.armed.cb({ operation: op, from: new Ptr(from), address: new Ptr(address), threadId: thread, context: {} });
+const fire = (a, ms) => { const t = a.timers.filter((x) => x.ms === ms && !x.cancelled).pop(); t.cancelled = true; t.fn(); };
+
+test('watchStart: the bytes are armed and described', () => {
+  const a = watchable();
+  assert.deepEqual(j(a.watchStart('0x500ff8', 8)), { watching: true, address: '0x500ff8', size: 8, pages: 1, pageSize: 4096, maxSeconds: 600, protection: 'rw-' });
+  assert.deepEqual(a.monitor.armed.ranges, [['0x500ff8', 8]]);
+  assert.equal(watchable().watchStart('0x500ffc', 8).pages, 2); // the bytes cross a page edge
+  assert.equal(watchable().watchStart('0x600010', 4).protection, 'r--'); // constants can be watched too
+});
+
+test('watchStart: what cannot be watched safely is refused before anything is armed', () => {
+  const a = watchable();
+  assert.throws(() => a.watchStart('0x900000', 8), /not in mapped memory/);
+  assert.throws(() => a.watchStart('0x800000', 8), /not readable/);
+  assert.throws(() => a.watchStart('0x7ff010', 8), /is code/);
+  assert.throws(() => a.watchStart('0x502ffc', 8), /crosses the end of its range/);
+  assert.throws(() => a.watchStart('0x10010', 8), /stack of thread 11/);
+  assert.throws(() => a.watchStart('0x1f800', 8), /stack of thread 12/);
+  for (const bad of [0, -1, 4097, 1.5, '8', null]) assert.throws(() => a.watchStart('0x500000', bad), /1\.\.4096 bytes/);
+  assert.equal(a.monitor.enables, 0);
+  a.watchStart('0x500000', 8);
+  assert.throws(() => a.watchStart('0x500100', 8), /already being watched/i);
+});
+
+test('watch: an access is counted by the place it comes from, with thread, last address and call stack', () => {
+  const a = watchable();
+  a.watchStart('0x500010', 8);
+  access(a, 'read', 0x7ff123, 0x500010, 11);
+  fire(a, 5);
+  access(a, 'read', 0x7ff123, 0x500014, 12);
+  fire(a, 5);
+  access(a, 'write', 0x7ff123, 0x500017, 11);
+  const r = j(a.watchHits());
+  assert.equal(r.watching, true);
+  assert.equal(r.hits, 3);
+  assert.equal(r.near, 0);
+  assert.equal(r.places, 2);
+  assert.deepEqual(r.items.map((i) => [i.op, i.from, i.hits, i.last, i.threads]), [['read', '0x7ff123', 2, '0x500014', [11, 12]], ['write', '0x7ff123', 1, '0x500017', [11]]]);
+  assert.equal(r.items[0].where, 'kernel32.dll+0x123');
+  assert.equal(r.items[0].symbol, 'kernel32.dll!CreateFileW');
+  assert.deepEqual(r.items[0].frames, [{ address: '0x7ff123', where: 'kernel32.dll+0x123', symbol: 'kernel32.dll!CreateFileW' }, { address: '0x500', where: '0x500', symbol: '' }]);
+});
+
+test('watch: an access to other bytes on the same page is counted apart', () => {
+  const a = watchable();
+  a.watchStart('0x500010', 8);
+  access(a, 'read', 0x7ff200, 0x50000f); // the byte before
+  fire(a, 5);
+  access(a, 'read', 0x7ff200, 0x500018); // the byte after
+  fire(a, 5);
+  access(a, 'write', 0x7ff300, 0x500010);
+  const r = j(a.watchHits());
+  assert.equal(r.hits, 1);
+  assert.equal(r.near, 2);
+  assert.deepEqual(r.items.map((i) => [i.op, i.hits, i.near]), [['write', 1, 0], ['read', 0, 2]]); // on the bytes first
+  assert.deepEqual(r.items[1].frames, []); // no call stack is taken for those
+});
+
+test('watch: the page is armed again a moment after each access, and regularly in any case', () => {
+  const a = watchable();
+  a.watchStart('0x500010', 8);
+  assert.equal(a.monitor.enables, 1);
+  access(a, 'read', 0x7ff123, 0x500010);
+  access(a, 'read', 0x7ff123, 0x500010); // a second page of the watch, before the timer
+  assert.equal(a.timers.filter((t) => t.ms === 5 && !t.cancelled).length, 1);
+  fire(a, 5);
+  assert.equal(a.monitor.enables, 2);
+  assert.equal(a.monitor.disables, 1);
+  // Something that reads the page without the monitor seeing it (Frida's own
+  // thread) uses the trap up: a regular re-arm brings it back.
+  assert.equal(a.intervals[0].ms, 250);
+  a.intervals[0].fn();
+  assert.equal(a.monitor.enables, 3);
+});
+
+test('watchStop: the trap is removed, and the result stays until the next watch', () => {
+  const a = watchable();
+  assert.deepEqual(j(a.watchHits()), { watching: false, endedBy: 'none', address: null, size: 0, seconds: 0, hits: 0, near: 0, places: 0, truncated: false, error: '', items: [] });
+  a.watchStart('0x500010', 8);
+  access(a, 'write', 0x7ff123, 0x500010);
+  const r = j(a.watchStop());
+  assert.equal(r.watching, false);
+  assert.equal(r.endedBy, 'stop');
+  assert.equal(r.hits, 1);
+  assert.equal(a.monitor.armed, null);
+  assert.equal(a.intervals[0].cancelled, true);
+  assert.equal(a.timers.filter((t) => !t.cancelled).length, 0); // nothing left that would arm it again
+  assert.equal(j(a.watchHits()).hits, 1);
+  assert.equal(j(a.watchStop()).endedBy, 'stop'); // stopping twice changes nothing
+  a.watchStart('0x500020', 4);
+  assert.equal(j(a.watchHits()).hits, 0);
+});
+
+test('watch: it ends by itself at the time limit, and when the memory can no longer be armed', () => {
+  const a = watchable();
+  a.watchStart('0x500010', 8);
+  fire(a, 600000);
+  assert.equal(a.monitor.armed, null);
+  assert.equal(j(a.watchHits()).endedBy, 'limit');
+  const b = watchable({ armThrows: (n) => n >= 1 }); // freed while watched
+  b.watchStart('0x500010', 8);
+  access(b, 'read', 0x7ff123, 0x500010);
+  fire(b, 5);
+  const r = j(b.watchHits());
+  assert.equal(r.watching, false);
+  assert.equal(r.endedBy, 'lost');
+  assert.match(r.error, /unable to protect/);
+  assert.equal(r.hits, 1);
+});
+
+test('watch: the number of places is capped and says so; a late access after stop is ignored', () => {
+  const a = watchable();
+  a.watchStart('0x500010', 8);
+  const cb = a.monitor.armed.cb;
+  for (let i = 0; i < 505; i++) cb({ operation: 'read', from: new Ptr(0x7ff000 + i), address: new Ptr(0x500010), threadId: 11, context: {} });
+  const r = j(a.watchHits());
+  assert.equal(r.places, 500);
+  assert.equal(r.items.length, 200);
+  assert.equal(r.truncated, true);
+  assert.equal(r.hits, 505); // still counted
+  a.watchStop();
+  cb({ operation: 'read', from: new Ptr(0x7ff000), address: new Ptr(0x500010), threadId: 11, context: {} });
+  assert.equal(j(a.watchHits()).hits, 505);
+});
+
+test('watch: reading or writing the watched page through the Inspector is refused, with the reason', () => {
+  const a = watchable();
+  a.watchStart('0x500ffc', 8); // pages 0x500000 and 0x501000
+  assert.throws(() => a.read('0x500100', 16), /being watched/);
+  assert.throws(() => a.read('0x4ffff0', 32), /not readable|being watched/);
+  assert.throws(() => a.write('0x501ff0', 'aa'), /being watched/);
+  assert.equal(j(a.read('0x502000', 4)).size, 4); // the next page is not
+  a.watchStop();
+  assert.equal(j(a.read('0x500100', 4)).size, 4);
+});
+
+test('watch: a follow that needs a fresh agent is refused while a watch is running', () => {
+  const a = watchable({ modules: [ntdll] });
+  a.follow(11, { mode: 'app' });
+  a.unfollow();
+  a.watchStart('0x500010', 8);
+  assert.throws(() => a.follow(11, { mode: 'all' }), /memory watch is running/);
+  assert.throws(() => a.coverStart('all', { mode: 'all' }), /memory watch is running/);
+  a.follow(11, { mode: 'app' }); // the same scope needs no fresh agent
+});
+
+test('watch: memory that is unmapped while watched ends the watch at the next regular re-arm', () => {
+  // Windows reports freed address space as a range with no access; Linux reports none.
+  for (const gone of [null, { base: new Ptr(0x400000), size: 2 ** 30, protection: '---' }]) unmapped(gone);
+});
+function unmapped(gone) {
+  let mapped = true;
+  const a = watchable({ Process: { pageSize: 0x1000, findRangeByAddress: (p) => (mapped ? WATCH_RANGES.find((r) => p.v >= r.base.v && p.v < r.base.v + BigInt(r.size)) || null : gone) } });
+  a.watchStart('0x500010', 8);
+  access(a, 'read', 0x7ff123, 0x500010);
+  mapped = false;
+  fire(a, 5); // the quick re-arm after an access does not look
+  assert.equal(j(a.watchHits()).watching, true);
+  a.intervals[0].fn();
+  const r = j(a.watchHits());
+  assert.equal(r.watching, false);
+  assert.equal(r.endedBy, 'lost');
+  assert.match(r.error, /no longer mapped/);
+  assert.equal(r.hits, 1);
+  assert.equal(a.monitor.armed, null);
+}

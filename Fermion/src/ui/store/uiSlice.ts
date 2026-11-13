@@ -5,7 +5,7 @@ export type ToolboxTab = 'editor' | 'repl' | 'hooks' | 'graph' | 'tree' | 'inspe
 
 // "Show this address": which Inspector view, and a counter so asking for the
 // same address twice is still a new request.
-export type AddressView = 'memory' | 'code';
+export type AddressView = 'memory' | 'code' | 'watch';
 export interface AddressRequest { view: AddressView; address: string; n: number; }
 
 export interface UiState {
@@ -48,7 +48,7 @@ const uiSlice = createSlice({
     toggleSettings(state, action: PayloadAction<boolean | undefined>) {
       state.settingsOpen = action.payload ?? !state.settingsOpen;
     },
-    // Open an address in the Inspector's Memory or Disassembly view.
+    // Open an address in the Inspector's Memory, Disassembly or Watch view.
     openAddress(state, action: PayloadAction<{ view: AddressView; address: string }>) {
       state.activeTab = 'inspector';
       state.addressRequest = { ...action.payload, n: (state.addressRequest?.n ?? 0) + 1 };

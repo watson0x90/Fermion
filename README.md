@@ -298,7 +298,7 @@ The processes on the selected device as a parent → child tree, so you can tell
 
 ## Inspector
 
-Views of the attached process. They only observe it, with one exception you have to switch on: **Edit** in the Memory view, which writes bytes (see below). With Edit off, nothing in the Inspector writes to the target's memory. Each view loads when you open it and again when you press **Refresh** or come back to it. **Auto**, on the Threads list and the Memory hex view, re-reads every 2 seconds while the view is open, which is handy for watching a buffer change.
+Views of the attached process. They only observe it, with one exception you have to switch on: **Edit** in the Memory view, which writes bytes (see below). With Edit off, nothing in the Inspector writes to the target's memory. (A **Watch** changes the protection of a page while it runs, and puts it back.) Each view loads when you open it and again when you press **Refresh** or come back to it. **Auto**, on the Threads list and the Memory hex view, re-reads every 2 seconds while the view is open, which is handy for watching a buffer change.
 
 ![Inspector: a thread's registers and backtrace](Images/fermion-inspector.png)
 
@@ -335,6 +335,17 @@ Things to know:
 - Code that is not in any module (code generated at run time by a JIT, for example) is counted but cannot be put in a drcov file, which describes code by module and offset.
 - The saved file is written by Fermion's main process to the place you pick; the recording stays available to save until you record again, even after the session ends.
 
+**Watch** shows which code reads or writes some bytes of data. Enter an address and how many bytes (1 to 4,096), or right-click an address anywhere and choose **Watch reads and writes**; press **Watch**, use the program, and press **Stop**. Each place that touched the bytes is listed: whether it read or wrote, the function it is in, how many times it was seen, the last byte it touched and the threads it ran on. Select a place for the call stack of its first access. The list fills in while the watch runs.
+
+Things to know:
+
+- Frida traps the whole page the bytes are on, and a trap is used up by the first access to the page. Fermion puts it back a few milliseconds later, over and over, so accesses are **sampled**: the counts are a lower bound, and something that touches the bytes once, right after another access, can be missed. Run the action again if a place you expect is absent.
+- Accesses to other bytes on the same page are counted apart and hidden until you press **Show them**. A busy neighbour on the page takes samples away from the bytes you are watching.
+- A system call that is handed the watched memory fails while the watch is on (the kernel will not go through the trap). Watch a buffer the program fills itself, not one it passes to `ReadFile` or `read`.
+- Only data can be watched: code is refused (hook it instead), and so is a thread's stack. While a watch runs, the Memory view will not read or write that page.
+- A Frida script of yours that reads the watched bytes (a hook handler, say) is not listed, and may get an access error instead of the bytes.
+- One watch at a time. It stops by itself after 10 minutes, when the memory is freed, and when the session ends; the page is then as it was.
+
 **The address menu.** Right-click an address anywhere in Fermion (a register, a backtrace frame, a symbol, a hex row, a scan result, an instruction, a function found in Hooks, a caller of a hooked call) for:
 
 | Item | Does |
@@ -343,6 +354,7 @@ Things to know:
 | **Open in Memory** | Shows it in the hex view. |
 | **Open in Disassembly** | Shows the instructions there. |
 | **Hook this address** | Places a hook there and opens it in the [Hooks](#hooks) tab. |
+| **Watch reads and writes** | Hands it to the Watch view, to see which code touches the data there. |
 | **Bookmark** | Saves the place under Inspector → Bookmarks. |
 
 The menu key on the keyboard opens it too, and the arrow keys move through it.
@@ -403,7 +415,7 @@ To reach a `frida-server` over the network, type its address in **Remote host:po
 | `Enter` / `Shift+Enter` (REPL) | Run the entry / new line |
 | `↑` / `↓` (REPL, Output search) | Earlier / later entries; in the REPL, move through listed completions |
 | `Esc` (REPL, while an entry runs) | Cancel the entry |
-| Right-click an address | The address menu: copy, open in Memory or Disassembly, hook |
+| Right-click an address | The address menu: copy, open in Memory or Disassembly, hook, watch |
 | `Esc` (Output search, REPL completions) | Clear / dismiss |
 
 On macOS use `Cmd` in place of `Ctrl`. `F5` and `Ctrl-R` are disabled on purpose: reloading the window would drop the session.
@@ -484,7 +496,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, hook presets, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, memory watch, hook presets, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.
