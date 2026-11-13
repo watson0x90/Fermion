@@ -1,4 +1,4 @@
-![CI](https://github.com/watson0x90/Fermion/actions/workflows/release.yml/badge.svg) ![stars](https://badgen.net/github/stars/watson0x90/Fermion?color=orange&label=Stars) ![forks](https://badgen.net/github/forks/watson0x90/Fermion?color=orange&label=Forks) ![release](https://badgen.net/badge/Fermion/v2.1.1/grey?icon=atom) ![frida-node](https://badgen.net/badge/Frida-Node/v17.26.2/grey?icon=npm) ![frida-gum](https://badgen.net/badge/Frida-Gum/v19.13.0/grey?icon=npm)
+![CI](https://github.com/watson0x90/Fermion/actions/workflows/release.yml/badge.svg) ![stars](https://badgen.net/github/stars/watson0x90/Fermion?color=orange&label=Stars) ![forks](https://badgen.net/github/forks/watson0x90/Fermion?color=orange&label=Forks) ![release](https://badgen.net/badge/Fermion/v2.1.2/grey?icon=atom) ![frida-node](https://badgen.net/badge/Frida-Node/v17.26.2/grey?icon=npm) ![frida-gum](https://badgen.net/badge/Frida-Gum/v19.13.0/grey?icon=npm)
 
 # Fermion
 
@@ -507,8 +507,8 @@ Releases are intentional and maintainer-driven. Pushing a version tag runs [`.gi
 
 ```
 # bump "version" in Fermion/package.json, commit, then:
-git tag v2.1.1
-git push origin v2.1.1
+git tag v2.1.2
+git push origin v2.1.2
 ```
 
 ## Notes
