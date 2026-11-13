@@ -274,6 +274,7 @@ Things to know:
 - A preset hook is an ordinary hook. Open its **Handler** to see how the arguments are read, and change it: log more, filter by path, or replace a return value.
 - Programs that call the kernel directly, without going through these functions, are not seen by them.
 - The presets are for Windows targets. On another system none of the functions exist and nothing is added.
+- They work in 64-bit and 32-bit programs. A 32-bit program has fewer RPC entry points, so the RPC preset places 2 hooks there, not 5.
 
 ### How hooks behave
 
