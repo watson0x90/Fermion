@@ -2,7 +2,9 @@
 // each preset to a real process, makes real API calls in it with known
 // arguments, and checks that the hooks decode them as the presets claim.
 // Windows only: the presets are for Windows targets.
-//   node Fermion/scripts/ui-test-presets.js [screenshot-prefix]
+//   node Fermion/scripts/ui-test-presets.js [screenshot-prefix] [--x86]
+// With --x86 the target is a 32-bit program (run by 64-bit Windows), which
+// checks the handlers where pointers are 4 bytes and calls are stdcall.
 // Exit 0 + PRESETS_OK / PRESETS_SKIP (not Windows, or cannot attach) ; 1 + PRESETS_FAIL
 const { _electron: electron } = require('playwright-core');
 const electronPath = require('electron');
@@ -13,7 +15,8 @@ const fs = require('fs');
 
 const APP_DIR = path.join(__dirname, '..');
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'fermion-presets-'));
-const shot = process.argv[2];
+const X86 = process.argv.includes('--x86');
+const shot = process.argv.slice(2).find((a) => !a.startsWith('--'));
 const T = { timeout: 30000 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -25,7 +28,10 @@ if (process.platform !== 'win32') {
 // Code run in the target (through the REPL) to make one real call per preset.
 // `fn(module, name, ret, args)` gives a callable export.
 const PRELUDE = String.raw`
-  const fn = (m, n, r, a) => new NativeFunction(Process.getModuleByName(m).getExportByName(n), r, a);
+  // Win32 functions are stdcall on 32-bit Windows. A module the program has not loaded yet is loaded.
+  const mod = (m) => Process.findModuleByName(m) || Module.load(m);
+  const fn = (m, n, r, a) => (Process.pointerSize === 4 ? new NativeFunction(mod(m).getExportByName(n), r, a, 'stdcall') : new NativeFunction(mod(m).getExportByName(n), r, a));
+  const HKLM = ptr(Process.pointerSize === 4 ? '0x80000002' : '0xffffffff80000002');
   const w = (s) => Memory.allocUtf16String(s);
 `;
 const CALLS = {
@@ -35,7 +41,7 @@ const CALLS = {
   registry: String.raw`
     const out = Memory.alloc(8);
     const sub = w('SOFTWARE\\Microsoft');
-    fn('advapi32.dll', 'RegOpenKeyExW', 'int', ['pointer', 'pointer', 'uint32', 'uint32', 'pointer'])(ptr('0xffffffff80000002'), sub, 0, 0x20019, out);`,
+    fn('advapi32.dll', 'RegOpenKeyExW', 'int', ['pointer', 'pointer', 'uint32', 'uint32', 'pointer'])(HKLM, sub, 0, 0x20019, out);`,
   processes: String.raw`
     fn('kernel32.dll', 'OpenProcess', 'pointer', ['uint32', 'int', 'uint32'])(0x1000, 0, Process.id).toString();`,
   ioctls: String.raw`
@@ -47,6 +53,7 @@ const CALLS = {
     const pipe = w('\\\\.\\pipe\\fermion-preset-test');
     fn('kernel32.dll', 'CreateNamedPipeW', 'pointer', ['pointer', 'uint32', 'uint32', 'uint32', 'uint32', 'uint32', 'uint32', 'pointer'])(pipe, 3, 0, 1, 512, 512, 0, NULL).toString();`,
   network: String.raw`
+    fn('ws2_32.dll', 'WSAStartup', 'int', ['uint16', 'pointer'])(0x0202, Memory.alloc(512));
     const s = fn('ws2_32.dll', 'socket', 'pointer', ['int', 'int', 'int'])(2, 1, 6);
     const sa = Memory.alloc(16); sa.writeByteArray([2, 0, 0, 9, 127, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
     fn('ws2_32.dll', 'connect', 'int', ['pointer', 'pointer', 'int'])(s, sa, 16);
@@ -69,7 +76,11 @@ const LABEL = { files: 'Files', registry: 'Registry', processes: 'Processes and 
 
 (async () => {
   let app; let step = 'launch';
-  const target = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+  const ps32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'SysWOW64', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  if (X86 && !fs.existsSync(ps32)) { console.log('PRESETS_SKIP no 32-bit program to attach to (' + ps32 + ')'); process.exit(0); }
+  const target = X86
+    ? spawn(ps32, ['-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 600'], { stdio: 'ignore' })
+    : spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
   const done = (code) => { try { target.kill(); } catch (_) { /* gone */ } process.exitCode = code; setTimeout(() => process.exit(code), 200); };
   try {
     app = await electron.launch({ executablePath: electronPath, args: ['.', '--no-sandbox', '--user-data-dir=' + userDataDir], cwd: APP_DIR });
@@ -86,6 +97,10 @@ const LABEL = { files: 'Files', registry: 'Registry', processes: 'Processes and 
       console.log('PRESETS_SKIP could not attach: ' + String(e && e.message ? e.message : e).split('\n')[0].slice(0, 160));
       await app.close(); return done(0);
     }
+    const arch = (await win.evaluate(() => window.fermion.evaluate('Process.arch + "/" + Process.pointerSize'))).text.replace(/"/g, '');
+    if (X86 && arch !== 'ia32/4') throw new Error('the target is not 32-bit: ' + arch);
+    // The presets only hook modules that are loaded: load the ones the calls below use.
+    await win.evaluate(() => window.fermion.evaluate('["advapi32.dll", "ws2_32.dll", "rpcrt4.dll"].forEach((m) => { if (!Process.findModuleByName(m)) Module.load(m); }); 1'));
     await win.click('role=tab[name="Hooks"]');
 
     const seen = [];
@@ -126,7 +141,7 @@ const LABEL = { files: 'Files', registry: 'Registry', processes: 'Processes and 
     step = 'target unharmed';
     if (!(await win.evaluate(() => window.fermion.evaluate('Process.id'))).ok) throw new Error('the target did not answer at the end');
 
-    console.log('PRESETS_OK ' + seen.join(' + ') + ' decoded real calls + no duplicates on re-add + handler opens clean in the editor + target unharmed');
+    console.log('PRESETS_OK [' + arch + '] ' + seen.join(' + ') + ' decoded real calls + no duplicates on re-add + handler opens clean in the editor + target unharmed');
     await app.close();
     done(0);
   } catch (e) {
