@@ -3,6 +3,7 @@
 // to the main process or the target, and every value read back is checked:
 // anything that is not a valid choice becomes the default.
 import { BUILT_IN_FONT, cleanFontName, fontStack } from './fonts';
+import { LIMITS } from '../limits.js';
 
 export type ScopeDefault = 'all' | 'app';
 export type WatchModeDefault = 'auto' | 'sampled';
@@ -11,9 +12,18 @@ export type Spacing = 'compact' | 'normal' | 'relaxed';
 export type Whitespace = 'none' | 'selection' | 'all';
 export type EditorCursor = 'line' | 'block' | 'underline';
 export type OutputCursor = 'bar' | 'block' | 'underline';
+export type TextSize = 'small' | 'normal' | 'large' | 'larger';
 
 export interface Prefs {
   dataFontFamily: string;      // addresses, hex and tables in the Inspector and elsewhere
+  inspectorTextSize: TextSize; // everything in the Inspector, scaled together
+  // Limits (see ../limits.js: the main process enforces them)
+  limitReplSeconds: number;    // an entry in the REPL is given this long
+  limitRecordMinutes: number;  // coverage, a memory watch and heap tracking stop by themselves
+  limitCoverBlocks: number;
+  limitWatchHits: number;
+  limitHeapLive: number;
+  limitHeapFreed: number;
   editorFontFamily: string;
   editorLineSpacing: Spacing;
   editorLineNumbers: boolean;
@@ -38,6 +48,13 @@ export const PREFS_KEY = 'fermion.prefs';
 
 export const DEFAULT_PREFS: Prefs = {
   dataFontFamily: BUILT_IN_FONT,
+  inspectorTextSize: 'normal',
+  limitReplSeconds: LIMITS.replTimeoutSeconds.default,
+  limitRecordMinutes: LIMITS.recordMinutes.default,
+  limitCoverBlocks: LIMITS.coverBlocks.default,
+  limitWatchHits: LIMITS.watchHits.default,
+  limitHeapLive: LIMITS.heapLive.default,
+  limitHeapFreed: LIMITS.heapFreed.default,
   editorFontFamily: BUILT_IN_FONT,
   editorLineSpacing: 'normal',
   editorLineNumbers: true,
@@ -59,9 +76,11 @@ export const DEFAULT_PREFS: Prefs = {
 };
 
 // Which section of Settings each preference is shown in (and reset with).
-export type Section = 'appearance' | 'editor' | 'output' | 'inspector' | 'session';
+export type Section = 'appearance' | 'editor' | 'output' | 'inspector' | 'session' | 'limits';
 export const SECTION_OF: Record<keyof Prefs, Section> = {
   dataFontFamily: 'appearance',
+  inspectorTextSize: 'inspector',
+  limitReplSeconds: 'limits', limitRecordMinutes: 'limits', limitCoverBlocks: 'limits', limitWatchHits: 'limits', limitHeapLive: 'limits', limitHeapFreed: 'limits',
   editorFontFamily: 'editor', editorFontSize: 'editor', editorLineSpacing: 'editor', editorLineNumbers: 'editor',
   editorMinimap: 'editor', editorWordWrap: 'editor', editorTabSize: 'editor', editorWhitespace: 'editor', editorCursor: 'editor',
   outputFontFamily: 'output', outputFontSize: 'output', outputLineSpacing: 'output', outputCursor: 'output',
@@ -91,6 +110,13 @@ export function cleanPrefs(raw: unknown): Prefs {
   const d = DEFAULT_PREFS;
   return {
     dataFontFamily: cleanFontName(r.dataFontFamily, d.dataFontFamily),
+    inspectorTextSize: oneOf(r.inspectorTextSize, ['small', 'normal', 'large', 'larger'] as const, d.inspectorTextSize),
+    limitReplSeconds: whole(r.limitReplSeconds, LIMITS.replTimeoutSeconds.min, LIMITS.replTimeoutSeconds.max, d.limitReplSeconds),
+    limitRecordMinutes: whole(r.limitRecordMinutes, LIMITS.recordMinutes.min, LIMITS.recordMinutes.max, d.limitRecordMinutes),
+    limitCoverBlocks: whole(r.limitCoverBlocks, LIMITS.coverBlocks.min, LIMITS.coverBlocks.max, d.limitCoverBlocks),
+    limitWatchHits: whole(r.limitWatchHits, LIMITS.watchHits.min, LIMITS.watchHits.max, d.limitWatchHits),
+    limitHeapLive: whole(r.limitHeapLive, LIMITS.heapLive.min, LIMITS.heapLive.max, d.limitHeapLive),
+    limitHeapFreed: whole(r.limitHeapFreed, LIMITS.heapFreed.min, LIMITS.heapFreed.max, d.limitHeapFreed),
     editorFontFamily: cleanFontName(r.editorFontFamily, d.editorFontFamily),
     editorLineSpacing: oneOf(r.editorLineSpacing, SPACINGS, d.editorLineSpacing),
     editorLineNumbers: flag(r.editorLineNumbers, d.editorLineNumbers),
@@ -127,6 +153,15 @@ export function savePrefs(prefs: Prefs): void {
 // The handler editor in the Hooks tab is a small pane: two sizes under the script editor.
 export const handlerFontSize = (prefs: Prefs) => Math.max(FONT_MIN, prefs.editorFontSize - 2);
 
+// The Inspector's text size: the whole panel is scaled, so columns keep their proportions.
+export const INSPECTOR_ZOOM: Record<TextSize, number> = { small: 0.9, normal: 1, large: 1.12, larger: 1.25 };
+
+// The limits as the main process names them (it brings each into range again).
+export function limitsOf(prefs: Prefs) {
+  return { replTimeoutSeconds: prefs.limitReplSeconds, recordMinutes: prefs.limitRecordMinutes, coverBlocks: prefs.limitCoverBlocks,
+    watchHits: prefs.limitWatchHits, heapLive: prefs.limitHeapLive, heapFreed: prefs.limitHeapFreed };
+}
+
 // Line spacing. The editor's is a multiple of the font size (0 lets the editor
 // choose, which is what it did before there was a choice); Output's is a
 // multiple of the line itself.
@@ -162,7 +197,10 @@ export function outputLook(prefs: Prefs) {
 // editor is created a moment after the app, and starts from loadPrefs()).
 export function applyPrefs(prefs: Prefs): void {
   const w = window as any;
-  try { document.documentElement.style.setProperty('--mono', fontStack(prefs.dataFontFamily)); } catch { /* no document */ }
+  try {
+    document.documentElement.style.setProperty('--mono', fontStack(prefs.dataFontFamily));
+    document.documentElement.style.setProperty('--insp-zoom', String(INSPECTOR_ZOOM[prefs.inspectorTextSize]));
+  } catch { /* no document */ }
   for (const [editor, options] of [[w.MonacoCodeEditor, editorOptions(prefs)], [w.MonacoHookEditor, handlerOptions(prefs)]] as const) {
     try {
       editor?.updateOptions?.(options);

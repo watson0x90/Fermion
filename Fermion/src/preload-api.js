@@ -108,6 +108,8 @@ function buildApi(ipcRenderer) {
 		// REPL: evaluate one entry in the attached process.
 		evaluate: (code) => invoke('evaluate', code),
 		cancelEvaluate: () => invoke('cancelEvaluate'),
+		// The limits Settings offers (REPL timeout, how long and how much a recording holds); main brings each into its range.
+		setLimits: (limits) => invoke('setLimits', limits),
 		// Inspector: read-only views of the attached process.
 		inspect: {
 			modules: () => invoke('inspectModules'),

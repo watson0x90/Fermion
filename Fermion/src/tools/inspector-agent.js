@@ -22,6 +22,16 @@
 	var MAX_FOLLOW_TARGETS = 20000; // distinct functions counted
 	var MAX_FOLLOW_ITEMS = 300;     // functions reported
 
+	// A limit handed over when a recording starts (Settings; the main process has
+	// checked it): used when it is a number inside the bounds this agent accepts,
+	// brought into them when outside, and the usual value otherwise.
+	function within(limits, name, usual, lowest, highest) {
+		var v = limits ? limits[name] : undefined;
+		if (typeof v !== 'number' || !isFinite(v)) return usual;
+		return Math.min(highest, Math.max(lowest, Math.floor(v)));
+	}
+	var MIN_RECORD_MS = 60000, MAX_RECORD_MS = 3600000; // a recording lasts between a minute and an hour
+
 	function hex(p) { return p === null || p === undefined ? null : p.toString(); }
 
 	function capped(list, max, map) {
@@ -219,7 +229,7 @@
 					for (var i = 0; i < list.length; i++) {
 						var key = list[i][0].toString();
 						if (state.blocks[key] !== undefined) continue;
-						if (state.n >= MAX_COVER_BLOCKS) {
+						if (state.n >= state.maxBlocks) {
 							// Stop from outside this callback: Stalker is delivering to it.
 							if (!state.overflow) { state.overflow = true; setTimeout(function () { if (cover === state) stopCover('limit'); }, 0); }
 							return;
@@ -609,7 +619,7 @@
 			// The trap comes after the instruction: pc is the one that follows it.
 			watchCount(state, wrote ? 'write' : 'read', details.context.pc, state.pieces[i].base, tid, details.context, true);
 		}
-		if (state.hits >= MAX_WATCH_HITS && !state.limitDue) {
+		if (state.hits >= state.maxHits && !state.limitDue) {
 			// Stop from outside this handler: it runs on the thread that trapped.
 			state.limitDue = true;
 			setTimeout(function () { if (watch === state) stopWatch('limit'); }, 0);
@@ -774,7 +784,7 @@
 		var key = address.toString();
 		var old = state.live.get(key);
 		if (old) state.liveBytes -= old.size; // its free was not seen
-		else if (state.live.size >= MAX_HEAP_LIVE) { state.overflow = true; return; }
+		else if (state.live.size >= state.maxLive) { state.overflow = true; return; }
 		// Frida reuses the object it hands a callback: keep a pointer of our own.
 		state.live.set(key, { a: ptr(key), size: size, tid: tid, t: Date.now(), stack: stack, site: null, freeTid: 0, freeT: 0, freeStack: null });
 		state.liveBytes += size;
@@ -788,8 +798,8 @@
 		block.freeTid = tid;
 		block.freeT = Date.now();
 		block.freeStack = stack;
-		if (state.freed.length < MAX_HEAP_FREED) state.freed.push(block);
-		else { state.freed[state.freedNext] = block; state.freedNext = (state.freedNext + 1) % MAX_HEAP_FREED; }
+		if (state.freed.length < state.maxFreed) state.freed.push(block);
+		else { state.freed[state.freedNext] = block; state.freedNext = (state.freedNext + 1) % state.maxFreed; }
 	}
 
 	// The callbacks for one function. An allocator function called from inside
@@ -1222,7 +1232,7 @@
 		refs: function (address, name) { return moduleRefs(address, name); },
 
 		// sizes: { min, max } in bytes; max 0 means no upper limit.
-		heapStart: function (sizes) {
+		heapStart: function (sizes, limits) {
 			if (heapTracking()) throw new Error('The heap is already being tracked. Stop that first.');
 			var min = sizes && sizes.min > 0 ? Math.floor(sizes.min) : 0;
 			var max = sizes && sizes.max > 0 ? Math.floor(sizes.max) : 0;
@@ -1233,6 +1243,9 @@
 				min: min, max: max, live: new Map(), liveBytes: 0, freed: [], freedNext: 0, allocs: 0, frees: 0, overflow: false,
 				listeners: [], depth: {}, functions: [], timer: null, endedBy: '', started: Date.now(), ended: 0,
 				names: new Map(), allocatorFrame: new Map(),
+				maxMs: within(limits, 'ms', MAX_HEAP_MS, MIN_RECORD_MS, MAX_RECORD_MS),
+				maxLive: within(limits, 'live', MAX_HEAP_LIVE, 1000, 500000),
+				maxFreed: within(limits, 'freed', MAX_HEAP_FREED, 100, 200000),
 			};
 			heap = state;
 			try {
@@ -1245,8 +1258,8 @@
 				heap = null;
 				throw new Error('Could not hook the allocator: ' + e.message);
 			}
-			state.timer = setTimeout(function () { if (heap === state) stopHeap('limit'); }, MAX_HEAP_MS);
-			return { tracking: true, functions: state.functions, min: min, max: max, maxSeconds: MAX_HEAP_MS / 1000, maxLive: MAX_HEAP_LIVE, maxFreed: MAX_HEAP_FREED };
+			state.timer = setTimeout(function () { if (heap === state) stopHeap('limit'); }, state.maxMs);
+			return { tracking: true, functions: state.functions, min: min, max: max, maxSeconds: state.maxMs / 1000, maxLive: state.maxLive, maxFreed: state.maxFreed };
 		},
 
 		// Counts, and the places that hold the most live memory.
@@ -1290,7 +1303,7 @@
 		// otherwise (or when mode is 'sampled') by trapping their page. Only
 		// data that is mapped and readable: code is hooked instead, and a
 		// thread's stack is refused.
-		watchStart: function (address, size, mode) {
+		watchStart: function (address, size, mode, limits) {
 			if (mode === undefined || mode === null) mode = 'auto';
 			if (WATCH_MODES.indexOf(mode) < 0) throw new Error('The watch mode must be auto, exact or sampled');
 			if (watching()) throw new Error(hex(watch.base) + ' is already being watched. Stop that first.');
@@ -1315,7 +1328,7 @@
 				}
 			}
 			var state = {
-				mode: 'sampled', base: p, end: p.add(size), size: size, protection: prot, places: {}, order: [], hits: 0, near: 0, overflow: false,
+				mode: 'sampled', maxHits: within(limits, 'hits', MAX_WATCH_HITS, 1000, 2000000), base: p, end: p.add(size), size: size, protection: prot, places: {}, order: [], hits: 0, near: 0, overflow: false,
 				timer: null, rearm: null, keep: null, endedBy: '', error: '', started: Date.now(), ended: 0,
 				pieces: [], armed: {}, threadCount: 0, limitDue: false, birth: null,
 			};
@@ -1343,9 +1356,10 @@
 				state.birth = hookThreadStart(state);
 				if (state.birth === null) state.keep = setInterval(function () { if (watch === state && !state.endedBy) armThreads(state); }, WATCH_THREADS_MS);
 			}
-			state.timer = setTimeout(function () { if (watch === state) stopWatch('limit'); }, MAX_WATCH_MS);
+			var watchMs = within(limits, 'ms', MAX_WATCH_MS, MIN_RECORD_MS, MAX_RECORD_MS);
+			state.timer = setTimeout(function () { if (watch === state) stopWatch('limit'); }, watchMs);
 			var pages = Number(pageOf(state.end.sub(1)).sub(pageOf(p)).toString()) / Process.pageSize + 1;
-			return { watching: true, address: hex(p), size: size, mode: state.mode, reason: reason, threads: state.threadCount, pages: pages, pageSize: Process.pageSize, maxSeconds: MAX_WATCH_MS / 1000, protection: prot };
+			return { watching: true, address: hex(p), size: size, mode: state.mode, reason: reason, threads: state.threadCount, pages: pages, pageSize: Process.pageSize, maxSeconds: watchMs / 1000, maxHits: state.maxHits, protection: prot };
 		},
 
 		// What has been seen so far (or by the last watch, once it has ended).
@@ -1433,7 +1447,7 @@
 		},
 
 		// threads: 'all' or one thread id; scope as for follow.
-		coverStart: function (threads, scope) {
+		coverStart: function (threads, scope, limits) {
 			if (follow && !follow.endedBy) throw new Error('Thread ' + follow.threadId + ' is being followed. Stop that first.');
 			if (cover && !cover.endedBy) throw new Error('Coverage is already being recorded. Stop that first.');
 			var all = threads === 'all';
@@ -1453,7 +1467,8 @@
 				throw new Error('FERMION_RESCOPE');
 			}
 			var excluded = applyScope(resolved);
-			var state = { all: all, threads: {}, count: 0, scope: resolved.scope, skip: resolved.skip, blocks: {}, n: 0, overflow: false, timer: null, poll: null, endedBy: '', started: Date.now(), ended: 0 };
+			var coverMs = within(limits, 'ms', MAX_COVER_MS, MIN_RECORD_MS, MAX_RECORD_MS);
+			var state = { maxBlocks: within(limits, 'blocks', MAX_COVER_BLOCKS, 1000, 5000000), all: all, threads: {}, count: 0, scope: resolved.scope, skip: resolved.skip, blocks: {}, n: 0, overflow: false, timer: null, poll: null, endedBy: '', started: Date.now(), ended: 0 };
 			for (var i = 0; i < ids.length; i++) coverThread(state, ids[i]);
 			if (!state.count) throw new Error('No thread could be followed.');
 			cover = state;
@@ -1465,8 +1480,8 @@
 					for (var k = 0; k < now.length; k++) coverThread(state, now[k]);
 				}, COVER_POLL_MS);
 			}
-			state.timer = setTimeout(function () { if (cover === state) stopCover('limit'); }, MAX_COVER_MS);
-			return { recording: true, threads: state.count, all: all, maxSeconds: MAX_COVER_MS / 1000, maxBlocks: MAX_COVER_BLOCKS, scope: resolved.scope, excluded: excluded };
+			state.timer = setTimeout(function () { if (cover === state) stopCover('limit'); }, coverMs);
+			return { recording: true, threads: state.count, all: all, maxSeconds: coverMs / 1000, maxBlocks: state.maxBlocks, scope: resolved.scope, excluded: excluded };
 		},
 
 		// Stop (if still running) and return the summary. It is given again

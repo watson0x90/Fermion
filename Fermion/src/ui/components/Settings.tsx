@@ -3,6 +3,7 @@ import { useAppDispatch, useAppSelector } from '../store';
 import { uiActions } from '../store/uiSlice';
 import { prefsActions, usePrefs } from '../store/prefsSlice';
 import { Prefs, Section, DEFAULT_PREFS, SECTION_OF, EDITOR_LINE, OUTPUT_LINE, FONT_MIN, FONT_MAX, REFRESH_MIN, REFRESH_MAX, TAB_SIZES } from '../prefs';
+import { LIMITS } from '../../limits.js';
 import { BUILT_IN_FONT, SYSTEM_FONT, FONT_NAME_MAX, cleanFontName, fontStack, fontState, installedFonts } from '../fonts';
 import { themeNames, themeMeta } from '../theme/themeEngine';
 import { Icon } from './Icon';
@@ -13,6 +14,7 @@ const SECTIONS: { id: Section; label: string }[] = [
   { id: 'output', label: 'Output' },
   { id: 'inspector', label: 'Inspector' },
   { id: 'session', label: 'Session' },
+  { id: 'limits', label: 'Limits' },
 ];
 const KEYS = Object.keys(DEFAULT_PREFS) as (keyof Prefs)[];
 const changedIn = (prefs: Prefs, section?: Section) => KEYS.filter((k) => (!section || SECTION_OF[k] === section) && prefs[k] !== DEFAULT_PREFS[k]);
@@ -157,6 +159,17 @@ function FontPicker({ id, value, onChange }: { id: string; value: string; onChan
   );
 }
 
+// A count out of a few round sizes (and whatever else is stored).
+const short = (v: number) => (v >= 1000000 ? (v / 1000000) + ' million' : v.toLocaleString('en-US'));
+function Amount({ id, value, sizes, onChange }: { id: string; value: number; sizes: number[]; onChange: (v: number) => void }) {
+  const all = sizes.includes(value) ? sizes : [...sizes, value].sort((a, b) => a - b);
+  return (
+    <select id={'set-' + id} data-testid={id} value={value} onChange={(e) => onChange(Number(e.target.value))}>
+      {all.map((v) => <option key={v} value={v}>{short(v)}</option>)}
+    </select>
+  );
+}
+
 const SPACING = [{ v: 'compact' as const, label: 'Compact' }, { v: 'normal' as const, label: 'Normal' }, { v: 'relaxed' as const, label: 'Relaxed' }];
 
 // What the editor will look like: a few lines of a script in the chosen font,
@@ -188,6 +201,28 @@ function Themes() {
   const dispatch = useAppDispatch();
   const current = useAppSelector((s) => s.ui.theme);
   const all = themeNames().map((name) => ({ name, m: themeMeta(name) }));
+  // Arrow keys move through the cards (across the two groups) and choose as they go.
+  const onKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    const by = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0;
+    if (!by) return;
+    const cards = [...e.currentTarget.querySelectorAll<HTMLElement>('.themeopt')];
+    const at = cards.indexOf(document.activeElement as HTMLElement);
+    if (at < 0) return;
+    e.preventDefault();
+    let to = at + by;
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      // The card above or below: the nearest one in the next row, by where it is drawn.
+      const here = cards[at].getBoundingClientRect();
+      const rows = cards.map((c, i) => ({ i, r: c.getBoundingClientRect() })).filter((c) => (by > 0 ? c.r.top > here.top + 1 : c.r.top < here.top - 1));
+      if (rows.length) {
+        const row = by > 0 ? Math.min(...rows.map((c) => c.r.top)) : Math.max(...rows.map((c) => c.r.top));
+        to = rows.filter((c) => Math.abs(c.r.top - row) < 2).sort((a, b) => Math.abs(a.r.left - here.left) - Math.abs(b.r.left - here.left))[0].i;
+      }
+    }
+    const next = cards[(to + cards.length) % cards.length];
+    next.focus();
+    next.click();
+  };
   const group = (dark: boolean) => {
     const items = all.filter((t) => t.m.dark === dark);
     if (!items.length) return null;
@@ -212,7 +247,7 @@ function Themes() {
       </>
     );
   };
-  return <>{group(true)}{group(false)}</>;
+  return <div onKeyDown={onKey}>{group(true)}{group(false)}</div>;
 }
 
 function SettingsDialog() {
@@ -357,6 +392,11 @@ function SettingsDialog() {
 
             {section === 'inspector' && (
               <>
+                <Row k="inspectorTextSize" id="pref-inspector-size" label="Text size" hint="Everything in the Inspector, larger or smaller.">
+                  <Choice id="pref-inspector-size" label="Inspector text size" value={prefs.inspectorTextSize}
+                    choices={[{ v: 'small', label: 'Small' }, { v: 'normal', label: 'Normal' }, { v: 'large', label: 'Large' }, { v: 'larger', label: 'Larger' }]} onChange={(v) => set({ inspectorTextSize: v })} />
+                </Row>
+                <div className="set-sub">Starting choices</div>
                 <p className="set-caption">What each view starts with in a new session. You can still change it in the view itself.</p>
                 <Row k="coverScope" id="pref-cover-scope" label="Coverage records">
                   <select id="set-pref-cover-scope" data-testid="pref-cover-scope" value={prefs.coverScope} onChange={(e) => set({ coverScope: e.target.value as Prefs['coverScope'] })}>
@@ -378,6 +418,30 @@ function SettingsDialog() {
                 </Row>
                 <Row k="autoRefreshSeconds" id="pref-auto-refresh" label="Auto refresh every" hint="How often the Auto button re-reads Threads and Memory.">
                   <Stepper id="pref-auto-refresh" label="Auto refresh interval" value={prefs.autoRefreshSeconds} min={REFRESH_MIN} max={REFRESH_MAX} unit="s" onChange={(v) => set({ autoRefreshSeconds: v })} />
+                </Row>
+              </>
+            )}
+
+            {section === 'limits' && (
+              <>
+                <p className="set-caption">How long and how much Fermion lets things run before it stops them. Higher limits use more of the target's memory and time. A change applies to the next entry or recording.</p>
+                <Row k="limitReplSeconds" id="pref-limit-repl" label="REPL entry may run for" hint="After this an entry is given up and the REPL is restarted.">
+                  <Stepper id="pref-limit-repl" label="REPL time limit" value={prefs.limitReplSeconds} min={LIMITS.replTimeoutSeconds.min} max={LIMITS.replTimeoutSeconds.max} unit="s" onChange={(v) => set({ limitReplSeconds: v })} />
+                </Row>
+                <Row k="limitRecordMinutes" id="pref-limit-record" label="Recordings stop after" hint="Coverage, a memory watch and heap tracking each stop by themselves.">
+                  <Stepper id="pref-limit-record" label="Recording time limit" value={prefs.limitRecordMinutes} min={LIMITS.recordMinutes.min} max={LIMITS.recordMinutes.max} unit="min" onChange={(v) => set({ limitRecordMinutes: v })} />
+                </Row>
+                <Row k="limitCoverBlocks" id="pref-limit-cover" label="Coverage holds" hint="Distinct blocks of code in one recording.">
+                  <Amount id="pref-limit-cover" value={prefs.limitCoverBlocks} sizes={[500000, 1000000, 2000000, 5000000]} onChange={(v) => set({ limitCoverBlocks: v })} />
+                </Row>
+                <Row k="limitWatchHits" id="pref-limit-watch" label="An exact memory watch counts" hint="Reads and writes, after which the watch ends.">
+                  <Amount id="pref-limit-watch" value={prefs.limitWatchHits} sizes={[50000, 200000, 1000000, 2000000]} onChange={(v) => set({ limitWatchHits: v })} />
+                </Row>
+                <Row k="limitHeapLive" id="pref-limit-heap-live" label="Heap tracking records" hint="Blocks that are allocated and not yet freed. Later ones are not recorded.">
+                  <Amount id="pref-limit-heap-live" value={prefs.limitHeapLive} sizes={[50000, 200000, 500000]} onChange={(v) => set({ limitHeapLive: v })} />
+                </Row>
+                <Row k="limitHeapFreed" id="pref-limit-heap-freed" label="Heap tracking remembers" hint="Freed blocks, the newest. Older ones are forgotten.">
+                  <Amount id="pref-limit-heap-freed" value={prefs.limitHeapFreed} sizes={[5000, 20000, 100000, 200000]} onChange={(v) => set({ limitHeapFreed: v })} />
                 </Row>
               </>
             )}

@@ -23,6 +23,7 @@ const INVOKE_METHODS = new Set([
 	'evaluate',
 	// Roadmap — stop waiting for a running REPL entry (restarts the REPL agent).
 	'cancelEvaluate',
+	'setLimits',
 	// Phase 3 — Inspector: read-only views of the attached process. Arguments
 	// are validated in the service before they reach the target.
 	'inspectModules',

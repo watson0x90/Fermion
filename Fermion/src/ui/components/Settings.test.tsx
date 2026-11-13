@@ -4,7 +4,9 @@ import { configureStore } from '@reduxjs/toolkit';
 import session from '../store/sessionSlice';
 import output from '../store/outputSlice';
 import ui, { uiActions } from '../store/uiSlice';
-import prefs from '../store/prefsSlice';
+import prefs, { prefsActions } from '../store/prefsSlice';
+import { themeMeta } from '../theme/themeEngine';
+const themeIsDark = (name: string) => themeMeta(name).dark;
 import { DEFAULT_PREFS } from '../prefs';
 import * as fonts from '../fonts';
 import '../../lang/monaco-theme.js'; // load the real theme set
@@ -31,15 +33,15 @@ test('Settings is a dialog with a list of sections; arrow keys move between them
   renderSettings('appearance');
   const dialog = screen.getByRole('dialog', { name: 'Settings' });
   expect(dialog).toHaveAttribute('aria-modal', 'true');
-  expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Appearance', 'Editor', 'Output', 'Inspector', 'Session']);
+  expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Appearance', 'Editor', 'Output', 'Inspector', 'Session', 'Limits']);
   expect(screen.getByTestId('settings-tab-appearance')).toHaveAttribute('aria-selected', 'true');
   fireEvent.keyDown(screen.getByTestId('settings-tab-appearance'), { key: 'ArrowDown' });
   expect(screen.getByTestId('settings-tab-editor')).toHaveAttribute('aria-selected', 'true');
   expect(screen.getByTestId('settings-tab-editor')).toHaveFocus();
   expect(screen.getByTestId('settings-pane-editor')).toBeInTheDocument();
   fireEvent.keyDown(screen.getByTestId('settings-tab-editor'), { key: 'End' });
-  expect(screen.getByTestId('settings-pane-session')).toBeInTheDocument();
-  fireEvent.keyDown(screen.getByTestId('settings-tab-session'), { key: 'ArrowDown' }); // wraps
+  expect(screen.getByTestId('settings-pane-limits')).toBeInTheDocument();
+  fireEvent.keyDown(screen.getByTestId('settings-tab-limits'), { key: 'ArrowDown' }); // wraps
   expect(screen.getByTestId('settings-pane-appearance')).toBeInTheDocument();
 });
 
@@ -216,6 +218,7 @@ test('every preference shows its value and changes the store; Settings reopens o
   go('appearance');
   fireEvent.change(screen.getByTestId('pref-data-font'), { target: { value: 'Menlo' } });
   expect(store.getState().prefs).toEqual({
+    ...DEFAULT_PREFS,
     dataFontFamily: 'Menlo',
     editorFontFamily: 'IBM Plex Mono', editorFontSize: 14, editorLineSpacing: 'relaxed', editorLineNumbers: false, editorMinimap: false, editorWordWrap: true,
     editorTabSize: 2, editorWhitespace: 'all', editorCursor: 'block',
@@ -273,4 +276,53 @@ test('resetting does not change the color theme', () => {
   fireEvent.click(screen.getByTestId('pref-reset'));
   expect(store.getState().prefs.dataFontFamily).toBe('IBM Plex Mono');
   expect(store.getState().ui.theme).toBe('Monokai');
+});
+
+test('themes: the arrow keys move from card to card, across dark and light, choosing as they go', () => {
+  const store = renderSettings('appearance');
+  const cards = [...document.querySelectorAll<HTMLElement>('.themeopt')];
+  const at = cards.findIndex((c) => c.dataset.testid === 'theme-Kuroir');
+  cards[at].focus();
+  fireEvent.keyDown(cards[at], { key: 'ArrowRight' });
+  expect(cards[at + 1]).toHaveFocus();
+  expect('theme-' + store.getState().ui.theme).toBe(cards[at + 1].dataset.testid);
+  fireEvent.keyDown(cards[at + 1], { key: 'ArrowLeft' });
+  fireEvent.keyDown(cards[at], { key: 'ArrowLeft' }); // from the first light theme to the last dark one
+  expect(cards[at - 1]).toHaveFocus();
+  expect(themeIsDark(store.getState().ui.theme)).toBe(true);
+  fireEvent.keyDown(cards[at - 1], { key: 'Escape' });
+  expect(store.getState().ui.settingsOpen).toBe(false);
+});
+
+test('Inspector text size is a choice of four, and belongs to the Inspector section', () => {
+  const store = renderSettings('inspector');
+  expect(screen.getByTestId('pref-inspector-size-normal')).toHaveAttribute('aria-checked', 'true');
+  fireEvent.click(screen.getByTestId('pref-inspector-size-larger'));
+  expect(store.getState().prefs.inspectorTextSize).toBe('larger');
+  expect(screen.getByTestId('settings-tab-inspector-changed')).toBeInTheDocument();
+  fireEvent.click(screen.getByTestId('pref-reset-section'));
+  expect(store.getState().prefs.inspectorTextSize).toBe('normal');
+});
+
+test('limits: times are stepped inside their range, sizes are chosen from a few; a stored size that is not one of them is still shown', () => {
+  const store = renderSettings('limits');
+  expect(screen.getByTestId('pref-limit-repl')).toHaveValue('20');
+  expect(screen.getByTestId('pref-limit-record')).toHaveValue('10');
+  fireEvent.change(screen.getByTestId('pref-limit-repl'), { target: { value: '9999' } });
+  fireEvent.blur(screen.getByTestId('pref-limit-repl'));
+  expect(store.getState().prefs.limitReplSeconds).toBe(600);
+  fireEvent.keyDown(screen.getByTestId('pref-limit-record'), { key: 'Home' });
+  expect(store.getState().prefs.limitRecordMinutes).toBe(1);
+  expect(screen.getByTestId('pref-limit-record-minus')).toBeDisabled();
+  const cover = screen.getByTestId('pref-limit-cover') as HTMLSelectElement;
+  expect([...cover.options].map((o) => o.textContent)).toEqual(['500,000', '1 million', '2 million', '5 million']);
+  fireEvent.change(cover, { target: { value: '5000000' } });
+  fireEvent.change(screen.getByTestId('pref-limit-watch'), { target: { value: '50000' } });
+  fireEvent.change(screen.getByTestId('pref-limit-heap-live'), { target: { value: '500000' } });
+  fireEvent.change(screen.getByTestId('pref-limit-heap-freed'), { target: { value: '5000' } });
+  expect(store.getState().prefs).toMatchObject({ limitCoverBlocks: 5000000, limitWatchHits: 50000, limitHeapLive: 500000, limitHeapFreed: 5000 });
+  act(() => { store.dispatch(prefsActions.changed({ limitHeapFreed: 12345 })); });
+  expect(screen.getByTestId('pref-limit-heap-freed')).toHaveValue('12345');
+  fireEvent.click(screen.getByTestId('pref-reset-section'));
+  expect(store.getState().prefs).toEqual(DEFAULT_PREFS);
 });
