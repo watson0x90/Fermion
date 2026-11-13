@@ -230,7 +230,7 @@
 * Inspector, Heap: aligned allocations (aligned_alloc, memalign, posix_memalign) are tracked on Linux and macOS
 * Inspector, Heap: on Windows an address nothing was recorded about is looked up in the heaps themselves, with or without tracking: a live block from before tracking is found with its size, and memory that is free right now is called that
 
--= Unreleased (after v2.1.3) =-
+-= Fermion v2.1.4 =-
 
 * Settings: preferences for the editor (font size, minimap, wrapping), the Output font size, what the Inspector views start with (coverage and follow scope, watch mode, auto refresh interval) and whether child processes are caught at start. Applied at once, remembered, kept on this computer
 * Names for addresses: Name this address in the address menu gives an address a name of your own, and backtraces, Disassembly (as a label and as a call target), hook callers and the call stacks of a memory watch or heap block then show it. Names are bookmark labels, kept as module and offset
