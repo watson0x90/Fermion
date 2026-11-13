@@ -127,6 +127,16 @@ function createTerminal(container) {
     setFollow(on) { follow = !!on; if (follow) term.scrollToBottom(); },
     setFontSize(px) { term.options.fontSize = px; try { fitAddon.fit(); } catch (_) {} },
     getFontSize() { return term.options.fontSize; },
+    // Font, size, line spacing and cursor together (Settings); the terminal is refitted once.
+    setLook(look) {
+      const o = look || {};
+      if (o.fontSize) term.options.fontSize = o.fontSize;
+      if (o.fontFamily) term.options.fontFamily = o.fontFamily;
+      if (o.lineHeight) term.options.lineHeight = o.lineHeight;
+      if (o.cursorStyle) term.options.cursorStyle = o.cursorStyle;
+      try { fitAddon.fit(); } catch (_) {}
+    },
+    getLook() { return { fontSize: term.options.fontSize, fontFamily: term.options.fontFamily, lineHeight: term.options.lineHeight, cursorStyle: term.options.cursorStyle }; },
     fit() { try { fitAddon.fit(); } catch (_) {} },
     // `opts.regex` (default true) picks regex vs plain-text matching.
     searchNext(query, opts) {

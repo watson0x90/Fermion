@@ -131,14 +131,19 @@ export function themeNames(): string[] {
 }
 
 // Display metadata for the Settings theme picker.
-export function themeMeta(name: string): { label: string; swatch: string; dark: boolean } {
+export function themeMeta(name: string): { label: string; swatch: string; dark: boolean; fg: string; accent: string; muted: string } {
   const theme = themes()[name];
   const bg = theme?.colors?.['editor.background'];
+  let tokens: Record<string, string> | null = null;
+  try { tokens = theme ? deriveTokens(theme) : null; } catch { /* an odd theme: plain colours */ }
   const label = name.replace(/([a-z])([A-Z])/g, '$1 $2'); // idleFingers -> idle Fingers
   return {
     label: label.charAt(0).toUpperCase() + label.slice(1),
     swatch: bg ? toHex(parseHex(bg)) : '#888888',
     dark: theme ? isDarkTheme(theme) : true,
+    fg: tokens?.['--fg'] ?? '#cccccc',
+    accent: tokens?.['--accent'] ?? '#4f7d1f',
+    muted: tokens?.['--muted'] ?? '#999999',
   };
 }
 

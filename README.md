@@ -476,6 +476,7 @@ To reach a `frida-server` over the network, type its address in **Remote host:po
 | `Ctrl-S` | Save the script |
 | `Ctrl-O` | Open a script |
 | `Ctrl-T` | Reload the script into the attached process |
+| `Ctrl-,` | Open Settings |
 | `Alt-C` | Clear Output |
 | `Tab` (REPL) | Complete the name at the cursor |
 | `Enter` / `Shift+Enter` (REPL) | Run the entry / new line |
@@ -488,27 +489,37 @@ On macOS use `Cmd` in place of `Ctrl`. `F5` and `Ctrl-R` are disabled on purpose
 
 ## Settings
 
-Open **Settings** with the gear at the bottom of the rail. Changes apply as you make them and are remembered.
+Open **Settings** with the gear at the bottom of the rail, or with `Ctrl-,`. It is a dialog with five sections listed on the left; `Esc`, the close button or a click outside closes it. Changes apply as you make them and are remembered.
 
-| Setting | What it changes |
-| --- | --- |
-| **Editor: font size** | The script editor, 9 to 24 pixels. Hook handlers are shown two sizes smaller. |
-| **Editor: minimap** | The overview of the whole script at the right edge of the editor. |
-| **Editor: wrap long lines** | How the editor starts; the **Wrap** button above the editor still switches it for the moment. |
-| **Output: font size** | The Output pane, 9 to 24 pixels. |
-| **Inspector: coverage records** | What a coverage recording covers unless you choose otherwise. |
-| **Inspector: follow goes into** | What following a thread goes into unless you choose otherwise. |
-| **Inspector: memory watch** | Exact when possible, or always the page trap. |
-| **Inspector: auto refresh every** | How often **Auto** on Threads and Memory re-reads, 1 to 30 seconds. |
-| **Session: catch child processes** | Whether that box is ticked when Fermion starts. |
+| Section | Setting | What it changes |
+| --- | --- | --- |
+| **Appearance** | Color theme | See [Themes](#themes). |
+| | Data font | The fixed-width text outside the editor and Output: addresses, hex dumps, tables, the status bar. |
+| **Editor** | Font, font size | The script editor, 9 to 24 pixels. Hook handlers are shown two sizes smaller. |
+| | Line spacing | Compact, normal or relaxed. |
+| | Line numbers, minimap | Whether each is shown. |
+| | Wrap long lines | How the editor starts; the **Wrap** button above the editor still switches it for the moment. |
+| | Tab width | 2, 4 or 8 columns. A script that is already indented keeps its own. |
+| | Show spaces and tabs | Never, in the selection, or always. |
+| | Cursor | Line, block or underline. |
+| **Output** | Font, font size, line spacing, cursor | The Output pane, and the detached Output window. |
+| **Inspector** | Coverage records, Follow goes into, Memory watch | What each view starts with in a new session. |
+| | Auto refresh every | How often **Auto** on Threads and Memory re-reads, 1 to 30 seconds. |
+| **Session** | Catch child processes when Fermion starts | Whether that box is already ticked. |
 
-The three Inspector defaults are what each view starts with, so they take effect in the next session; the rest apply at once. **Reset to defaults** puts everything back. Preferences are kept on this computer, in the window's own storage: they are not sent to the target, and a stored value that is not a valid choice is replaced by the default.
+**Font size** has minus and plus buttons, which repeat while held. With the field focused the arrow keys step by one, `PageUp` and `PageDown` by two, and `Home` and `End` go to the limits. A number can also be typed.
+
+**Fonts.** IBM Plex Mono is built in. The list also offers the common fixed-width fonts that are installed on this computer, and the system's own; **Another installed font...** takes any family by name. Fermion does not download fonts. A family that is not installed is said so and the built-in font is used; one that is not fixed-width works, with a warning that columns will not line up. The Editor and Output sections show a sample in the chosen font, size and spacing.
+
+**Reset.** A dot marks a setting that differs from its default, and the section it is in; click the dot to put that one setting back. **Reset** *section* and **Reset everything** are at the bottom, and either can be undone for a few seconds. Resetting does not change the color theme.
+
+Preferences are kept on this computer, in the window's own storage: they are not sent to the target, and a stored value that is not a valid choice is replaced by the default.
 
 ## Themes
 
-The same panel has the colour theme. There are 16, light and dark, and each one restyles the whole app: editor, Output, panels and window frame. The default, Kuroir, is the original Fermion look. The choice is remembered.
+The Appearance section has the color theme. There are 16, dark and light, each shown in its own colors, and each one restyles the whole app: editor, Output, panels and window frame. The default, Kuroir, is the original Fermion look. The choice is remembered.
 
-![The theme list, with a dark theme applied](Images/fermion-themes.png)
+![Settings, Appearance: the color themes](Images/fermion-themes.png)
 
 ## Writing scripts for Frida 17
 

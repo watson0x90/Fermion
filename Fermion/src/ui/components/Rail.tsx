@@ -45,7 +45,7 @@ export function Rail() {
       <button data-testid="open-about" title="About" onClick={() => api()?.openWindow?.('about.html', { width: 460, height: 270 })}>
         <Icon name="info" size={20} /><span className="lbl">About</span>
       </button>
-      <button className={settingsOpen ? 'hot' : ''} data-testid="open-settings" title="Settings" onClick={() => dispatch(uiActions.toggleSettings())}>
+      <button className={settingsOpen ? 'hot' : ''} data-testid="open-settings" title="Settings (Ctrl+,)" onClick={() => dispatch(uiActions.toggleSettings())}>
         <Icon name="gear" size={20} /><span className="lbl">Settings</span>
       </button>
     </nav>
