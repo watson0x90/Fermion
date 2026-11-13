@@ -129,7 +129,8 @@ const emit = (win, level, text) =>
     // Closing via the window's own close button docks as well.
     await Promise.all([
       out2.waitForEvent('close', { timeout: 15000 }),
-      out2.click('[data-testid="win-close"]'),
+      // The click closes the window it is made in, and may be told so instead of that it worked.
+      out2.click('[data-testid="win-close"]').catch((e) => { if (!/has been closed/.test(String(e))) throw e; }),
     ]);
     await main.waitForFunction(() => !document.querySelector('[data-testid="app-root"]').classList.contains('output-detached'), { timeout: 15000 });
 
