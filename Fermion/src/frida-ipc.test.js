@@ -50,9 +50,11 @@ test('the Inspector operations are allow-listed, and only inspectWrite writes by
   // (approved with memory editing). The coverage three record which code
   // runs and save that to a file main chooses with the operator. Anything
   // The watch three trap a page of data to see who touches it (approved with
-  // the memory watch). Anything else under that name reads.
+  // the memory watch). The heap four hook the allocator's functions to
+  // record blocks and answer for an address (approved with heap tracking).
+  // Anything else under that name reads.
   const { INVOKE_METHODS } = require('./frida-ipc.js');
-  assert.deepEqual([...INVOKE_METHODS].filter((m) => m.startsWith('inspect')).sort(), [...names, 'inspectWrite', 'inspectCoverStart', 'inspectCoverStop', 'inspectCoverSave', 'inspectWatchStart', 'inspectWatchHits', 'inspectWatchStop'].sort());
+  assert.deepEqual([...INVOKE_METHODS].filter((m) => m.startsWith('inspect')).sort(), [...names, 'inspectWrite', 'inspectCoverStart', 'inspectCoverStop', 'inspectCoverSave', 'inspectWatchStart', 'inspectWatchHits', 'inspectWatchStop', 'inspectHeapStart', 'inspectHeapStatus', 'inspectHeapFind', 'inspectHeapStop'].sort());
 });
 
 test('cancelEvaluate is allow-listed', async () => {

@@ -298,7 +298,7 @@ The processes on the selected device as a parent → child tree, so you can tell
 
 ## Inspector
 
-Views of the attached process. They only observe it, with one exception you have to switch on: **Edit** in the Memory view, which writes bytes (see below). With Edit off, nothing in the Inspector writes to the target's memory. (A **Watch** changes the protection of a page while it runs, and puts it back.) Each view loads when you open it and again when you press **Refresh** or come back to it. **Auto**, on the Threads list and the Memory hex view, re-reads every 2 seconds while the view is open, which is handy for watching a buffer change.
+Views of the attached process. They only observe it, with one exception you have to switch on: **Edit** in the Memory view, which writes bytes (see below). With Edit off, nothing in the Inspector writes to the target's memory. (A **Watch** changes the protection of a page while it runs, and **Heap** hooks the allocator while it tracks; both put things back.) Each view loads when you open it and again when you press **Refresh** or come back to it. **Auto**, on the Threads list and the Memory hex view, re-reads every 2 seconds while the view is open, which is handy for watching a buffer change.
 
 ![Inspector: a thread's registers and backtrace](Images/fermion-inspector.png)
 
@@ -346,6 +346,23 @@ Things to know:
 - A Frida script of yours that reads the watched bytes (a hook handler, say) is not listed, and may get an access error instead of the bytes.
 - One watch at a time. It stops by itself after 10 minutes, when the memory is freed, and when the session ends; the page is then as it was.
 
+**Heap** records the blocks the program allocates and frees, each with the call stack that did it, and tells you which block an address is in or was in. Press **Track**, use the program, then type an address and press **Find block** (or right-click an address anywhere and choose **Find heap block**). The answer is one of:
+
+- **Inside a live block**: its size and start, where in it the address is, and the call stack that allocated it.
+- **Inside a block that has been freed**: the same, plus the call stack that freed it. Using that address now is a use after free.
+- **Inside a live block whose memory belonged to blocks freed earlier**: the allocator has handed the memory out again, so a pointer kept from before now reaches the new block. Both the new block and the freed ones are shown.
+- **Not inside any recorded block**: it was allocated before tracking began, is outside the size range, or is not heap memory.
+
+While tracking runs the view also lists the places that hold the most live memory, each named by its nearest callers outside the allocator, which is a quick way to see what is growing.
+
+Things to know:
+
+- Only blocks allocated while tracking runs are known. Start tracking before the step you are interested in.
+- Taking a call stack for every block slows a program that allocates a lot (node ran about five times slower here). Give a size range (**Blocks from … to … bytes**; both the same for one exact size) and the other sizes cost almost nothing.
+- On Windows the hooks are on `RtlAllocateHeap`, `RtlReAllocateHeap` and `RtlFreeHeap` in `ntdll.dll`, which `HeapAlloc`, `malloc` and `operator new` all end up in. Elsewhere they are on `malloc`, `calloc`, `realloc` and `free`. Memory from `VirtualAlloc` or `mmap`, and a program's own pool allocator carving up one big block, are not seen.
+- Tracking stops by itself after 10 minutes. Up to 200,000 live blocks are recorded and the newest 20,000 freed ones are kept; the view says when a limit was reached. What was recorded can be looked up until tracking is started again or the session ends.
+- A program built without frame pointers or unwind information gives short or wrong call stacks. Trust the first frames more than the last.
+
 **The address menu.** Right-click an address anywhere in Fermion (a register, a backtrace frame, a symbol, a hex row, a scan result, an instruction, a function found in Hooks, a caller of a hooked call) for:
 
 | Item | Does |
@@ -355,6 +372,7 @@ Things to know:
 | **Open in Disassembly** | Shows the instructions there. |
 | **Hook this address** | Places a hook there and opens it in the [Hooks](#hooks) tab. |
 | **Watch reads and writes** | Hands it to the Watch view, to see which code touches the data there. |
+| **Find heap block** | Looks it up in the Heap view: which block it is in, who allocated it, who freed it. |
 | **Bookmark** | Saves the place under Inspector → Bookmarks. |
 
 The menu key on the keyboard opens it too, and the arrow keys move through it.
@@ -415,7 +433,7 @@ To reach a `frida-server` over the network, type its address in **Remote host:po
 | `Enter` / `Shift+Enter` (REPL) | Run the entry / new line |
 | `↑` / `↓` (REPL, Output search) | Earlier / later entries; in the REPL, move through listed completions |
 | `Esc` (REPL, while an entry runs) | Cancel the entry |
-| Right-click an address | The address menu: copy, open in Memory or Disassembly, hook, watch |
+| Right-click an address | The address menu: copy, open in Memory or Disassembly, hook, watch, find its heap block |
 | `Esc` (Output search, REPL completions) | Clear / dismiss |
 
 On macOS use `Cmd` in place of `Ctrl`. `F5` and `Ctrl-R` are disabled on purpose: reloading the window would drop the session.
@@ -496,7 +514,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, memory watch, hook presets, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, memory watch, heap tracking, hook presets, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.

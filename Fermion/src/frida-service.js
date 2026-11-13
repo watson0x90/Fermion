@@ -197,6 +197,23 @@ function checkWriteBytes(bytes) {
 	}
 	return bytes.toLowerCase();
 }
+// Which block sizes heap tracking records: { min, max } bytes, max 0 for no
+// upper limit. Returns a fresh object holding only the two known fields.
+const MAX_HEAP_SIZE = 0xffffffff;
+function checkHeapSizes(sizes) {
+	if (sizes === undefined || sizes === null) return { min: 0, max: 0 };
+	const bad = () => new Error('invalid heap sizes (expected { min, max } in bytes, max 0 for no limit)');
+	if (typeof sizes !== 'object' || Array.isArray(sizes)) throw bad();
+	const one = (v) => {
+		if (v === undefined) return 0;
+		if (!Number.isSafeInteger(v) || v < 0 || v > MAX_HEAP_SIZE) throw bad();
+		return v;
+	};
+	const min = one(sizes.min);
+	const max = one(sizes.max);
+	if (max !== 0 && max < min) throw bad();
+	return { min, max };
+}
 // A memory watch covers 1..4096 bytes.
 const MAX_WATCH_BYTES = 4096;
 function checkWatchSize(size) {
@@ -683,6 +700,15 @@ class FridaService extends EventEmitter {
 	async inspectWatchStart(address, size) { return this._inspect('watchStart', checkAddress(address), checkWatchSize(size)); }
 	async inspectWatchHits() { return this._inspect('watchHits'); }
 	async inspectWatchStop() { return this._inspect('watchStop'); }
+
+	// ---- tracking the heap ----
+	// Record the blocks the program allocates and frees, with call stacks, and
+	// answer which block an address is or was in. Bounded in the agent (10
+	// minutes, 200,000 live blocks, the newest 20,000 freed ones).
+	async inspectHeapStart(sizes) { return this._inspect('heapStart', checkHeapSizes(sizes)); }
+	async inspectHeapStatus() { return this._inspect('heapStatus'); }
+	async inspectHeapFind(address) { return this._inspect('heapFind', checkAddress(address)); }
+	async inspectHeapStop() { return this._inspect('heapStop'); }
 
 	// ---- catching child processes ----
 	// With catching on, a process started by the attached process is held

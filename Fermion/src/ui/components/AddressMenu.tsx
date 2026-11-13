@@ -60,7 +60,7 @@ export function AddressMenu() {
   const done = (fn: () => unknown) => () => { setRequest(null); fn(); };
 
   const copy = () => { try { navigator.clipboard?.writeText(address); } catch { /* clipboard unavailable */ } };
-  const open = (view: 'memory' | 'code' | 'watch') => dispatch(uiActions.openAddress({ view, address }));
+  const open = (view: 'memory' | 'code' | 'watch' | 'heap') => dispatch(uiActions.openAddress({ view, address }));
   const hook = async () => {
     try {
       // The target describes the address (module + offset, name) so the hook
@@ -113,6 +113,7 @@ export function AddressMenu() {
       <button role="menuitem" data-testid="addr-menu-code" disabled={!isAttached} title={needsTarget} onClick={done(() => open('code'))}>Open in Disassembly</button>
       <button role="menuitem" data-testid="addr-menu-hook" disabled={!isAttached} title={needsTarget} onClick={done(hook)}>Hook this address</button>
       <button role="menuitem" data-testid="addr-menu-watch" disabled={!isAttached} title={needsTarget ?? 'See which code reads or writes the data at this address'} onClick={done(() => open('watch'))}>Watch reads and writes</button>
+      <button role="menuitem" data-testid="addr-menu-heap" disabled={!isAttached} title={needsTarget ?? 'Which heap block is this address in, who allocated it and who freed it'} onClick={done(() => open('heap'))}>Find heap block</button>
       <button role="menuitem" data-testid="addr-menu-bookmark" disabled={!isAttached} title={needsTarget} onClick={done(bookmark)}>Bookmark</button>
     </div>
   );

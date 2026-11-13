@@ -3,7 +3,8 @@
 // Everything here only observes the target: modules, exports/imports, threads,
 // memory ranges, memory bytes, pattern scans, and following one thread with
 // Stalker to count the calls it makes. Only `write` changes the target's
-// memory; a memory watch changes a page's protection while it runs. Results are plain JSON —
+// memory; a memory watch changes a page's protection while it runs, and heap
+// tracking hooks the allocator's functions while it runs. Results are plain JSON —
 // pointers are hex strings — and every list is capped so a huge target cannot
 // flood the UI.
 
@@ -567,7 +568,306 @@
 		};
 	}
 
+	// ---- tracking the heap ----
+	// Which blocks the program allocates and frees, each with the call stack
+	// that did it, so that an address can be traced to the block it is (or
+	// was) in. The allocator's functions are hooked while tracking runs. A
+	// call stack per block is costly in a program that allocates a lot, so
+	// tracking can be limited to a range of sizes: other blocks cost one
+	// comparison. Everything is bounded: time, live blocks, freed blocks kept.
+	var MAX_HEAP_MS = 600000;      // tracking ends by itself after 10 minutes
+	var MAX_HEAP_LIVE = 200000;    // live blocks recorded; later ones are not
+	var MAX_HEAP_FREED = 20000;    // freed blocks kept, the newest
+	var MAX_HEAP_FRAMES = 12;
+	var MAX_HEAP_SITES = 100;      // allocation places reported
+	var HEAP_SITE_FRAMES = 3;      // callers that make up a place
+	var MAX_HEAP_FOUND = 20;       // freed blocks reported for one address
+	// Modules a block is allocated through, not by: the place that asked is
+	// the first caller outside them.
+	var ALLOCATOR_MODULE = /^(ntdll|kernel32|kernelbase|ucrtbase(d)?|msvcrt|vcruntime\d*d?|msvcp\d*d?|libc[.-]|libc\+\+|libstdc\+\+|libsystem_malloc|libsystem_c|libc\.so)/i;
+	var heap = null; // { min, max, live, liveBytes, freed, freedNext, allocs, frees, overflow, listeners, depth, functions, timer, endedBy, started, ended, names }
+
+	function heapTracking() { return !!heap && !heap.endedBy; }
+
+	function num(p) { return Number(p.toString()); }
+
+	function heapStack(context) {
+		var frames;
+		try { frames = Thread.backtrace(context, Backtracer.ACCURATE); }
+		catch (e) { try { frames = Thread.backtrace(context, Backtracer.FUZZY); } catch (e2) { frames = []; } }
+		return frames.length > MAX_HEAP_FRAMES ? frames.slice(0, MAX_HEAP_FRAMES) : frames;
+	}
+
+	// The allocator functions of this platform: [{ name, address, kind }].
+	function heapFunctions() {
+		var out = [];
+		function add(name, kind, address) { if (address) out.push({ name: name, kind: kind, address: address }); }
+		if (Process.platform === 'windows') {
+			// Every Windows heap allocation (HeapAlloc, malloc, operator new) ends up here.
+			var nt = Process.findModuleByName('ntdll.dll');
+			if (nt) {
+				add('RtlAllocateHeap', 'winalloc', nt.findExportByName('RtlAllocateHeap'));
+				add('RtlReAllocateHeap', 'winrealloc', nt.findExportByName('RtlReAllocateHeap'));
+				add('RtlFreeHeap', 'winfree', nt.findExportByName('RtlFreeHeap'));
+			}
+		} else {
+			add('malloc', 'malloc', Module.findGlobalExportByName('malloc'));
+			add('calloc', 'calloc', Module.findGlobalExportByName('calloc'));
+			add('realloc', 'realloc', Module.findGlobalExportByName('realloc'));
+			add('free', 'free', Module.findGlobalExportByName('free'));
+		}
+		return out;
+	}
+
+	function heapWanted(state, size) { return size >= state.min && (state.max === 0 || size <= state.max); }
+
+	function heapRecord(state, address, size, tid, stack) {
+		var key = address.toString();
+		var old = state.live.get(key);
+		if (old) state.liveBytes -= old.size; // its free was not seen
+		else if (state.live.size >= MAX_HEAP_LIVE) { state.overflow = true; return; }
+		// Frida reuses the object it hands a callback: keep a pointer of our own.
+		state.live.set(key, { a: ptr(key), size: size, tid: tid, t: Date.now(), stack: stack, site: null, freeTid: 0, freeT: 0, freeStack: null });
+		state.liveBytes += size;
+		state.allocs++;
+	}
+
+	function heapRelease(state, key, block, tid, stack) {
+		state.live.delete(key);
+		state.liveBytes -= block.size;
+		state.frees++;
+		block.freeTid = tid;
+		block.freeT = Date.now();
+		block.freeStack = stack;
+		if (state.freed.length < MAX_HEAP_FREED) state.freed.push(block);
+		else { state.freed[state.freedNext] = block; state.freedNext = (state.freedNext + 1) % MAX_HEAP_FREED; }
+	}
+
+	// The callbacks for one function. An allocator function called from inside
+	// another one on the same thread (realloc getting its memory, the heap
+	// growing itself) is not the program's doing: only the outermost counts.
+	function heapListener(state, kind) {
+		var allocates = kind !== 'free' && kind !== 'winfree';
+		if (!allocates) {
+			var at = kind === 'winfree' ? 2 : 0;
+			return {
+				onEnter: function (args) {
+					if (heap !== state || state.endedBy || state.depth[this.threadId] > 0) return;
+					var p = args[at];
+					if (p.isNull()) return;
+					var key = p.toString();
+					var block = state.live.get(key);
+					if (block) heapRelease(state, key, block, this.threadId, heapStack(this.context));
+				},
+			};
+		}
+		return {
+			onEnter: function (args) {
+				var tid = this.threadId;
+				var d = state.depth[tid] = (state.depth[tid] || 0) + 1;
+				this.outer = d === 1 && heap === state && !state.endedBy;
+				this.stack = null;
+				this.old = null;
+				if (!this.outer) return;
+				if (kind === 'winalloc') this.size = num(args[2]);
+				else if (kind === 'malloc') this.size = num(args[0]);
+				else if (kind === 'calloc') this.size = num(args[0]) * num(args[1]);
+				else if (kind === 'winrealloc') { this.old = args[2].isNull() ? null : args[2].toString(); this.size = num(args[3]); }
+				else { this.old = args[0].isNull() ? null : args[0].toString(); this.size = num(args[1]); }
+				this.wanted = heapWanted(state, this.size);
+				var known = this.old !== null && state.live.has(this.old);
+				if (this.wanted || known) this.stack = heapStack(this.context);
+			},
+			onLeave: function (ret) {
+				var tid = this.threadId;
+				if (state.depth[tid] > 0) state.depth[tid]--;
+				if (!this.outer || heap !== state || state.endedBy || ret.isNull()) return;
+				if (this.old !== null) {
+					var key = this.old;
+					var block = state.live.get(key);
+					if (block) {
+						if (ret.toString() === key) { // resized where it is
+							state.liveBytes += this.size - block.size;
+							block.size = this.size;
+							return;
+						}
+						heapRelease(state, key, block, tid, this.stack);
+					} else if (ret.toString() === key) {
+						return; // a block from before tracking began, resized where it is
+					}
+				}
+				if (this.wanted) heapRecord(state, ret, this.size, tid, this.stack || []);
+			},
+		};
+	}
+
+	function stopHeap(endedBy) {
+		if (!heapTracking()) return;
+		heap.endedBy = endedBy;
+		heap.ended = Date.now();
+		if (heap.timer !== null) { clearTimeout(heap.timer); heap.timer = null; }
+		for (var i = 0; i < heap.listeners.length; i++) {
+			try { heap.listeners[i].detach(); } catch (e) { /* already gone */ }
+		}
+		heap.listeners = [];
+		heap.depth = {};
+	}
+
+	function heapNamed(state, address) {
+		var key = address.toString();
+		var named = state.names.get(key);
+		if (!named) { named = { address: key, where: where(address), symbol: symbolName(address) }; state.names.set(key, named); }
+		return named;
+	}
+
+	function heapFrames(state, stack) {
+		var out = [];
+		for (var i = 0; stack && i < stack.length; i++) out.push(heapNamed(state, stack[i]));
+		return out;
+	}
+
+	// The place a block was asked for: the first few callers outside the
+	// allocator's own modules (one frame is not enough where every allocation
+	// goes through the program's own malloc). The key is those addresses.
+	function heapSite(state, block, modules) {
+		if (block.site !== null) return block.site;
+		var stack = block.stack || [];
+		var site = stack.length ? stack[0].toString() : '';
+		var picked = [];
+		for (var i = 0; i < stack.length && picked.length < HEAP_SITE_FRAMES; i++) {
+			if (picked.length) { picked.push(stack[i].toString()); continue; }
+			var key = stack[i].toString();
+			var inAllocator = state.allocatorFrame.get(key);
+			if (inAllocator === undefined) {
+				var m = null;
+				try { m = modules.find(stack[i]); } catch (e) { /* not in a module */ }
+				inAllocator = !!m && ALLOCATOR_MODULE.test(m.name);
+				state.allocatorFrame.set(key, inAllocator);
+			}
+			if (!inAllocator) picked.push(key);
+		}
+		if (picked.length) site = picked.join('|');
+		block.site = site;
+		return site;
+	}
+
+	function heapStatus() {
+		if (!heap) return { tracking: false, endedBy: 'none', seconds: 0, min: 0, max: 0, functions: [], allocs: 0, frees: 0, live: 0, liveBytes: 0, freedKept: 0, overflow: false, siteCount: 0, sites: [] };
+		var state = heap;
+		var modules = new ModuleMap();
+		var totals = {};
+		var keys = [];
+		state.live.forEach(function (block) {
+			var site = heapSite(state, block, modules);
+			var t = totals[site];
+			if (!t) { t = totals[site] = { blocks: 0, bytes: 0 }; keys.push(site); }
+			t.blocks++;
+			t.bytes += block.size;
+		});
+		keys.sort(function (a, b) { return totals[b].bytes - totals[a].bytes || totals[b].blocks - totals[a].blocks; });
+		// The counts are taken now, with the places: looking names up below
+		// can take a while, and the program goes on allocating meanwhile.
+		var counts = { allocs: state.allocs, frees: state.frees, live: state.live.size, liveBytes: state.liveBytes, freedKept: state.freed.length, overflow: state.overflow };
+		var sites = [];
+		for (var i = 0; i < keys.length && sites.length < MAX_HEAP_SITES; i++) {
+			var frames = [];
+			var parts = keys[i] ? keys[i].split('|') : [];
+			for (var f = 0; f < parts.length; f++) frames.push(heapNamed(state, ptr(parts[f])));
+			sites.push({ frames: frames, blocks: totals[keys[i]].blocks, bytes: totals[keys[i]].bytes });
+		}
+		return {
+			tracking: !state.endedBy,
+			endedBy: state.endedBy,
+			seconds: Math.round(((state.ended || Date.now()) - state.started) / 100) / 10,
+			min: state.min,
+			max: state.max,
+			functions: state.functions,
+			allocs: counts.allocs,
+			frees: counts.frees,
+			live: counts.live,
+			liveBytes: counts.liveBytes,
+			freedKept: counts.freedKept,
+			overflow: counts.overflow,
+			siteCount: keys.length,
+			sites: sites,
+		};
+	}
+
+	function heapBlock(state, block, p) {
+		var seconds = function (t) { return Math.round((t - state.started) / 100) / 10; };
+		return {
+			address: hex(block.a),
+			size: block.size,
+			offset: num(p.sub(block.a)),
+			thread: block.tid,
+			at: seconds(block.t),
+			frames: heapFrames(state, block.stack),
+			freed: block.freeT ? { thread: block.freeTid, at: seconds(block.freeT), frames: heapFrames(state, block.freeStack) } : null,
+		};
+	}
+
+	function heapHolds(block, p) {
+		return p.compare(block.a) >= 0 && p.compare(block.a.add(block.size > 0 ? block.size : 1)) < 0;
+	}
+
 	rpc.exports = {
+		// sizes: { min, max } in bytes; max 0 means no upper limit.
+		heapStart: function (sizes) {
+			if (heapTracking()) throw new Error('The heap is already being tracked. Stop that first.');
+			var min = sizes && sizes.min > 0 ? Math.floor(sizes.min) : 0;
+			var max = sizes && sizes.max > 0 ? Math.floor(sizes.max) : 0;
+			if (max !== 0 && max < min) throw new Error('The largest size must not be below the smallest');
+			var functions = heapFunctions();
+			if (!functions.length) throw new Error('No allocator function was found in this process.');
+			var state = {
+				min: min, max: max, live: new Map(), liveBytes: 0, freed: [], freedNext: 0, allocs: 0, frees: 0, overflow: false,
+				listeners: [], depth: {}, functions: [], timer: null, endedBy: '', started: Date.now(), ended: 0,
+				names: new Map(), allocatorFrame: new Map(),
+			};
+			heap = state;
+			try {
+				for (var i = 0; i < functions.length; i++) {
+					state.listeners.push(Interceptor.attach(functions[i].address, heapListener(state, functions[i].kind)));
+					state.functions.push(functions[i].name);
+				}
+			} catch (e) {
+				stopHeap('error');
+				heap = null;
+				throw new Error('Could not hook the allocator: ' + e.message);
+			}
+			state.timer = setTimeout(function () { if (heap === state) stopHeap('limit'); }, MAX_HEAP_MS);
+			return { tracking: true, functions: state.functions, min: min, max: max, maxSeconds: MAX_HEAP_MS / 1000, maxLive: MAX_HEAP_LIVE, maxFreed: MAX_HEAP_FREED };
+		},
+
+		// Counts, and the places that hold the most live memory.
+		heapStatus: function () { return heapStatus(); },
+
+		heapStop: function () {
+			stopHeap('stop');
+			return heapStatus();
+		},
+
+		// The block an address is in now, and the freed blocks it was in
+		// before (newest first). Works on what the last tracking recorded.
+		heapFind: function (address) {
+			if (!heap) throw new Error('Nothing has been tracked yet. Start tracking first.');
+			var state = heap;
+			var p = ptr(address);
+			var live = null;
+			state.live.forEach(function (block) { if (live === null && heapHolds(block, p)) live = block; });
+			var found = [];
+			var total = 0;
+			var n = state.freed.length;
+			for (var i = 0; i < n; i++) {
+				// Newest first: the ring's next slot holds the oldest.
+				var block = state.freed[(state.freedNext - 1 - i + 2 * n) % n];
+				if (!heapHolds(block, p)) continue;
+				total++;
+				if (found.length < MAX_HEAP_FOUND) found.push(heapBlock(state, block, p));
+			}
+			return { address: hex(p), tracking: !state.endedBy, live: live ? heapBlock(state, live, p) : null, freed: found, freedTotal: total };
+		},
+
 		// Trap the page(s) holding `size` bytes at `address`. Only data that is
 		// mapped and readable: code is hooked instead, and a thread's stack is
 		// left alone (the system itself uses it all the time).
@@ -661,6 +961,7 @@
 			if (excludedScope && excludedScope !== resolved.key) {
 				// A fresh agent would end the watch without a word.
 				if (watching()) throw new Error('A memory watch is running. Stop that first.');
+				if (heapTracking()) throw new Error('Heap tracking is running. Stop that first.');
 				throw new Error('FERMION_RESCOPE');
 			}
 			var excluded = applyScope(resolved);
@@ -701,6 +1002,7 @@
 			if (excludedScope && excludedScope !== resolved.key) {
 				// A fresh agent would end the watch without a word.
 				if (watching()) throw new Error('A memory watch is running. Stop that first.');
+				if (heapTracking()) throw new Error('Heap tracking is running. Stop that first.');
 				throw new Error('FERMION_RESCOPE');
 			}
 			var excluded = applyScope(resolved);

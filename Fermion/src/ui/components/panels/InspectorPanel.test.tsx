@@ -1044,3 +1044,108 @@ test('Watch: an address sent from the address menu fills the field and opens the
   expect(screen.getByTestId('watch-address')).toHaveValue('0x7fff960d2000');
   expect(inspect.watchStart).not.toHaveBeenCalled();
 });
+
+// ---- heap tracking ----
+const FR = (address: string, symbol: string) => ({ address, where: 'app.exe+0x' + address.slice(-4), symbol });
+const HEAP_STATUS = {
+  tracking: true, endedBy: '', seconds: 3.5, min: 0, max: 0, functions: ['RtlAllocateHeap', 'RtlReAllocateHeap', 'RtlFreeHeap'],
+  allocs: 12345, frees: 12000, live: 345, liveBytes: 1048576, freedKept: 12000, overflow: false, siteCount: 2,
+  sites: [{ frames: [FR('0x401000', 'app.exe!load_config'), FR('0x402000', 'app.exe!main')], blocks: 300, bytes: 1000000 }, { frames: [FR('0x403000', '')], blocks: 45, bytes: 48576 }],
+};
+const LIVE_BLOCK = { address: '0x900000', size: 48, offset: 16, thread: 13, at: 2.5, frames: [FR('0x404000', 'app.exe!new_session')], freed: null };
+const FREED_BLOCK = { address: '0x900000', size: 64, offset: 16, thread: 11, at: 1, frames: [FR('0x401000', 'app.exe!load_config')], freed: { thread: 12, at: 2, frames: [FR('0x405000', 'app.exe!close_session')] } };
+function withHeap(over: any = {}) {
+  inspect.heapStart = vi.fn(async (sizes: any) => ({ tracking: true, functions: HEAP_STATUS.functions, ...sizes, maxSeconds: 600, maxLive: 200000, maxFreed: 20000 }));
+  inspect.heapStatus = vi.fn(async () => HEAP_STATUS);
+  inspect.heapStop = vi.fn(async () => ({ ...HEAP_STATUS, tracking: false, endedBy: 'stop' }));
+  inspect.heapFind = vi.fn(async (address: string) => ({ address, tracking: true, live: null, freed: [FREED_BLOCK], freedTotal: 1 }));
+  Object.assign(inspect, over);
+}
+
+test('Heap: Track starts with any size by default, or the range typed in; counts and places show while it runs', async () => {
+  setup();
+  withHeap();
+  open('heap');
+  expect(screen.getByTestId('heap-empty')).toHaveTextContent('which block an address is in');
+  expect(screen.getByTestId('heap-find')).toBeDisabled(); // nothing tracked yet
+  fireEvent.change(screen.getByTestId('heap-min'), { target: { value: 'x' } });
+  expect(screen.getByTestId('heap-toggle')).toBeDisabled();
+  fireEvent.change(screen.getByTestId('heap-min'), { target: { value: '64' } });
+  fireEvent.change(screen.getByTestId('heap-max'), { target: { value: '32' } });
+  expect(screen.getByTestId('heap-toggle')).toBeDisabled(); // largest below smallest
+  fireEvent.change(screen.getByTestId('heap-max'), { target: { value: '' } });
+  fireEvent.click(screen.getByTestId('heap-toggle'));
+  await waitFor(() => expect(inspect.heapStart).toHaveBeenCalledWith({ min: 64, max: 0 }));
+  await waitFor(() => expect(screen.getByTestId('heap-status')).toHaveTextContent('Tracking blocks of 64 bytes or more'));
+  await waitFor(() => expect(screen.getByTestId('heap-counts')).toHaveTextContent('12,345 allocated, 12,000 freed, 345 live (1 MB)'));
+  const sites = screen.getAllByTestId('heap-site');
+  expect(sites.length).toBe(2);
+  expect(sites[0]).toHaveTextContent('app.exe!load_config');
+  expect(sites[0]).toHaveTextContent('app.exe!main');
+  expect(sites[0]).toHaveTextContent('300');
+  expect(sites[1]).toHaveTextContent('app.exe+0x3000'); // no symbol: where it is
+  fireEvent.click(screen.getByTestId('heap-toggle'));
+  await waitFor(() => expect(inspect.heapStop).toHaveBeenCalled());
+  await waitFor(() => expect(screen.getByTestId('heap-toggle')).toHaveTextContent('Track'));
+  expect(screen.getByTestId('heap-counts')).toHaveTextContent('345 live');
+});
+
+test('Heap: an address in a freed block is called a use after free, with who allocated and who freed it', async () => {
+  setup();
+  withHeap();
+  open('heap');
+  fireEvent.click(screen.getByTestId('heap-toggle'));
+  await waitFor(() => expect(screen.getByTestId('heap-status')).toHaveTextContent('Tracking blocks of any size'));
+  fireEvent.change(screen.getByTestId('heap-address'), { target: { value: '0x900010' } });
+  fireEvent.click(screen.getByTestId('heap-find'));
+  await waitFor(() => expect(inspect.heapFind).toHaveBeenCalledWith('0x900010'));
+  await waitFor(() => expect(screen.getByTestId('heap-verdict')).toHaveTextContent('0x900010 is inside a block that has been freed'));
+  expect(screen.getByTestId('heap-verdict')).toHaveTextContent('use after free');
+  const block = screen.getByTestId('heap-block');
+  expect(block).toHaveTextContent('64 bytes at 0x900000');
+  expect(block).toHaveTextContent('byte +0x10');
+  expect(block).toHaveTextContent('Allocated by thread 11');
+  expect(block).toHaveTextContent('app.exe!load_config');
+  expect(block).toHaveTextContent('Freed by thread 12');
+  expect(block).toHaveTextContent('app.exe!close_session');
+});
+
+test('Heap: memory handed out again, a live block, and an unknown address each get their own answer', async () => {
+  setup();
+  withHeap({ heapFind: vi.fn(async (address: string) => ({ address, tracking: true, live: LIVE_BLOCK, freed: [FREED_BLOCK], freedTotal: 1 })) });
+  open('heap');
+  fireEvent.click(screen.getByTestId('heap-toggle'));
+  await waitFor(() => expect(screen.getByTestId('heap-status')).toBeInTheDocument());
+  fireEvent.change(screen.getByTestId('heap-address'), { target: { value: '900010' } });
+  fireEvent.keyDown(screen.getByTestId('heap-address'), { key: 'Enter' });
+  await waitFor(() => expect(screen.getByTestId('heap-verdict')).toHaveTextContent('is inside a live block'));
+  expect(screen.getByTestId('heap-verdict')).toHaveTextContent('The same memory belonged to 1 block freed earlier');
+  expect(screen.getAllByTestId('heap-block').length).toBe(2);
+
+  inspect.heapFind = vi.fn(async (address: string) => ({ address, tracking: true, live: LIVE_BLOCK, freed: [], freedTotal: 0 }));
+  fireEvent.click(screen.getByTestId('heap-find'));
+  await waitFor(() => expect(screen.getAllByTestId('heap-block').length).toBe(1));
+  expect(screen.getByTestId('heap-verdict')).not.toHaveTextContent('freed');
+
+  inspect.heapFind = vi.fn(async (address: string) => ({ address, tracking: true, live: null, freed: [], freedTotal: 0 }));
+  fireEvent.click(screen.getByTestId('heap-find'));
+  await waitFor(() => expect(screen.getByTestId('heap-verdict')).toHaveTextContent('is not inside any block recorded'));
+  expect(screen.queryByTestId('heap-block')).toBeNull();
+
+  inspect.heapFind = vi.fn(async () => { throw new Error("Error invoking remote method 'fermion:invoke': Error: Nothing has been tracked yet. Start tracking first.") });
+  fireEvent.click(screen.getByTestId('heap-find'));
+  await waitFor(() => expect(screen.getByTestId('heap-error')).toHaveTextContent('Nothing has been tracked yet'));
+});
+
+test('Heap: an address sent from the address menu opens the view and is looked up once something is tracked', async () => {
+  const store = setup();
+  withHeap();
+  act(() => { store.dispatch(uiActions.openAddress({ view: 'heap', address: '0x900010' })); });
+  await waitFor(() => expect(screen.getByTestId('insp-heap')).toHaveAttribute('aria-selected', 'true'));
+  expect(screen.getByTestId('heap-address')).toHaveValue('0x900010');
+  expect(inspect.heapFind).not.toHaveBeenCalled(); // nothing tracked yet
+  fireEvent.click(screen.getByTestId('heap-toggle'));
+  await waitFor(() => expect(screen.getByTestId('heap-status')).toBeInTheDocument());
+  act(() => { store.dispatch(uiActions.openAddress({ view: 'heap', address: '0x900020' })); });
+  await waitFor(() => expect(inspect.heapFind).toHaveBeenCalledWith('0x900020'));
+});
