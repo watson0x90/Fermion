@@ -128,8 +128,9 @@ function buildApi(ipcRenderer) {
 			coverStart: (threads, scope) => invoke('inspectCoverStart', threads, scope),
 			coverStop: () => invoke('inspectCoverStop'),
 			coverSave: (format) => invoke('inspectCoverSave', format),
-			// Memory watch: who reads or writes `size` bytes at `address`.
-			watchStart: (address, size) => invoke('inspectWatchStart', address, size),
+			// Memory watch: who reads or writes `size` bytes at `address`. mode:
+			// 'auto' (exact where possible), 'exact' or 'sampled'.
+			watchStart: (address, size, mode) => (mode === undefined ? invoke('inspectWatchStart', address, size) : invoke('inspectWatchStart', address, size, mode)),
 			watchHits: () => invoke('inspectWatchHits'),
 			watchStop: () => invoke('inspectWatchStop'),
 			// Heap tracking. sizes: { min, max } bytes (max 0: no limit).

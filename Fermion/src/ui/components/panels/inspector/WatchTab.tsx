@@ -11,7 +11,8 @@ export interface WatchResult {
   watching: boolean; endedBy: string; address: string | null; size: number; seconds: number; hits: number; near: number;
   places: number; truncated: boolean; error: string; items: WatchPlace[];
 }
-interface Started { watching: boolean; address: string; size: number; pages: number; pageSize: number; maxSeconds: number; protection: string; }
+export type WatchMode = 'auto' | 'sampled';
+interface Started { watching: boolean; address: string; size: number; mode?: string; reason?: string; threads?: number; pages: number; pageSize: number; maxSeconds: number; protection: string; }
 
 export const MAX_WATCH_BYTES = 4096;
 const POLL_MS = 500;
@@ -40,6 +41,7 @@ const placeKey = (p: WatchPlace) => p.op + '|' + p.from;
 export function WatchTab({ goto }: { goto: Goto | null }) {
   const [address, setAddress] = useState('');
   const [size, setSize] = useState('8');
+  const [mode, setMode] = useState<WatchMode>('auto');
   const [started, setStarted] = useState<Started | null>(null);
   const [result, setResult] = useState<WatchResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -80,7 +82,7 @@ export function WatchTab({ goto }: { goto: Goto | null }) {
     setBusy(true);
     setError('');
     try {
-      const s: Started = await inspectApi().watchStart(parsed, bytes);
+      const s: Started = await inspectApi().watchStart(parsed, bytes, mode);
       setResult(null);
       setSelected('');
       setStarted(s);
@@ -125,6 +127,11 @@ export function WatchTab({ goto }: { goto: Goto | null }) {
           onChange={(e) => setAddress(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && ready && !started) start(); }} />
         <input className="mini watch-size" data-testid="watch-size" aria-label="Bytes to watch" title={'How many bytes, 1 to ' + n(MAX_WATCH_BYTES)} inputMode="numeric" value={size} disabled={!!started || busy} onChange={(e) => setSize(e.target.value)} />
         <span>bytes</span>
+        <select className="mini" data-testid="watch-mode" aria-label="How to watch" value={mode} disabled={!!started || busy} onChange={(e) => setMode(e.target.value as WatchMode)}
+          title="Exact counts every access with the processor's hardware watchpoints (Windows; a few aligned bytes). The page trap works on anything up to 4,096 bytes but only samples.">
+          <option value="auto">Exact when possible</option>
+          <option value="sampled">Sampled (page trap)</option>
+        </select>
         <button className={'pill' + (started ? ' on' : '')} data-testid="watch-toggle" disabled={busy || (!started && !ready)} onClick={started ? stop : start}>
           {started ? (busy ? 'Stopping…' : 'Stop') : busy ? 'Starting…' : 'Watch'}
         </button>
@@ -133,14 +140,21 @@ export function WatchTab({ goto }: { goto: Goto | null }) {
       </div>
 
       {error && <div className="insp-note err" role="alert" data-testid="watch-error">{error}</div>}
-      {started && (
+      {started && started.mode === 'exact' && (
+        <div className="insp-note" data-testid="watch-status">
+          Watching {plural(started.size, 'byte')} at {started.address} exactly: every access is counted, on {plural(started.threads ?? 0, 'thread')} and any that start. Use the program now, then press Stop.
+          The address of a place is the instruction after the one that touched the bytes. It stops by itself after {Math.round(started.maxSeconds / 60)} minutes or 200,000 accesses.
+        </div>
+      )}
+      {started && started.mode !== 'exact' && (
         <div className="insp-note" data-testid="watch-status">
           Watching {plural(started.size, 'byte')} at {started.address}. Use the program now, then press Stop.
           Accesses are sampled, so the counts are a lower bound: after each one the watch needs a few milliseconds to come back.
           A system call that is handed this memory fails while it is watched. It stops by itself after {Math.round(started.maxSeconds / 60)} minutes.
+          {started.reason ? ` These bytes could not be watched exactly: ${started.reason}.` : ''}
         </div>
       )}
-      {ended === 'limit' && <div className="insp-note" data-testid="watch-ended">The watch stopped at its time limit.</div>}
+      {ended === 'limit' && <div className="insp-note" data-testid="watch-ended">The watch stopped at its limit.</div>}
       {ended === 'lost' && <div className="insp-note err" data-testid="watch-ended">The watch ended: the memory can no longer be trapped (it was probably freed){result?.error ? ': ' + result.error : ''}.</div>}
 
       {!started && !result && !error && (

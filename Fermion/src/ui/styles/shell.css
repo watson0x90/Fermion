@@ -584,6 +584,7 @@ input.mini.heap-size:focus, input.mini.heap-address:focus { border-color: var(--
 .heap-stack-head { padding: 5px 12px 2px; font-size: 11px; color: var(--muted); }
 .heap-frame { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); padding-left: 22px; }
 .heap-cols { display: grid; grid-template-columns: minmax(0, 1fr) 64px 76px; column-gap: 10px; align-items: center; }
+.watch-tab .ptool select { max-width: 190px; }
 .watch-near { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .watch-stack { flex: 0 1 auto; max-height: 45%; overflow: auto; border-top: 1px solid var(--border); background: var(--panel); }
 .watch-stack-head { padding: 6px 12px; font-size: 11.5px; color: var(--muted); }

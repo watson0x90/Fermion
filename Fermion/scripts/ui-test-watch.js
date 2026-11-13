@@ -1,6 +1,8 @@
 // Playwright-Electron END-TO-END test: the memory watch. Attaches to a real
 // process, watches a few bytes of its heap, has real threads of the target
 // read and write them, and checks that the Watch view names who did.
+// On Windows this is done twice: exactly (hardware watchpoints) and sampled
+// (page trap); elsewhere only sampled exists.
 //   node Fermion/scripts/ui-test-watch.js [screenshot-prefix]
 // Exit 0 + WATCH_OK / WATCH_SKIP (cannot attach on this runner) ; 1 + WATCH_FAIL
 const { _electron: electron } = require('playwright-core');
@@ -91,65 +93,104 @@ const SETUP = String.raw`(function () {
     await win.waitForFunction(() => document.querySelector('[data-testid="insp-watch"]').getAttribute('aria-selected') === 'true', undefined, T);
     if (!/^0x[0-9a-f]+$/.test(await win.inputValue('[data-testid="watch-address"]'))) throw new Error('the address was not filled in');
 
-    step = 'what cannot be watched is refused, with the reason';
+    step = 'code is refused, with the reason';
+    const pc = await win.inputValue('[data-testid="watch-address"]');
     await win.click('[data-testid="watch-toggle"]'); // the address is a thread's program counter: code
     await win.waitForFunction(() => /is code/.test(document.querySelector('[data-testid="watch-error"]')?.textContent ?? ''), undefined, T);
+
+    // One watch from start to stop. Exact counts every access and leaves the
+    // memory alone; sampled traps the page, so it sees neighbours too and the
+    // Inspector must not read the page meanwhile.
+    const seen = {};
+    const pass = async (mode, exact) => {
+      const tag = exact ? 'exact' : 'sampled';
+      step = tag + ': watch 8 bytes of the heap';
+      await inTarget('__w.buf.writeUtf8String("1234 fermion")');
+      await win.fill('[data-testid="watch-address"]', buf);
+      await win.fill('[data-testid="watch-size"]', '8');
+      await win.selectOption('[data-testid="watch-mode"]', mode);
+      await win.click('[data-testid="watch-toggle"]');
+      await win.waitForSelector('[data-testid="watch-status"]', T);
+      const status = await win.textContent('[data-testid="watch-status"]');
+      if (!status.includes('Watching 8 bytes at ' + buf)) throw new Error('status: ' + status);
+      if (exact !== /exactly: every access is counted/.test(status)) throw new Error('expected a' + (exact ? 'n exact' : ' sampled') + ' watch: ' + status);
+
+      step = tag + ': a thread of the target reads the bytes';
+      for (let i = 0; i < 3; i++) { await inTarget('__w.read(0)'); await sleep(80); }
+      // Exact misses none of the three (threads that start are armed as they start).
+      let got = await waitRows((r) => r.some((x) => x.op === 'read' && x.times >= (exact ? 3 : 2)), 'the reads were not seen');
+      const read = got.find((x) => x.op === 'read');
+      if (process.platform === 'win32' && !/strlen/i.test(read.from)) throw new Error('the read is not attributed to strlen: ' + read.from);
+      if (BigInt(read.last) < BigInt(buf) || BigInt(read.last) >= BigInt(buf) + 8n) throw new Error('last byte outside the watch: ' + read.last);
+      seen[tag] = read.from + ' x' + read.times;
+
+      step = tag + ': a thread of the target writes the bytes';
+      await inTarget('__w.write()');
+      got = await waitRows((r) => r.some((x) => x.op === 'write' && x.times >= 1), 'the write was not seen');
+
+      step = tag + ': the call stack of a place';
+      await win.click('[data-testid="watch-row"]');
+      await win.waitForSelector('[data-testid="watch-frame"]', T);
+      seen.frames = await win.evaluate(() => document.querySelectorAll('[data-testid="watch-frame"]').length);
+      if (shot) await win.screenshot({ path: shot + '-' + tag + '.png' });
+
+      step = tag + ': other bytes of the page';
+      const before = (await rows()).length;
+      await sleep(80);
+      await inTarget('__w.read(0x40)');
+      if (exact) {
+        await sleep(700);
+        if (await win.$('[data-testid="watch-near"]')) throw new Error('an exact watch reported an access to other bytes');
+      } else {
+        await win.waitForSelector('[data-testid="watch-near"]', T);
+        if (!/^1 access to other bytes on the same page are not listed/.test(await win.textContent('[data-testid="watch-near"]'))) throw new Error('near: ' + await win.textContent('[data-testid="watch-near"]'));
+      }
+      if ((await rows()).length !== before) throw new Error('an access to other bytes was listed with the ones on the bytes');
+
+      step = tag + ': reading the bytes through the Inspector meanwhile';
+      const reading = await win.evaluate((a) => window.fermion.inspect.read(a, 8).then((r) => 'ok ' + r.hex, (e) => String(e && e.message)), buf);
+      if (exact ? !/^ok [0-9a-f]{16}$/.test(reading) : !/being watched/.test(reading)) throw new Error('reading during the watch: ' + reading);
+
+      step = tag + ': stop';
+      await win.click('[data-testid="watch-toggle"]');
+      await win.waitForFunction(() => document.querySelector('[data-testid="watch-toggle"]').textContent === 'Watch', undefined, T);
+      const line = await win.textContent('[data-testid="watch-line"]');
+      if (!/^\d+ accesses from 2 places in [\d.]+ s$/.test(line)) throw new Error('summary: ' + line);
+      if (!/Memory watch on 0x[0-9a-f]+ \(8 bytes\): \d+ accesses from 2 places/.test((await output()).replace(/\r?\n/g, ''))) throw new Error('the result was not announced');
+      const after = await win.evaluate((a) => window.fermion.inspect.read(a, 8).then((r) => r.hex, (e) => 'ERR ' + (e && e.message)), buf);
+      if (!/^[0-9a-f]{16}$/.test(after)) throw new Error('the bytes cannot be read after the watch: ' + after);
+      await inTarget('__w.read(0)'); // and the target uses them freely
+      await sleep(300);
+      if ((await win.textContent('[data-testid="watch-line"]')) !== line) throw new Error('the view changed after Stop');
+    };
+
+    // Hardware watchpoints are used on Windows; elsewhere "exact when possible" samples.
+    const hasExact = process.platform === 'win32';
+    await pass('auto', hasExact);
+    if (hasExact) await pass('sampled', false);
+
+    step = 'a stack is refused, however the watch would be kept';
     const sp = await win.evaluate(async () => { const t = (await window.fermion.inspect.threads()).items.find((x) => x.registers && x.registers.sp); return t ? t.registers.sp : ''; });
     if (sp) {
-      await win.fill('[data-testid="watch-address"]', sp);
-      await win.click('[data-testid="watch-toggle"]');
-      await win.waitForFunction(() => /stack of thread \d+/.test(document.querySelector('[data-testid="watch-error"]')?.textContent ?? ''), undefined, T);
+      const aligned = '0x' + (BigInt(sp) & ~7n).toString(16);
+      await win.fill('[data-testid="watch-address"]', aligned);
+      for (const mode of ['auto', 'sampled']) {
+        // First an error of another kind, so that the stack refusal seen next is this attempt's.
+        await win.fill('[data-testid="watch-address"]', pc);
+        await win.click('[data-testid="watch-toggle"]');
+        await win.waitForFunction(() => /is code/.test(document.querySelector('[data-testid="watch-error"]')?.textContent ?? ''), undefined, T);
+        await win.fill('[data-testid="watch-address"]', aligned);
+        await win.selectOption('[data-testid="watch-mode"]', mode);
+        await win.click('[data-testid="watch-toggle"]');
+        await win.waitForFunction(() => /stack of thread \d+/.test(document.querySelector('[data-testid="watch-error"]')?.textContent ?? ''), undefined, T);
+        if (await win.$('[data-testid="watch-status"]')) throw new Error('a watch on a stack was started (' + mode + ')');
+      }
+      await win.selectOption('[data-testid="watch-mode"]', 'auto');
     }
-
-    step = 'watch 8 bytes of the heap';
-    await win.fill('[data-testid="watch-address"]', buf);
-    await win.fill('[data-testid="watch-size"]', '8');
-    await win.click('[data-testid="watch-toggle"]');
-    await win.waitForSelector('[data-testid="watch-status"]', T);
-    if (!(await win.textContent('[data-testid="watch-status"]')).includes('Watching 8 bytes at ' + buf)) throw new Error('status: ' + await win.textContent('[data-testid="watch-status"]'));
-
-    step = 'a thread of the target reads the bytes';
-    for (let i = 0; i < 3; i++) { await inTarget('__w.read(0)'); await sleep(80); }
-    let got = await waitRows((r) => r.some((x) => x.op === 'read' && x.times >= 2), 'the reads were not seen');
-    const read = got.find((x) => x.op === 'read');
-    if (process.platform === 'win32' && !/strlen/i.test(read.from)) throw new Error('the read is not attributed to strlen: ' + read.from);
-    if (BigInt(read.last) < BigInt(buf) || BigInt(read.last) >= BigInt(buf) + 8n) throw new Error('last byte outside the watch: ' + read.last);
-
-    step = 'a thread of the target writes the bytes';
-    await inTarget('__w.write()');
-    got = await waitRows((r) => r.some((x) => x.op === 'write' && x.times >= 1), 'the write was not seen');
-
-    step = 'the call stack of a place';
-    await win.click('[data-testid="watch-row"]');
-    await win.waitForSelector('[data-testid="watch-frame"]', T);
-    const frames = await win.evaluate(() => document.querySelectorAll('[data-testid="watch-frame"]').length);
-    if (shot) await win.screenshot({ path: shot + '-watching.png' });
-
-    step = 'other bytes of the page are counted apart';
-    const before = (await rows()).length;
-    await sleep(80);
-    await inTarget('__w.read(0x40)');
-    await win.waitForSelector('[data-testid="watch-near"]', T);
-    if (!/^1 access to other bytes on the same page are not listed/.test(await win.textContent('[data-testid="watch-near"]'))) throw new Error('near: ' + await win.textContent('[data-testid="watch-near"]'));
-    if ((await rows()).length !== before) throw new Error('an access to other bytes was listed with the ones on the bytes');
-
-    step = 'the watched page is not read behind the watch';
-    const refused = await win.evaluate((a) => window.fermion.inspect.read(a, 8).then(() => '', (e) => String(e && e.message)), buf);
-    if (!/being watched/.test(refused)) throw new Error('reading the watched page: ' + (refused || 'was allowed'));
-
-    step = 'stop';
-    await win.click('[data-testid="watch-toggle"]');
-    await win.waitForFunction(() => document.querySelector('[data-testid="watch-toggle"]').textContent === 'Watch', undefined, T);
-    const line = await win.textContent('[data-testid="watch-line"]');
-    if (!/^\d+ accesses from 2 places in [\d.]+ s$/.test(line)) throw new Error('summary: ' + line);
-    if (!/Memory watch on 0x[0-9a-f]+ \(8 bytes\): \d+ accesses from 2 places/.test((await output()).replace(/\r?\n/g, ''))) throw new Error('the result was not announced');
-    const after = await win.evaluate((a) => window.fermion.inspect.read(a, 8).then((r) => r.hex, (e) => 'ERR ' + (e && e.message)), buf);
-    if (!/^[0-9a-f]{16}$/.test(after)) throw new Error('the bytes cannot be read after the watch: ' + after);
-    await inTarget('__w.read(0)'); // and the target uses them freely
-    await sleep(300);
-    if (!/^\d+ accesses from 2 places/.test(await win.textContent('[data-testid="watch-line"]'))) throw new Error('the view changed after Stop');
+    if (!(await win.evaluate(() => window.fermion.evaluate('Process.id'))).ok) throw new Error('the target did not answer after the watches');
 
     step = 'detaching while a watch runs leaves the memory usable';
+    await win.fill('[data-testid="watch-address"]', buf);
     await win.click('[data-testid="watch-toggle"]');
     await win.waitForSelector('[data-testid="watch-status"]', T);
     await win.click('[data-testid="detach"]');
@@ -161,7 +202,7 @@ const SETUP = String.raw`(function () {
     if (!/^[0-9a-f]{16}$/.test(again)) throw new Error('after detaching mid-watch the bytes cannot be read: ' + again);
     if (!(await win.evaluate(() => window.fermion.evaluate('Process.id'))).ok) throw new Error('the target did not answer at the end');
 
-    console.log('WATCH_OK menu fills the address + code and a stack are refused + reads (' + read.from + ') and a write by real threads attributed + call stack of ' + frames + ' frames + other bytes of the page counted apart + page not read behind the watch + stop restores it + detach mid-watch leaves the target unharmed');
+    console.log('WATCH_OK menu fills the address + code refused + ' + (hasExact ? 'exact: every read counted (' + seen.exact + '), a write, no neighbours, bytes readable meanwhile + ' : '') + 'sampled: reads (' + seen.sampled + ') and a write attributed, other bytes of the page counted apart, page not read behind the watch + call stack of ' + seen.frames + ' frames + stop restores + a stack refused in every mode + detach mid-watch leaves the target unharmed');
     await app.close();
     done(0);
   } catch (e) {

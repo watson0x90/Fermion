@@ -435,12 +435,21 @@
 	}
 
 	// ---- watching memory ----
-	// Who reads or writes some bytes. The page holding them is trapped
-	// (MemoryAccessMonitor); the first access to it is reported with the
-	// instruction it came from, and the trap is then gone. So it is put back a
-	// moment later, again and again: accesses are sampled, not all counted.
-	// The trap covers whole pages; an access to other bytes of the page is
-	// counted apart. One watch at a time, bounded in time and in places.
+	// Who reads or writes some bytes. Two ways, and one watch at a time:
+	//
+	// Exact (Windows; two aligned pieces of up to 8 bytes each): the processor's hardware
+	// watchpoints, set on every thread. Each access raises a debug trap right
+	// after the instruction that made it; all of them are counted, and nothing
+	// about the memory changes.
+	//
+	// Sampled (anything else, up to a page's worth): the page holding the
+	// bytes is trapped (MemoryAccessMonitor); the first access to it is
+	// reported with the instruction it came from, and the trap is then gone.
+	// So it is put back a moment later, again and again: accesses are sampled,
+	// not all counted. The trap covers whole pages; an access to other bytes
+	// of the page is counted apart.
+	//
+	// Either way a watch is bounded in time and in places.
 	var MAX_WATCH = 4096;          // bytes watched
 	var MAX_WATCH_MS = 600000;     // a watch ends by itself after 10 minutes
 	var WATCH_REARM_MS = 5;        // the trap is put back this long after an access
@@ -449,6 +458,10 @@
 	var MAX_WATCH_ITEMS = 200;     // ... and reported
 	var MAX_WATCH_FRAMES = 16;
 	var MAX_WATCH_THREADS = 8;     // thread ids remembered per place
+	var WATCH_THREADS_MS = 1000;   // exact: how often new threads are looked for, when their start cannot be hooked
+	var MAX_WATCH_HITS = 200000;   // exact: a watch ends after this many accesses
+	var WATCH_MODES = ['auto', 'exact', 'sampled'];
+	var trapHandler = false;       // the exception handler is installed once
 	var watch = null; // { base, end, size, protection, places, order, hits, near, overflow, timer, rearm, keep, endedBy, error, started, ended }
 
 	function watching() { return !!watch && !watch.endedBy; }
@@ -457,7 +470,7 @@
 
 	// Does [p, p + n) touch a page that is trapped right now?
 	function watchedPage(p, n) {
-		if (!watching()) return false;
+		if (!watching() || watch.mode !== 'sampled') return false;
 		var first = pageOf(watch.base);
 		var last = pageOf(watch.end.sub(1)).add(Process.pageSize);
 		return p.add(n).compare(first) > 0 && p.compare(last) < 0;
@@ -476,7 +489,132 @@
 		if (watch.timer !== null) { clearTimeout(watch.timer); watch.timer = null; }
 		if (watch.rearm !== null) { clearTimeout(watch.rearm); watch.rearm = null; }
 		if (watch.keep !== null) { clearInterval(watch.keep); watch.keep = null; }
-		try { MemoryAccessMonitor.disable(); } catch (e) { /* nothing armed */ }
+		if (watch.birth !== null) { try { watch.birth.detach(); } catch (e) { /* already gone */ } watch.birth = null; }
+		if (watch.mode === 'exact') disarmThreads(watch);
+		else { try { MemoryAccessMonitor.disable(); } catch (e) { /* nothing armed */ } }
+	}
+
+	// ---- exact: hardware watchpoints ----
+	// A watchpoint covers 1, 2, 4 or (64-bit) 8 bytes at an address aligned to
+	// its size, and a thread has four. Each piece of the watch takes two: one
+	// that fires on a write and one that fires on any access, because the
+	// processor says which watchpoints fired but not what the access was.
+	// -> the pieces, or a sentence saying why the bytes cannot be watched this way.
+	function exactPieces(p, size) {
+		if (Process.platform !== 'windows') return 'hardware watchpoints are used on Windows only';
+		if (Process.arch !== 'x64' && Process.arch !== 'ia32') return 'hardware watchpoints are used on x86 processors only';
+		var sizes = Process.arch === 'x64' ? [8, 4, 2, 1] : [4, 2, 1];
+		var pieces = [];
+		var at = p;
+		var left = size;
+		while (left > 0) {
+			if (pieces.length === 2) return 'the bytes need more than two aligned pieces (two pieces of 1, 2, 4 or 8 bytes can be watched exactly)';
+			var n = 1;
+			for (var i = 0; i < sizes.length; i++) {
+				if (sizes[i] <= left && at.and(ptr(sizes[i] - 1)).isNull()) { n = sizes[i]; break; }
+			}
+			pieces.push({ base: at, size: n });
+			at = at.add(n);
+			left -= n;
+		}
+		return pieces;
+	}
+
+	// Give one thread the watchpoints. A thread that will not take them (it is
+	// ending, or is not ours to change) is left as it was.
+	function armThread(state, thread) {
+		var done = [];
+		try {
+			for (var i = 0; i < state.pieces.length; i++) {
+				thread.setHardwareWatchpoint(2 * i, state.pieces[i].base, state.pieces[i].size, 'w');
+				done.push(2 * i);
+				thread.setHardwareWatchpoint(2 * i + 1, state.pieces[i].base, state.pieces[i].size, 'rw');
+				done.push(2 * i + 1);
+			}
+		} catch (e) {
+			for (var k = 0; k < done.length; k++) { try { thread.unsetHardwareWatchpoint(done[k]); } catch (e2) { /* gone */ } }
+			return false;
+		}
+		state.armed[thread.id] = true;
+		state.threadCount++;
+		return true;
+	}
+
+	// Every thread but the one this agent runs on, which touches the target's
+	// memory on the operator's behalf.
+	function armThreads(state) {
+		var me = Process.getCurrentThreadId();
+		var threads = Process.enumerateThreads();
+		for (var i = 0; i < threads.length; i++) {
+			if (threads[i].id === me || state.armed[threads[i].id]) continue;
+			armThread(state, threads[i]);
+		}
+	}
+
+	// A new thread arms itself as it starts (every Windows thread begins in
+	// RtlUserThreadStart), so not one of its accesses is missed. That function
+	// never returns, so the listener must be the plain-function kind, which
+	// only sees the entry: one with onEnter/onLeave traps the return too, and
+	// a session with such a listener on a function that never returns hangs
+	// when it detaches. -> the listener, or null where it cannot be hooked.
+	function hookThreadStart(state) {
+		try {
+			var nt = Process.findModuleByName('ntdll.dll');
+			var start = nt ? nt.findExportByName('RtlUserThreadStart') : null;
+			if (!start) return null;
+			return Interceptor.attach(start, function () {
+				if (watch !== state || state.endedBy || state.armed[this.threadId]) return;
+				var threads = Process.enumerateThreads();
+				for (var i = 0; i < threads.length; i++) {
+					if (threads[i].id === this.threadId) { armThread(state, threads[i]); return; }
+				}
+			});
+		} catch (e) {
+			return null;
+		}
+	}
+
+	function disarmThreads(state) {
+		var threads = Process.enumerateThreads();
+		for (var i = 0; i < threads.length; i++) {
+			if (!state.armed[threads[i].id]) continue;
+			for (var k = 0; k < state.pieces.length * 2; k++) {
+				try { threads[i].unsetHardwareWatchpoint(k); } catch (e) { /* thread gone */ }
+			}
+		}
+		state.armed = {};
+	}
+
+	// The debug status register (DR6) in the thread context Windows hands an
+	// exception handler: its low four bits say which watchpoints fired.
+	function debugStatus(nativeContext) { return nativeContext.add(Process.pointerSize === 8 ? 0x68 : 0x14); }
+
+	// Every debug trap in the process comes here while this agent is loaded.
+	// One is taken only when a watch is running and the processor says one of
+	// its watchpoints fired; anything else is passed on untouched.
+	function onTrap(details) {
+		var state = watch;
+		if (!state || state.endedBy || state.mode !== 'exact' || details.type !== 'single-step') return false;
+		var status;
+		var fired;
+		try { status = debugStatus(details.nativeContext); fired = status.readU32(); } catch (e) { return false; }
+		var mine = fired & ((1 << (state.pieces.length * 2)) - 1);
+		if (!mine) return false;
+		try { status.writeU32((fired & ~0xf) >>> 0); } catch (e) { /* left as it is */ }
+		var tid = Process.getCurrentThreadId();
+		for (var i = 0; i < state.pieces.length; i++) {
+			var wrote = (mine >> (2 * i)) & 1;
+			var any = (mine >> (2 * i + 1)) & 1;
+			if (!wrote && !any) continue;
+			// The trap comes after the instruction: pc is the one that follows it.
+			watchCount(state, wrote ? 'write' : 'read', details.context.pc, state.pieces[i].base, tid, details.context, true);
+		}
+		if (state.hits >= MAX_WATCH_HITS && !state.limitDue) {
+			// Stop from outside this handler: it runs on the thread that trapped.
+			state.limitDue = true;
+			setTimeout(function () { if (watch === state) stopWatch('limit'); }, 0);
+		}
+		return true;
 	}
 
 	// Put the trap back. With `look`, first make sure the memory is still
@@ -505,36 +643,42 @@
 		}
 	}
 
-	// Runs on the thread that touched the page, before its instruction is
-	// retried: only count here, names are looked up when the result is asked for.
-	function onWatchAccess(state, details) {
-		if (watch !== state || state.endedBy) return;
-		var inside = details.address.compare(state.base) >= 0 && details.address.compare(state.end) < 0;
+	// Count one access. Runs on the thread that made it: only count here,
+	// names are looked up when the result is asked for.
+	function watchCount(state, op, from, address, threadId, context, inside) {
 		if (inside) state.hits++; else state.near++;
-		var key = details.operation + '|' + details.from.toString();
+		var key = op + '|' + from.toString();
 		var place = state.places[key];
 		if (!place) {
 			if (state.order.length >= MAX_WATCH_PLACES) {
 				state.overflow = true;
 			} else {
-				place = state.places[key] = { op: String(details.operation), from: details.from, hits: 0, near: 0, last: null, threads: [], stack: null, named: null };
+				// Frida reuses the objects it hands a callback: keep pointers of our own.
+				place = state.places[key] = { op: String(op), from: ptr(from.toString()), hits: 0, near: 0, last: null, threads: [], stack: null, named: null };
 				state.order.push(key);
 			}
 		}
 		if (place) {
-			if (inside) { place.hits++; place.last = details.address; } else { place.near++; if (place.last === null) place.last = details.address; }
-			if (place.threads.indexOf(details.threadId) < 0 && place.threads.length < MAX_WATCH_THREADS) place.threads.push(details.threadId);
+			if (inside) { place.hits++; place.last = address.toString(); } else { place.near++; if (place.last === null) place.last = address.toString(); }
+			if (place.threads.indexOf(threadId) < 0 && place.threads.length < MAX_WATCH_THREADS) place.threads.push(threadId);
 			// The call stack of the first access on the bytes themselves.
-			if (inside && place.stack === null && details.context) {
-				try { place.stack = Thread.backtrace(details.context, Backtracer.ACCURATE); }
-				catch (e) { try { place.stack = Thread.backtrace(details.context, Backtracer.FUZZY); } catch (e2) { place.stack = []; } }
+			if (inside && place.stack === null && context) {
+				try { place.stack = Thread.backtrace(context, Backtracer.ACCURATE); }
+				catch (e) { try { place.stack = Thread.backtrace(context, Backtracer.FUZZY); } catch (e2) { place.stack = []; } }
 			}
 		}
+	}
+
+	// Sampled: runs on the thread that touched the page, before its instruction is retried.
+	function onWatchAccess(state, details) {
+		if (watch !== state || state.endedBy) return;
+		var inside = details.address.compare(state.base) >= 0 && details.address.compare(state.end) < 0;
+		watchCount(state, details.operation, details.from, details.address, details.threadId, details.context, inside);
 		if (state.rearm === null) state.rearm = setTimeout(function () { state.rearm = null; rearmWatch(state, false); }, WATCH_REARM_MS);
 	}
 
 	function watchResult() {
-		if (!watch) return { watching: false, endedBy: 'none', address: null, size: 0, seconds: 0, hits: 0, near: 0, places: 0, truncated: false, error: '', items: [] };
+		if (!watch) return { watching: false, endedBy: 'none', mode: '', address: null, size: 0, seconds: 0, hits: 0, near: 0, places: 0, truncated: false, error: '', items: [] };
 		var state = watch;
 		var keys = state.order.slice();
 		keys.sort(function (a, b) { return state.places[b].hits - state.places[a].hits || state.places[b].near - state.places[a].near; });
@@ -550,12 +694,13 @@
 			}
 			items.push({
 				op: place.op, from: hex(place.from), where: place.named.where, symbol: place.named.symbol,
-				hits: place.hits, near: place.near, last: hex(place.last), threads: place.threads.slice(), frames: place.named.frames || [],
+				hits: place.hits, near: place.near, last: place.last, threads: place.threads.slice(), frames: place.named.frames || [],
 			});
 		}
 		return {
 			watching: !state.endedBy,
 			endedBy: state.endedBy,
+			mode: state.mode,
 			address: hex(state.base),
 			size: state.size,
 			seconds: Math.round(((state.ended || Date.now()) - state.started) / 100) / 10,
@@ -614,6 +759,10 @@
 			add('malloc', 'malloc', Module.findGlobalExportByName('malloc'));
 			add('calloc', 'calloc', Module.findGlobalExportByName('calloc'));
 			add('realloc', 'realloc', Module.findGlobalExportByName('realloc'));
+			// Aligned blocks come from functions of their own (a C library has some of them).
+			add('aligned_alloc', 'aligned', Module.findGlobalExportByName('aligned_alloc'));
+			add('memalign', 'aligned', Module.findGlobalExportByName('memalign'));
+			add('posix_memalign', 'posix_memalign', Module.findGlobalExportByName('posix_memalign'));
 			add('free', 'free', Module.findGlobalExportByName('free'));
 		}
 		return out;
@@ -668,10 +817,13 @@
 				this.outer = d === 1 && heap === state && !state.endedBy;
 				this.stack = null;
 				this.old = null;
+				this.out = null;
 				if (!this.outer) return;
 				if (kind === 'winalloc') this.size = num(args[2]);
 				else if (kind === 'malloc') this.size = num(args[0]);
 				else if (kind === 'calloc') this.size = num(args[0]) * num(args[1]);
+				else if (kind === 'aligned') this.size = num(args[1]);
+				else if (kind === 'posix_memalign') { this.out = ptr(args[0].toString()); this.size = num(args[2]); }
 				else if (kind === 'winrealloc') { this.old = args[2].isNull() ? null : args[2].toString(); this.size = num(args[3]); }
 				else { this.old = args[0].isNull() ? null : args[0].toString(); this.size = num(args[1]); }
 				this.wanted = heapWanted(state, this.size);
@@ -681,7 +833,16 @@
 			onLeave: function (ret) {
 				var tid = this.threadId;
 				if (state.depth[tid] > 0) state.depth[tid]--;
-				if (!this.outer || heap !== state || state.endedBy || ret.isNull()) return;
+				if (!this.outer || heap !== state || state.endedBy) return;
+				if (this.out !== null) {
+					// posix_memalign: 0 means it worked, and the block is where its first argument points.
+					if (!ret.isNull() || !this.wanted) return;
+					var made;
+					try { made = this.out.readPointer(); } catch (e) { return; }
+					if (!made.isNull()) heapRecord(state, made, this.size, tid, this.stack || []);
+					return;
+				}
+				if (ret.isNull()) return;
 				if (this.old !== null) {
 					var key = this.old;
 					var block = state.live.get(key);
@@ -868,10 +1029,13 @@
 			return { address: hex(p), tracking: !state.endedBy, live: live ? heapBlock(state, live, p) : null, freed: found, freedTotal: total };
 		},
 
-		// Trap the page(s) holding `size` bytes at `address`. Only data that is
-		// mapped and readable: code is hooked instead, and a thread's stack is
-		// left alone (the system itself uses it all the time).
-		watchStart: function (address, size) {
+		// Watch `size` bytes at `address`: exactly where that is possible,
+		// otherwise (or when mode is 'sampled') by trapping their page. Only
+		// data that is mapped and readable: code is hooked instead, and a
+		// thread's stack is refused.
+		watchStart: function (address, size, mode) {
+			if (mode === undefined || mode === null) mode = 'auto';
+			if (WATCH_MODES.indexOf(mode) < 0) throw new Error('The watch mode must be auto, exact or sampled');
 			if (watching()) throw new Error(hex(watch.base) + ' is already being watched. Stop that first.');
 			if (typeof size !== 'number' || size !== Math.floor(size) || size < 1 || size > MAX_WATCH) throw new Error('A watch covers 1..' + MAX_WATCH + ' bytes');
 			var p = ptr(address);
@@ -881,6 +1045,10 @@
 			if (prot.charAt(0) !== 'r') throw new Error('Memory at ' + hex(p) + ' is not readable');
 			if (prot.charAt(2) === 'x') throw new Error(hex(p) + ' is code. A watch is for data; hook the code instead.');
 			if (range.size - Number(p.sub(range.base).toString()) < size) throw new Error('A watch of ' + size + ' bytes at ' + hex(p) + ' crosses the end of its range');
+			// Never a thread's stack. The system uses it all the time, so a page
+			// trap there breaks the thread; and handling a debug trap uses the
+			// stack of the thread that trapped, so a hardware watchpoint there
+			// fires again inside its own handling and takes the process down.
 			var threads = Process.enumerateThreads();
 			for (var i = 0; i < threads.length; i++) {
 				var sp = threads[i].context && threads[i].context.sp;
@@ -890,15 +1058,37 @@
 				}
 			}
 			var state = {
-				base: p, end: p.add(size), size: size, protection: prot, places: {}, order: [], hits: 0, near: 0, overflow: false,
+				mode: 'sampled', base: p, end: p.add(size), size: size, protection: prot, places: {}, order: [], hits: 0, near: 0, overflow: false,
 				timer: null, rearm: null, keep: null, endedBy: '', error: '', started: Date.now(), ended: 0,
+				pieces: [], armed: {}, threadCount: 0, limitDue: false, birth: null,
 			};
-			armWatch(state); // throws when the page cannot be trapped
-			watch = state;
-			state.keep = setInterval(function () { rearmWatch(state, true); }, WATCH_KEEP_MS);
+			// Why the watch is sampled, when exact was possible in principle.
+			var reason = '';
+			var pieces = mode === 'sampled' ? 'the page trap was asked for' : exactPieces(p, size);
+			if (typeof pieces !== 'string') {
+				state.mode = 'exact';
+				state.pieces = pieces;
+				armThreads(state);
+				if (!state.threadCount) {
+					state.mode = 'sampled';
+					pieces = 'No thread would take a hardware watchpoint';
+				}
+			}
+			if (state.mode === 'sampled') {
+				if (mode === 'exact') throw new Error('These bytes cannot be watched exactly: ' + pieces);
+				if (mode === 'auto') reason = pieces;
+				armWatch(state); // throws when the page cannot be trapped
+				watch = state;
+				state.keep = setInterval(function () { rearmWatch(state, true); }, WATCH_KEEP_MS);
+			} else {
+				if (!trapHandler) { Process.setExceptionHandler(onTrap); trapHandler = true; }
+				watch = state;
+				state.birth = hookThreadStart(state);
+				if (state.birth === null) state.keep = setInterval(function () { if (watch === state && !state.endedBy) armThreads(state); }, WATCH_THREADS_MS);
+			}
 			state.timer = setTimeout(function () { if (watch === state) stopWatch('limit'); }, MAX_WATCH_MS);
 			var pages = Number(pageOf(state.end.sub(1)).sub(pageOf(p)).toString()) / Process.pageSize + 1;
-			return { watching: true, address: hex(p), size: size, pages: pages, pageSize: Process.pageSize, maxSeconds: MAX_WATCH_MS / 1000, protection: prot };
+			return { watching: true, address: hex(p), size: size, mode: state.mode, reason: reason, threads: state.threadCount, pages: pages, pageSize: Process.pageSize, maxSeconds: MAX_WATCH_MS / 1000, protection: prot };
 		},
 
 		// What has been seen so far (or by the last watch, once it has ended).
