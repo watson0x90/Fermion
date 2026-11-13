@@ -1,5 +1,6 @@
 import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 import { SessionTarget, ChildInfo } from '../session/launch';
+import { loadPrefs } from '../prefs';
 
 export interface SessionState {
   deviceId: string;
@@ -23,7 +24,7 @@ const initialState: SessionState = {
   target: null,
   ended: null,
   suspendedPid: null,
-  childGating: false,
+  childGating: loadPrefs().catchChildren, // as the operator prefers it at start
   children: [],
 };
 

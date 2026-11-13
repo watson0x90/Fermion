@@ -5,9 +5,9 @@ import { parseAddress, cleanIpcError } from '../../../inspector/format';
 import { inspectApi, useInspect, Listing } from '../../../inspector/useInspect';
 import { FollowItem, FollowModule, FollowMode, FollowScope, scopeText } from '../../../inspector/follow';
 import { FollowResults } from './FollowResults';
+import { usePrefs } from '../../../store/prefsSlice';
 
 interface Thr { id: number; name: string; state: string; pc: string | null; where: string; registers: Record<string, string>; }
-const AUTO_MS = 2000;
 
 interface FollowResult { threadId: number | null; calls: number; total: number; truncated: boolean; endedBy: string; items: FollowItem[]; modules?: FollowModule[]; scope?: FollowScope | null; }
 interface Mod { name: string; }
@@ -17,7 +17,8 @@ interface Frame { address: string; where: string; symbol: string; }
 // register context and a backtrace. Pointer-like values open in the Memory tab.
 export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMemory: (address: string) => void }) {
   const [auto, setAuto] = useState(false);
-  const threads = useInspect<Listing<Thr>>(() => inspectApi().threads(), 'threads', active, auto ? AUTO_MS : 0);
+  const prefs = usePrefs();
+  const threads = useInspect<Listing<Thr>>(() => inspectApi().threads(), 'threads', active, auto ? prefs.autoRefreshSeconds * 1000 : 0);
   const [selected, setSelected] = useState<number | null>(null);
   const thread = threads.data?.items.find((t) => t.id === selected) ?? null;
 
@@ -34,7 +35,7 @@ export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMe
   const [followErr, setFollowErr] = useState('');
   // What the follow covers: everything, everything but system libraries, or
   // one module. Stalker does not go into what is left out.
-  const [scopeMode, setScopeMode] = useState<FollowMode>('all');
+  const [scopeMode, setScopeMode] = useState<FollowMode>(prefs.followScope);
   const [scopeModule, setScopeModule] = useState('');
   const [activeScope, setActiveScope] = useState<FollowScope | null>(null);
   const [run, setRun] = useState(0); // a new result view (filter cleared) per follow
@@ -98,7 +99,7 @@ export function ThreadsTab({ active, onViewMemory }: { active: boolean; onViewMe
       <div className="ptool">
         <span className="grow">Register values are a snapshot from the last refresh.</span>
         <span className="count" data-testid="thr-count">{threads.loading && !threads.data ? 'loading…' : `${threads.data?.total ?? 0} threads`}</span>
-        <button className={'pill' + (auto ? ' on' : '')} data-testid="thr-auto" aria-pressed={auto} title="Re-read the threads every 2 seconds while this view is open" onClick={() => setAuto(!auto)}>Auto</button>
+        <button className={'pill' + (auto ? ' on' : '')} data-testid="thr-auto" aria-pressed={auto} title={`Re-read the threads every ${prefs.autoRefreshSeconds === 1 ? 'second' : prefs.autoRefreshSeconds + ' seconds'} while this view is open`} onClick={() => setAuto(!auto)}>Auto</button>
         <button className="pill" data-testid="thr-refresh" onClick={threads.reload}><Icon name="refresh" size={12} />Refresh</button>
       </div>
       {threads.error && <div className="insp-note err" role="alert">Could not list threads: {threads.error}</div>}

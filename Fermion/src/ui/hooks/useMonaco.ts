@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { applyTheme, loadSavedTheme } from '../theme/themeEngine';
+import { editorOptions, loadPrefs } from '../prefs';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -74,6 +75,7 @@ export function useMonaco(initialValue: string, onEdit?: () => void) {
         language: 'typescript',
         scrollBeyondLastLine: false,
         automaticLayout: true,
+        ...editorOptions(loadPrefs()),
       });
       editorRef.current = editor;
       (window as any).MonacoCodeEditor = editor;

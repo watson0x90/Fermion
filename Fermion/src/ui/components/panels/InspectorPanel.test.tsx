@@ -1207,3 +1207,21 @@ test('Heap: with nothing recorded about an address, what Windows itself says abo
   fireEvent.click(screen.getByTestId('heap-find'));
   await waitFor(() => expect(screen.getByTestId('heap-verdict')).toHaveTextContent('could not all be walked in time'));
 });
+
+// ---- preferences set what the views start with ----
+test('the Inspector views start from the preferences: coverage scope, watch mode, auto refresh', async () => {
+  const { default: prefsReducer, prefsActions } = await import('../../store/prefsSlice');
+  inspect = { modules: vi.fn(async () => list(MODS)), threads: vi.fn(async () => list(THREADS)) };
+  (window as any).fermion = { inspect };
+  const store = configureStore({ reducer: { session, output, ui, bookmarks, prefs: prefsReducer } });
+  store.dispatch(prefsActions.changed({ coverScope: 'all', watchMode: 'sampled', autoRefreshSeconds: 7 }));
+  store.dispatch(sessionActions.syncState({ isAttached: true, currentPid: '4821' }));
+  store.dispatch(uiActions.setActiveTab('inspector'));
+  render(<Provider store={store}><InspectorPanel /></Provider>);
+  open('coverage');
+  expect(screen.getByTestId('cover-scope')).toHaveValue('all');
+  open('watch');
+  expect(screen.getByTestId('watch-mode')).toHaveValue('sampled');
+  open('threads');
+  expect(screen.getByTestId('thr-auto')).toHaveAttribute('title', expect.stringContaining('every 7 seconds'));
+});

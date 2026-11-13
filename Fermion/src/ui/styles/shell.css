@@ -361,7 +361,17 @@ select.mini:disabled, input.mini:disabled { opacity: .5; }
 .app.rail-open .settings { left: 184px; }
 .settings header { display: flex; align-items: center; gap: 8px; padding: 11px 13px; border-bottom: 1px solid var(--border); font-size: 12.5px; font-weight: 600; }
 .settings header svg { color: var(--muted); }
-.settings .sect { padding: 11px 13px; max-height: 320px; overflow: auto; }
+.settings .sect { padding: 11px 13px; max-height: min(560px, calc(100vh - 150px)); overflow: auto; }
+.settings .sect h5:not(:first-child) { margin-top: 14px; }
+.setrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; font-size: 12px; color: var(--fg); }
+.setrow .lbl { flex: 1 1 auto; min-width: 0; white-space: nowrap; }
+.setrow select, .setnum input { height: 24px; font-size: 11.5px; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; outline: 0; }
+.setrow select { max-width: 150px; }
+.setnum, .setcheck { display: inline-flex; align-items: center; gap: 6px; }
+.setnum input { width: 56px; text-align: right; }
+.setrow select:focus, .setnum input:focus { border-color: var(--accent); }
+.settings .unit { font-size: 11px; color: var(--muted); }
+.setfoot { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .settings .sect h5 { margin: 0 0 9px; font-size: 10.5px; font-weight: 600; letter-spacing: .7px; text-transform: uppercase; color: var(--faint); }
 .themeopt { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1px solid transparent; background: transparent; color: inherit; font: inherit; font-size: 12.5px; border-radius: 8px; padding: 7px 9px; cursor: pointer; }
 .themeopt:hover { background: color-mix(in srgb, var(--fg) 7%, transparent); }

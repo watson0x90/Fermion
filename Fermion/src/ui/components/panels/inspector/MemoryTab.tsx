@@ -7,6 +7,7 @@ import {
 } from '../../../inspector/format';
 import { useAppSelector } from '../../../store';
 import { writeTerminal } from '../../../bridge';
+import { usePrefs } from '../../../store/prefsSlice';
 import { inspectApi, useInspect, Listing } from '../../../inspector/useInspect';
 
 interface Range { base: string; size: number; protection: string; file: string; }
@@ -18,7 +19,6 @@ interface WriteResult { address: string; size: number; original: string; written
 interface Written extends WriteResult { n: number; pid: string; }
 const MAX_WRITES_KEPT = 200;
 
-const AUTO_MS = 2000;
 const PAGE = 256;          // bytes per hex-view page
 const WIDE_HEX_PX = 590;   // pane width that fits 16 bytes per row
 const PROTECTIONS = [
@@ -35,6 +35,7 @@ export interface Goto { address: string; n: number; }
 // — only with Edit switched on — writing bytes. Every write is listed with
 // the bytes it replaced, and can be put back.
 export function MemoryTab({ active, goto }: { active: boolean; goto: Goto | null }) {
+  const prefs = usePrefs();
   const [address, setAddress] = useState<string | null>(null); // top of the hex view
   const [addrInput, setAddrInput] = useState('');
   const [addrError, setAddrError] = useState('');
@@ -51,7 +52,7 @@ export function MemoryTab({ active, goto }: { active: boolean; goto: Goto | null
 
   const ranges = useInspect<Listing<Range>>(() => inspectApi().ranges(protection), 'ranges|' + protection, active);
   const [auto, setAuto] = useState(false);
-  const view = useInspect<ReadResult>(() => inspectApi().read(address, PAGE), 'read|' + address, active && address != null, auto ? AUTO_MS : 0);
+  const view = useInspect<ReadResult>(() => inspectApi().read(address, PAGE), 'read|' + address, active && address != null, auto ? prefs.autoRefreshSeconds * 1000 : 0);
 
   // Show `target` in the hex view, optionally marking `length` bytes from it.
   const show = (target: string, length = 0) => {
@@ -191,7 +192,7 @@ export function MemoryTab({ active, goto }: { active: boolean; goto: Goto | null
         <button className="pill" data-testid="mem-go" onClick={go}>Go</button>
         <button className="pill" data-testid="mem-prev" title="Previous 256 bytes" disabled={!address} onClick={() => page(-PAGE)}>◀</button>
         <button className="pill" data-testid="mem-next" title="Next 256 bytes" disabled={!address} onClick={() => page(PAGE)}>▶</button>
-        <button className={'pill' + (auto ? ' on' : '')} data-testid="mem-auto" aria-pressed={auto} title="Re-read these bytes every 2 seconds, to watch memory change" onClick={() => setAuto(!auto)}>Auto</button>
+        <button className={'pill' + (auto ? ' on' : '')} data-testid="mem-auto" aria-pressed={auto} title={`Re-read these bytes every ${prefs.autoRefreshSeconds === 1 ? 'second' : prefs.autoRefreshSeconds + ' seconds'}, to watch memory change`} onClick={() => setAuto(!auto)}>Auto</button>
         <button className={'pill' + (editing ? ' on warn' : '')} data-testid="mem-edit" aria-pressed={editing} title="Allow writing bytes into the process. Off, nothing here changes the target." onClick={() => (editing ? stopEditing() : setEditing(true))}>Edit</button>
         <span className="grow" />
         <span className="count">{view.loading ? 'reading…' : view.data ? `${view.data.size} bytes` : ''}</span>

@@ -6,9 +6,10 @@ import ui from './store/uiSlice';
 import hooks from './store/hooksSlice';
 import bookmarks from './store/bookmarksSlice';
 import sets from './store/setsSlice';
+import prefs from './store/prefsSlice';
 
 export const store = configureStore({
-  reducer: { session, output, ui, hooks, bookmarks, sets },
+  reducer: { session, output, ui, hooks, bookmarks, sets, prefs },
 });
 
 export type RootState = ReturnType<typeof store.getState>;

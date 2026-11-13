@@ -3,6 +3,7 @@ import { cleanIpcError, fmtSize } from '../../../inspector/format';
 import { inspectApi, useInspect, Listing } from '../../../inspector/useInspect';
 import { FollowMode, FollowScope } from '../../../inspector/follow';
 import { writeTerminal } from '../../../bridge';
+import { usePrefs } from '../../../store/prefsSlice';
 
 interface Thr { id: number; name: string; }
 interface Mod { name: string; }
@@ -27,7 +28,8 @@ export function coverLine(s: CoverSummary): string {
 // giving to a language model).
 export function CoverageTab({ active }: { active: boolean }) {
   const [who, setWho] = useState('all'); // 'all' or a thread id
-  const [scopeMode, setScopeMode] = useState<FollowMode>('app');
+  const prefs = usePrefs();
+  const [scopeMode, setScopeMode] = useState<FollowMode>(prefs.coverScope);
   const [scopeModule, setScopeModule] = useState('');
   const [recording, setRecording] = useState<Started | null>(null);
   const [busy, setBusy] = useState(false);
