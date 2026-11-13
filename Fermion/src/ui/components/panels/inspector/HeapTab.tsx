@@ -5,6 +5,7 @@ import { addrMenu } from '../../../addressMenu';
 import { writeTerminal } from '../../../bridge';
 import { Goto } from './MemoryTab';
 import { useNames, NameIndex } from '../../../names';
+import { OwnAllocator, MAX_OWN, MAX_ARG, allocatorArgs, allocatorError, loadAllocators, saveAllocators } from '../../../inspector/heapAllocators';
 
 interface Frame { address: string | null; where: string; symbol: string; }
 interface Site { frames: Frame[]; blocks: number; bytes: number; }
@@ -19,6 +20,8 @@ export interface HeapFound { address: string; tracking: boolean; live: HeapBlock
 interface Started { tracking: boolean; functions: string[]; min: number; max: number; maxSeconds: number; maxLive: number; maxFreed: number; }
 
 const MAX_SIZE = 0xffffffff;
+const ORDINALS = ['1st', '2nd', '3rd', '4th', '5th', '6th', '7th', '8th'];
+const ARGS = Array.from({ length: MAX_ARG + 1 }, (_, i) => i);
 const POLL_MS = 1000;
 const n = (v: number) => v.toLocaleString('en-US');
 const plural = (count: number, word: string) => `${n(count)} ${word}${count === 1 ? '' : 's'}`;
@@ -148,6 +151,13 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
     writeTerminal('STATUS', `[+] Heap tracking (${sizesText(s.min, s.max)}): ${countsLine(s)}`);
   };
 
+  // Allocators of the program's own (a pool, an arena), tracked beside the system's.
+  const [own, setOwn] = useState<OwnAllocator[]>(loadAllocators);
+  const [ownOpen, setOwnOpen] = useState(false);
+  const changeOwn = (next: OwnAllocator[]) => { setOwn(next); saveAllocators(next); };
+  const editOwn = (i: number, change: Partial<OwnAllocator>) => changeOwn(own.map((a, k) => (k === i ? { ...a, ...change } : a)));
+  const ownError = own.map(allocatorError).find(Boolean) ?? '';
+
   const stop = async () => {
     if (busy) return;
     setBusy(true);
@@ -162,11 +172,11 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
   };
 
   const start = async () => {
-    if (busy || !sizes) return;
+    if (busy || !sizes || ownError) return;
     setBusy(true);
     setError('');
     try {
-      const s: Started = await inspectApi().heapStart(sizes);
+      const s: Started = own.length ? await inspectApi().heapStart(sizes, allocatorArgs(own)) : await inspectApi().heapStart(sizes);
       setStatus(null);
       setFound(null);
       setStarted(s);
@@ -210,9 +220,12 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
         <span>to</span>
         <input className="mini heap-size" data-testid="heap-max" aria-label="Largest block size to track, in bytes" placeholder="any" inputMode="numeric" value={maxText} disabled={!!started || busy} onChange={(e) => setMaxText(e.target.value)} />
         <span>bytes</span>
-        <button className={'pill' + (started ? ' on' : '')} data-testid="heap-toggle" disabled={busy || (!started && !sizes)} onClick={started ? stop : start}
+        <button className={'pill' + (started ? ' on' : '')} data-testid="heap-toggle" disabled={busy || (!started && (!sizes || !!ownError))} onClick={started ? stop : start}
           title="Record the blocks the program allocates and frees, each with its call stack">
           {started ? (busy ? 'Stopping…' : 'Stop') : busy ? 'Starting…' : 'Track'}
+        </button>
+        <button className={'pill' + (ownOpen ? ' on' : '')} data-testid="heap-own-toggle" aria-expanded={ownOpen} title="Track a pool or arena allocator of the program's own, beside the system's" onClick={() => setOwnOpen(!ownOpen)}>
+          Own allocators{own.length ? ` (${own.length})` : ''}
         </button>
         <span className="grow" />
         {status && <span className="count" data-testid="heap-counts">{countsLine(status)}</span>}
@@ -223,6 +236,38 @@ export function HeapTab({ goto }: { goto: Goto | null }) {
         <button className="pill" data-testid="heap-find" disabled={!parsed} title="Which block is this address in, or was it in?" onClick={() => find(parsed)}>Find block</button>
       </div>
 
+      {ownOpen && (
+        <div className="heap-own" data-testid="heap-own">
+          <div className="heap-own-help">
+            A program that hands out memory from a pool or an arena of its own does not ask the system for each block. Name the function that allocates and the one that frees
+            (as <code>module!function</code>, or <code>module+0xoffset</code> for one without a name) and say which argument is the size and which is the block. The result of the allocating function is taken as the block.
+          </div>
+          {own.map((a, i) => {
+            const wrong = allocatorError(a);
+            return (
+              <div key={i} className="heap-own-row" data-testid="heap-own-row">
+                <input className="mini heap-own-fn" data-testid="heap-own-alloc" aria-label="Function that allocates" placeholder="allocates: module!function" spellCheck={false} disabled={!!started} value={a.alloc} onChange={(e) => editOwn(i, { alloc: e.target.value })} />
+                <span>size is</span>
+                <select data-testid="heap-own-size" aria-label="Which argument is the size" disabled={!!started} value={a.size} onChange={(e) => editOwn(i, { size: Number(e.target.value) })}>
+                  {ARGS.map((v) => <option key={v} value={v}>{ORDINALS[v]} argument</option>)}
+                </select>
+                <input className="mini heap-own-fn" data-testid="heap-own-free" aria-label="Function that frees (optional)" placeholder="frees: module!function (optional)" spellCheck={false} disabled={!!started} value={a.free} onChange={(e) => editOwn(i, { free: e.target.value })} />
+                <span>block is</span>
+                <select data-testid="heap-own-pointer" aria-label="Which argument is the block being freed" disabled={!!started || !a.free.trim()} value={a.pointer} onChange={(e) => editOwn(i, { pointer: Number(e.target.value) })}>
+                  {ARGS.map((v) => <option key={v} value={v}>{ORDINALS[v]} argument</option>)}
+                </select>
+                <button className="pill" data-testid="heap-own-remove" aria-label="Remove this allocator" title="Remove" disabled={!!started} onClick={() => changeOwn(own.filter((_, k) => k !== i))}>Remove</button>
+                {wrong && a.alloc.trim() && <span className="heap-own-wrong" role="alert" data-testid="heap-own-wrong">{wrong}</span>}
+              </div>
+            );
+          })}
+          <div className="heap-own-row">
+            <button className="pill" data-testid="heap-own-add" disabled={!!started || own.length >= MAX_OWN} onClick={() => changeOwn([...own, { alloc: '', size: 0, free: '', pointer: 0 }])}>Add an allocator</button>
+            {own.length >= MAX_OWN && <span className="heap-own-help">Up to {MAX_OWN}.</span>}
+            {ownError && !started && <span className="heap-own-help" data-testid="heap-own-pending">Complete or remove the unfinished allocator to start tracking.</span>}
+          </div>
+        </div>
+      )}
       {error && <div className="insp-note err" role="alert" data-testid="heap-error">{error}</div>}
       {started && (
         <div className="insp-note" data-testid="heap-status">

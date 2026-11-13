@@ -140,7 +140,7 @@ function buildApi(ipcRenderer) {
 			watchHits: () => invoke('inspectWatchHits'),
 			watchStop: () => invoke('inspectWatchStop'),
 			// Heap tracking. sizes: { min, max } bytes (max 0: no limit).
-			heapStart: (sizes) => invoke('inspectHeapStart', sizes),
+			heapStart: (sizes, allocators) => invoke('inspectHeapStart', sizes, allocators),
 			heapStatus: () => invoke('inspectHeapStatus'),
 			heapFind: (address) => invoke('inspectHeapFind', address),
 			heapStop: () => invoke('inspectHeapStop'),

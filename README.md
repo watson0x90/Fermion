@@ -384,7 +384,12 @@ Things to know:
 - Who allocated and who freed a block is known only for blocks allocated while tracking runs. Start tracking before the step you are interested in.
 - Asking Windows takes a few hundredths of a second and holds each heap's lock while it is read, so the program's own allocations wait that long. Elsewhere than Windows there is no such list, and only recorded blocks are known.
 - Taking a call stack for every block slows a program that allocates a lot (node ran about five times slower here). Give a size range (**Blocks from … to … bytes**; both the same for one exact size) and the other sizes cost almost nothing.
-- On Windows the hooks are on `RtlAllocateHeap`, `RtlReAllocateHeap` and `RtlFreeHeap` in `ntdll.dll`, which `HeapAlloc`, `malloc` and `operator new` all end up in. Elsewhere they are on `malloc`, `calloc`, `realloc` and `free`, and on `aligned_alloc`, `memalign` and `posix_memalign` where the C library has them. Memory from `VirtualAlloc` or `mmap`, and a program's own pool allocator carving up one big block, are not seen.
+- On Windows the hooks are on `RtlAllocateHeap`, `RtlReAllocateHeap` and `RtlFreeHeap` in `ntdll.dll`, which `HeapAlloc`, `malloc` and `operator new` all end up in. Elsewhere they are on `malloc`, `calloc`, `realloc` and `free`, and on `aligned_alloc`, `memalign` and `posix_memalign` where the C library has them. Memory from `VirtualAlloc` or `mmap` is not seen.
+- **Own allocators.** A program that hands out memory from a pool or an arena of its own does not ask the system for each block, so those blocks are not seen unless you name its functions. Open **Own allocators**, add one, and give:
+  - the function that allocates, as `module!function`, or `module+0xoffset` for one without a name, and which of its arguments is the size. Its result is taken as the block;
+  - optionally the function that frees, and which of its arguments is the block. Without it, blocks are recorded but never seen freed.
+
+  Up to 8 can be named, and they are remembered. What such an allocator takes from the system inside its own call is not counted a second time. A function that takes no size (a pool of equal objects) cannot be described yet.
 - Tracking stops by itself after 10 minutes. Up to 200,000 live blocks are recorded and the newest 20,000 freed ones are kept (these are the defaults; see [Limits](#settings) in Settings); the view says when a limit was reached. What was recorded can be looked up until tracking is started again or the session ends.
 - A program built without frame pointers or unwind information gives short or wrong call stacks. Trust the first frames more than the last.
 

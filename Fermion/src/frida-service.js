@@ -201,6 +201,33 @@ function checkWriteBytes(bytes) {
 // Which block sizes heap tracking records: { min, max } bytes, max 0 for no
 // upper limit. Returns a fresh object holding only the two known fields.
 const MAX_HEAP_SIZE = 0xffffffff;
+// Allocators of the program's own, for heap tracking: up to 8, each
+// { alloc, size, free?, pointer? }. alloc and free name a function as
+// 'module!function' or 'module+0xoffset'; size and pointer say which argument
+// (0 to 7) is the size asked for and the block being freed.
+const MAX_HEAP_ALLOCATORS = 8;
+const HEAP_PLACE = /^[^\s!+][^!+]{0,127}(![^\s!]{1,256}|\+0x[0-9a-fA-F]{1,12})$/;
+function checkHeapAllocators(allocators) {
+	if (allocators === undefined || allocators === null) return [];
+	const bad = (why) => new Error('invalid heap allocators: ' + why);
+	if (!Array.isArray(allocators)) throw bad('expected a list');
+	if (allocators.length > MAX_HEAP_ALLOCATORS) throw bad('at most ' + MAX_HEAP_ALLOCATORS);
+	const place = (v, what) => {
+		if (typeof v !== 'string' || !HEAP_PLACE.test(v)) throw bad(what + ' must be module!function or module+0xoffset');
+		return v;
+	};
+	const arg = (v, what) => {
+		if (v === undefined || v === null) return 0;
+		if (!Number.isInteger(v) || v < 0 || v > 7) throw bad(what + ' must be an argument number, 0 to 7');
+		return v;
+	};
+	return allocators.map((a) => {
+		if (!a || typeof a !== 'object' || Array.isArray(a)) throw bad('each must be { alloc, size, free, pointer }');
+		const free = a.free === undefined || a.free === null || a.free === '' ? null : place(a.free, 'free');
+		return { alloc: place(a.alloc, 'alloc'), size: arg(a.size, 'size'), free, pointer: arg(a.pointer, 'pointer') };
+	});
+}
+
 function checkHeapSizes(sizes) {
 	if (sizes === undefined || sizes === null) return { min: 0, max: 0 };
 	const bad = () => new Error('invalid heap sizes (expected { min, max } in bytes, max 0 for no limit)');
@@ -752,7 +779,9 @@ class FridaService extends EventEmitter {
 	// Record the blocks the program allocates and frees, with call stacks, and
 	// answer which block an address is or was in. Bounded in the agent (10
 	// minutes, 200,000 live blocks, the newest 20,000 freed ones).
-	async inspectHeapStart(sizes) { return this._inspect('heapStart', checkHeapSizes(sizes), { ms: this._recordMs(), live: this._limits.heapLive, freed: this._limits.heapFreed }); }
+	async inspectHeapStart(sizes, allocators) {
+		return this._inspect('heapStart', checkHeapSizes(sizes), { ms: this._recordMs(), live: this._limits.heapLive, freed: this._limits.heapFreed }, checkHeapAllocators(allocators));
+	}
 	async inspectHeapStatus() { return this._inspect('heapStatus'); }
 	async inspectHeapFind(address) { return this._inspect('heapFind', checkAddress(address)); }
 	async inspectHeapStop() { return this._inspect('heapStop'); }
