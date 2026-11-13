@@ -223,7 +223,7 @@
 * Hooks: presets for Windows programs (files, registry, processes and injection, network, driver requests, named pipes, RPC). One choice places the hooks, each with a handler that decodes the arguments; the handlers are ordinary hook code and can be edited
 * Inspector, Watch: see which code reads or writes some bytes of data (from the address menu, or by address). Each place is listed with read or write, function, count, threads and the call stack of its first access. Accesses are sampled; data only
 
--= Unreleased (after v2.1.2) =-
+-= Fermion v2.1.3 =-
 
 * Inspector, Heap: track allocations and frees with their call stacks, then look an address up to see the block it is in, who allocated it and who freed it (use after free, memory handed out again). A size range keeps a busy program fast; the places holding the most live memory are listed
 * Inspector, Watch: on Windows a few aligned bytes are now watched exactly, with hardware watchpoints: every access is counted and system calls on the memory keep working. Larger or unaligned ranges, and other systems, are sampled as before; the view says which and why

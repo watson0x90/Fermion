@@ -1,6 +1,6 @@
 name: Release
 
-# Intentional, maintainer-driven releases: push a version tag (e.g. v2.1.2)
+# Intentional, maintainer-driven releases: push a version tag (e.g. v2.1.3)
 # or run the workflow manually. No cron, no auto-bumping.
 on:
   push:
