@@ -10,6 +10,7 @@ import { Icon } from '../Icon';
 import { addrMenu } from '../../addressMenu';
 import { SetPicker } from '../SetPicker';
 import { CodeEditor } from '../CodeEditor';
+import { useNames } from '../../names';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const api = () => (window as any).fermion?.hooks;
@@ -39,6 +40,7 @@ const STATUS_TEXT: Record<Hook['status'], string> = {
 // Output. Hooks are kept across sessions and placed again on the next attach.
 export function HooksPanel() {
   const dispatch = useAppDispatch();
+  const userNames = useNames();
   const isAttached = useAppSelector((s) => s.session.isAttached);
   const { hooks, selected, hits, dropped, echo } = useAppSelector((s) => s.hooks);
   const hook = hooks.find((h) => h.id === selected) ?? null;
@@ -344,7 +346,7 @@ export function HooksPanel() {
                               {inModule.map((f, i) => (
                                 <div className="hook-frame" key={f.address + i} data-testid="hook-frame" {...addrMenu(f.address)}>
                                   <span className="fi">{i}</span>
-                                  <span className="mono" title={f.address + ' · ' + f.where}>{f.name || f.where}</span>
+                                  <span className="mono" title={f.address + ' · ' + f.where}>{userNames.show(f.where, f.address, f.name)}</span>
                                 </div>
                               ))}
                               {others > 0 && (

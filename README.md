@@ -398,9 +398,17 @@ Things to know:
 | **Hook this address** | Places a hook there and opens it in the [Hooks](#hooks) tab. |
 | **Watch reads and writes** | Hands it to the Watch view, to see which code touches the data there. |
 | **Find heap block** | Looks it up in the Heap view: which block it is in, who allocated it, who freed it. |
+| **Name this address…** | Gives it a name of your own, shown for that address in every view (see below). |
 | **Bookmark** | Saves the place under Inspector → Bookmarks. |
 
 The menu key on the keyboard opens it too, and the arrow keys move through it.
+
+**Names for addresses.** A bookmark's label is also a name for its address, and every view uses it. Choose **Name this address…** in the address menu, type a name, and from then on that address is shown by it: in backtraces, as a call target and as a label above the instruction in Disassembly, in the callers of a hooked call, and in the call stacks of a memory watch or a heap block. An address a little after a named one (within 4 KB, so most likely inside the same function) is shown as the name plus an offset, such as `parse_packet+0x40`.
+
+- A name inside a module is kept as module and offset, so it still fits when the module loads at another address, in a later run or on another machine.
+- Your name takes the place of what the target says about the address. In a program without symbols that is usually the nearest export, which can be far away and wrong; the tooltip still shows the address and where it is.
+- Rename or remove a name under Inspector → Bookmarks. A label that only repeats the address or the place (the default for a plain bookmark of an address with no symbol) is not used as a name.
+- Names belong to the set of hooks and bookmarks of the program you are attached to.
 
 **Bookmarks** are places you saved with the address menu. Each has a name and a note you can edit in place, and opens in Memory or Disassembly. A bookmark inside a module is kept as module and offset, so it points at the same code or data when the module is loaded at another address, in a later run or another process; the row shows where that is now, or says the module is not loaded in this process. Bookmarks are saved automatically, in the set of the program they were made in (see **Set** under [Hooks](#hooks)), and are listed with or without a session.
 
@@ -557,7 +565,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, memory watch, heap tracking, hook presets, settings, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, memory watch, heap tracking, names for addresses, hook presets, settings, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.

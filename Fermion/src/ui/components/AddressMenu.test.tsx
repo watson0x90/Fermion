@@ -44,7 +44,7 @@ test('right-clicking an address opens the menu for it; anything else is left alo
   const menu = screen.getByTestId('addr-menu');
   expect(menu).toHaveAttribute('role', 'menu');
   expect(menu).toHaveTextContent('0x7ff010');
-  expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Copy address', 'Open in Memory', 'Open in Disassembly', 'Hook this address', 'Watch reads and writes', 'Find heap block', 'Bookmark']);
+  expect(screen.getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Copy address', 'Open in Memory', 'Open in Disassembly', 'Hook this address', 'Watch reads and writes', 'Find heap block', 'Name this address…', 'Bookmark']);
 });
 
 test('Copy address puts it on the clipboard and closes the menu', () => {
@@ -166,4 +166,41 @@ test('Find heap block hands the address to the Heap view of the Inspector', () =
   openMenu();
   fireEvent.click(screen.getByTestId('addr-menu-heap'));
   expect(store.getState().ui.addressRequest).toEqual({ view: 'heap', address: '0x7ff010', n: 1 });
+});
+
+test('Name this address asks for a name and saves it as a bookmark with that label', async () => {
+  const store = setup();
+  openMenu();
+  fireEvent.click(screen.getByTestId('addr-menu-name'));
+  const input = await screen.findByTestId('addr-menu-name-input');
+  expect(input).toHaveValue('');
+  expect(screen.getByTestId('addr-menu')).toBeInTheDocument(); // the menu stays open for the name
+  fireEvent.change(input, { target: { value: '  parse_packet ' } });
+  fireEvent.keyDown(input, { key: 'Enter' });
+  await waitFor(() => expect(store.getState().bookmarks.items.length).toBe(1));
+  expect(store.getState().bookmarks.items[0]).toMatchObject({ label: 'parse_packet', module: 'kernel32.dll', offset: 16, address: '0x7ff010', view: 'code' });
+  expect(screen.queryByTestId('addr-menu')).toBeNull();
+});
+
+test('naming an address that already has a name changes that name; an empty name changes nothing', async () => {
+  const store = setup();
+  openMenu();
+  fireEvent.click(screen.getByTestId('addr-menu-name'));
+  fireEvent.change(await screen.findByTestId('addr-menu-name-input'), { target: { value: 'first' } });
+  fireEvent.keyDown(screen.getByTestId('addr-menu-name-input'), { key: 'Enter' });
+  await waitFor(() => expect(store.getState().bookmarks.items.length).toBe(1));
+  openMenu();
+  fireEvent.click(screen.getByTestId('addr-menu-name'));
+  const again = await screen.findByTestId('addr-menu-name-input');
+  expect(again).toHaveValue('first'); // the name it has is offered for editing
+  fireEvent.change(again, { target: { value: 'second' } });
+  fireEvent.click(screen.getByTestId('addr-menu-name-save'));
+  await waitFor(() => expect(store.getState().bookmarks.items[0].label).toBe('second'));
+  expect(store.getState().bookmarks.items.length).toBe(1);
+  openMenu();
+  fireEvent.click(screen.getByTestId('addr-menu-name'));
+  fireEvent.change(await screen.findByTestId('addr-menu-name-input'), { target: { value: '   ' } });
+  fireEvent.keyDown(screen.getByTestId('addr-menu-name-input'), { key: 'Enter' });
+  await new Promise((r) => setTimeout(r, 20));
+  expect(store.getState().bookmarks.items[0].label).toBe('second');
 });

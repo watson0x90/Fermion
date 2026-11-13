@@ -120,6 +120,9 @@ jobs:
       - name: Settings apply at once and survive a restart
         run: xvfb-run -a node scripts/ui-test-settings.js
 
+      - name: A name given to an address shows in every view
+        run: xvfb-run -a node scripts/ui-test-names.js
+
       - name: Heap tracking finds the block an address is or was in
         run: xvfb-run -a node scripts/ui-test-heap.js
 

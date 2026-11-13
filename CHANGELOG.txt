@@ -233,3 +233,4 @@
 -= Unreleased (after v2.1.3) =-
 
 * Settings: preferences for the editor (font size, minimap, wrapping), the Output font size, what the Inspector views start with (coverage and follow scope, watch mode, auto refresh interval) and whether child processes are caught at start. Applied at once, remembered, kept on this computer
+* Names for addresses: Name this address in the address menu gives an address a name of your own, and backtraces, Disassembly (as a label and as a call target), hook callers and the call stacks of a memory watch or heap block then show it. Names are bookmark labels, kept as module and offset
