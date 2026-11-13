@@ -968,7 +968,7 @@ const PLACE = {
 const NEARBY = { op: 'read', from: '0x7ff62c712000', where: 'node.exe+0x2000', symbol: '', hits: 0, near: 9, last: '0x500800', threads: [77], frames: [] };
 const WATCHED = { watching: true, endedBy: '', address: '0x500010', size: 8, seconds: 1.5, hits: 5, near: 9, places: 2, truncated: false, error: '', items: [PLACE, NEARBY] };
 function withWatch(over: any = {}) {
-  inspect.watchStart = vi.fn(async (address: string, size: number) => ({ watching: true, address, size, pages: 1, pageSize: 4096, maxSeconds: 600, protection: 'rw-' }));
+  inspect.watchStart = vi.fn(async (address: string, size: number, mode: string) => ({ watching: true, address, size, mode: 'sampled', reason: mode === 'auto' ? 'hardware watchpoints are used on Windows only' : '', threads: 0, pages: 1, pageSize: 4096, maxSeconds: 600, protection: 'rw-' }));
   inspect.watchHits = vi.fn(async () => WATCHED);
   inspect.watchStop = vi.fn(async () => ({ ...WATCHED, watching: false, endedBy: 'stop', seconds: 2 }));
   Object.assign(inspect, over);
@@ -983,9 +983,10 @@ test('Watch: an address and a size start a watch; who touched the bytes is liste
   fireEvent.change(screen.getByTestId('watch-address'), { target: { value: ' 0x500010 ' } });
   expect(screen.getByTestId('watch-size')).toHaveValue('8');
   fireEvent.click(screen.getByTestId('watch-toggle'));
-  await waitFor(() => expect(inspect.watchStart).toHaveBeenCalledWith('0x500010', 8));
+  await waitFor(() => expect(inspect.watchStart).toHaveBeenCalledWith('0x500010', 8, 'auto'));
   await waitFor(() => expect(screen.getByTestId('watch-status')).toHaveTextContent('Watching 8 bytes at 0x500010'));
   expect(screen.getByTestId('watch-status')).toHaveTextContent('sampled');
+  expect(screen.getByTestId('watch-status')).toHaveTextContent('could not be watched exactly: hardware watchpoints are used on Windows only');
   expect(screen.getByTestId('watch-address')).toBeDisabled();
   const row = await screen.findByTestId('watch-row');
   expect(row).toHaveTextContent('write');
@@ -1148,4 +1149,25 @@ test('Heap: an address sent from the address menu opens the view and is looked u
   await waitFor(() => expect(screen.getByTestId('heap-status')).toBeInTheDocument());
   act(() => { store.dispatch(uiActions.openAddress({ view: 'heap', address: '0x900020' })); });
   await waitFor(() => expect(inspect.heapFind).toHaveBeenCalledWith('0x900020'));
+});
+
+test('Watch: where every access can be counted the view says so; the page trap can be asked for instead', async () => {
+  setup();
+  withWatch({ watchStart: vi.fn(async (address: string, size: number, mode: string) => ({ watching: true, address, size, mode: mode === 'sampled' ? 'sampled' : 'exact', reason: '', threads: 25, pages: 1, pageSize: 4096, maxSeconds: 600, protection: 'rw-' })) });
+  open('watch');
+  fireEvent.change(screen.getByTestId('watch-address'), { target: { value: '0x500010' } });
+  expect(screen.getByTestId('watch-mode')).toHaveValue('auto');
+  fireEvent.click(screen.getByTestId('watch-toggle'));
+  await waitFor(() => expect(screen.getByTestId('watch-status')).toHaveTextContent('Watching 8 bytes at 0x500010 exactly'));
+  expect(screen.getByTestId('watch-status')).toHaveTextContent('every access is counted');
+  expect(screen.getByTestId('watch-status')).toHaveTextContent('25 threads');
+  expect(screen.getByTestId('watch-status')).not.toHaveTextContent('sampled');
+  expect(screen.getByTestId('watch-mode')).toBeDisabled();
+  fireEvent.click(screen.getByTestId('watch-toggle'));
+  await waitFor(() => expect(screen.getByTestId('watch-toggle')).toHaveTextContent('Watch'));
+  fireEvent.change(screen.getByTestId('watch-mode'), { target: { value: 'sampled' } });
+  fireEvent.click(screen.getByTestId('watch-toggle'));
+  await waitFor(() => expect(inspect.watchStart).toHaveBeenLastCalledWith('0x500010', 8, 'sampled'));
+  await waitFor(() => expect(screen.getByTestId('watch-status')).toHaveTextContent('sampled'));
+  expect(screen.getByTestId('watch-status')).not.toHaveTextContent('could not be watched exactly');
 });

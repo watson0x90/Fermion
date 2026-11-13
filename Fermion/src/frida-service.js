@@ -220,6 +220,14 @@ function checkWatchSize(size) {
 	if (!Number.isSafeInteger(size) || size < 1 || size > MAX_WATCH_BYTES) throw new Error('a watch covers 1..' + MAX_WATCH_BYTES + ' bytes');
 	return size;
 }
+// How a watch is kept: exactly where the processor allows it ('auto', the
+// default), exactly or not at all, or by trapping the page.
+const WATCH_MODES = ['auto', 'exact', 'sampled'];
+function checkWatchMode(mode) {
+	if (mode === undefined) return 'auto';
+	if (typeof mode !== 'string' || !WATCH_MODES.includes(mode)) throw new Error('the watch mode must be auto, exact or sampled');
+	return mode;
+}
 function checkReadSize(size) {
 	if (!Number.isSafeInteger(size) || size < 1 || size > MAX_READ_BYTES) throw new Error('invalid size (must be 1..' + MAX_READ_BYTES + ' bytes)');
 	return size;
@@ -694,10 +702,11 @@ class FridaService extends EventEmitter {
 	}
 
 	// ---- watching memory ----
-	// Who reads or writes some bytes of data: the agent traps their page and
-	// samples the accesses. One watch at a time, bounded in the agent (10
-	// minutes; data only, never a thread's stack).
-	async inspectWatchStart(address, size) { return this._inspect('watchStart', checkAddress(address), checkWatchSize(size)); }
+	// Who reads or writes some bytes of data. The agent counts every access
+	// with hardware watchpoints where it can (Windows, a few aligned bytes),
+	// and otherwise traps the page and samples. One watch at a time, bounded
+	// in the agent (10 minutes; data only, never a thread's stack).
+	async inspectWatchStart(address, size, mode) { return this._inspect('watchStart', checkAddress(address), checkWatchSize(size), checkWatchMode(mode)); }
 	async inspectWatchHits() { return this._inspect('watchHits'); }
 	async inspectWatchStop() { return this._inspect('watchStop'); }
 

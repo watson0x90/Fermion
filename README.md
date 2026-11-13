@@ -298,7 +298,7 @@ The processes on the selected device as a parent → child tree, so you can tell
 
 ## Inspector
 
-Views of the attached process. They only observe it, with one exception you have to switch on: **Edit** in the Memory view, which writes bytes (see below). With Edit off, nothing in the Inspector writes to the target's memory. (A **Watch** changes the protection of a page while it runs, and **Heap** hooks the allocator while it tracks; both put things back.) Each view loads when you open it and again when you press **Refresh** or come back to it. **Auto**, on the Threads list and the Memory hex view, re-reads every 2 seconds while the view is open, which is handy for watching a buffer change.
+Views of the attached process. They only observe it, with one exception you have to switch on: **Edit** in the Memory view, which writes bytes (see below). With Edit off, nothing in the Inspector writes to the target's memory. (A **Watch** sets hardware watchpoints or changes the protection of a page while it runs, and **Heap** hooks the allocator while it tracks; both put things back.) Each view loads when you open it and again when you press **Refresh** or come back to it. **Auto**, on the Threads list and the Memory hex view, re-reads every 2 seconds while the view is open, which is handy for watching a buffer change.
 
 ![Inspector: a thread's registers and backtrace](Images/fermion-inspector.png)
 
@@ -337,14 +337,31 @@ Things to know:
 
 **Watch** shows which code reads or writes some bytes of data. Enter an address and how many bytes (1 to 4,096), or right-click an address anywhere and choose **Watch reads and writes**; press **Watch**, use the program, and press **Stop**. Each place that touched the bytes is listed: whether it read or wrote, the function it is in, how many times it was seen, the last byte it touched and the threads it ran on. Select a place for the call stack of its first access. The list fills in while the watch runs.
 
-Things to know:
+A watch is kept in one of two ways, and the line under the toolbar says which:
 
-- Frida traps the whole page the bytes are on, and a trap is used up by the first access to the page. Fermion puts it back a few milliseconds later, over and over, so accesses are **sampled**: the counts are a lower bound, and something that touches the bytes once, right after another access, can be missed. Run the action again if a place you expect is absent.
+- **Exact** (Windows, 64-bit and 32-bit programs): the processor's own hardware watchpoints. Every access is counted, nothing about the memory changes, and system calls on it work as usual. It covers a few bytes: two aligned pieces of 1, 2, 4 or 8 bytes (so 8 bytes at an address that is a multiple of 8, or 16 at one that is, but not 8 bytes at an odd address).
+- **Sampled** (everything else, up to 4,096 bytes): the page the bytes are on is trapped, and the trap is used up by the first access to the page. Fermion puts it back a few milliseconds later, over and over, so the counts are a lower bound and something that touches the bytes once, right after another access, can be missed.
+
+**Exact when possible** (the default) uses the first where it can and says why when it cannot. **Sampled (page trap)** asks for the second.
+
+Things to know about an exact watch:
+
+- Every thread is given the watchpoints, and a thread that starts later gets them as it starts. Starting a thread takes a little longer meanwhile.
+- The address shown for a place is the instruction after the one that touched the bytes; the function name is right either way.
+- A read or write made by the kernel on the program's behalf (a `ReadFile` into the bytes, say) is not seen: watchpoints fire for the program's own instructions.
+- It uses the processor's four watchpoint slots. A debugger, or a script of yours, that sets hardware breakpoints on the same program will collide with it.
+- It stops by itself after 10 minutes or 200,000 accesses. Each access costs a trap, so bytes touched in a tight loop slow that loop down a lot.
+- Handling a trap must not itself touch the watched bytes, or it traps again without end and the program dies. That is why stacks are refused; ordinary heap and global data are fine.
+
+Things to know about a sampled watch:
+
 - Accesses to other bytes on the same page are counted apart and hidden until you press **Show them**. A busy neighbour on the page takes samples away from the bytes you are watching.
 - A system call that is handed the watched memory fails while the watch is on (the kernel will not go through the trap). Watch a buffer the program fills itself, not one it passes to `ReadFile` or `read`.
-- Only data can be watched: code is refused (hook it instead), and so is a thread's stack. While a watch runs, the Memory view will not read or write that page.
+- While the watch runs the Memory view will not read or write that page.
 - A Frida script of yours that reads the watched bytes (a hook handler, say) is not listed, and may get an access error instead of the bytes.
-- One watch at a time. It stops by itself after 10 minutes, when the memory is freed, and when the session ends; the page is then as it was.
+- It stops by itself after 10 minutes, and when the memory is freed.
+
+Either way only data can be watched: code is refused (hook it instead), and so is a thread's stack, which the handling of a trap itself uses. There is one watch at a time, and it ends with the session, leaving the program as it was.
 
 **Heap** records the blocks the program allocates and frees, each with the call stack that did it, and tells you which block an address is in or was in. Press **Track**, use the program, then type an address and press **Find block** (or right-click an address anywhere and choose **Find heap block**). The answer is one of:
 
@@ -359,7 +376,7 @@ Things to know:
 
 - Only blocks allocated while tracking runs are known. Start tracking before the step you are interested in.
 - Taking a call stack for every block slows a program that allocates a lot (node ran about five times slower here). Give a size range (**Blocks from … to … bytes**; both the same for one exact size) and the other sizes cost almost nothing.
-- On Windows the hooks are on `RtlAllocateHeap`, `RtlReAllocateHeap` and `RtlFreeHeap` in `ntdll.dll`, which `HeapAlloc`, `malloc` and `operator new` all end up in. Elsewhere they are on `malloc`, `calloc`, `realloc` and `free`. Memory from `VirtualAlloc` or `mmap`, and a program's own pool allocator carving up one big block, are not seen.
+- On Windows the hooks are on `RtlAllocateHeap`, `RtlReAllocateHeap` and `RtlFreeHeap` in `ntdll.dll`, which `HeapAlloc`, `malloc` and `operator new` all end up in. Elsewhere they are on `malloc`, `calloc`, `realloc` and `free`, and on `aligned_alloc`, `memalign` and `posix_memalign` where the C library has them. Memory from `VirtualAlloc` or `mmap`, and a program's own pool allocator carving up one big block, are not seen.
 - Tracking stops by itself after 10 minutes. Up to 200,000 live blocks are recorded and the newest 20,000 freed ones are kept; the view says when a limit was reached. What was recorded can be looked up until tracking is started again or the session ends.
 - A program built without frame pointers or unwind information gives short or wrong call stacks. Trust the first frames more than the last.
 

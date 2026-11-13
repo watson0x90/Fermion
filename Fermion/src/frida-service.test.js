@@ -1150,7 +1150,13 @@ test('inspectWatchStart validates the address and size in main; hits and stop pa
   assert.deepEqual(await svc.inspectWatchStart('0x50ABC0', 8), { watching: true });
   assert.deepEqual(await svc.inspectWatchHits('ignored'), { watching: true, hits: 2 });
   assert.deepEqual(await svc.inspectWatchStop('ignored'), { watching: false, hits: 2 });
-  assert.deepEqual(calls, [['watchStart', '0x50abc0', 8], ['watchHits'], ['watchStop']]);
+  assert.deepEqual(calls, [['watchStart', '0x50abc0', 8, 'auto'], ['watchHits'], ['watchStop']]);
+  // How to watch: exactly where possible (the default), exactly or not at all, or by trapping the page.
+  calls.length = 0;
+  for (const mode of ['auto', 'exact', 'sampled']) await svc.inspectWatchStart('0x500000', 8, mode);
+  assert.deepEqual(calls.map((c) => c[3]), ['auto', 'exact', 'sampled']);
+  for (const bad of ['fast', 'EXACT', 1, {}, null]) await assert.rejects(() => svc.inspectWatchStart('0x500000', 8, bad), /watch mode/);
+  assert.equal(calls.length, 3);
 });
 
 test('the memory watch calls are on the allow-list the window can call', () => {

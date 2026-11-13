@@ -19,6 +19,7 @@ class Ptr {
   and(o) { return new Ptr(this.v & o.v); }
   not() { return new Ptr(~this.v & 0xffffffffffffffffn); }
   isNull() { return this.v === 0n; }
+  readPointer() { return new Ptr(Ptr.pointers[this.toString()] ?? 0); }
   writeByteArray(bytes) {
     if (Ptr.unwritable) throw new Error('access violation');
     Ptr.writes.push([this.toString(), Array.from(bytes)]);
@@ -34,6 +35,7 @@ class Ptr {
 Ptr.unreadableFrom = null;
 Ptr.reads = [];
 Ptr.writes = [];
+Ptr.pointers = {}; // address -> the pointer stored there
 Ptr.unwritable = false;
 
 // Like Frida's CpuContext: registers are reachable by name and through toJSON,
@@ -56,6 +58,16 @@ function load(over = {}) {
     { id: 11, state: 'waiting', context: cpuContext({ pc: new Ptr(0x7ff123), sp: new Ptr(0x10000), rax: new Ptr(1) }) },
     { id: 12, state: 'running', name: 'worker', context: { pc: new Ptr(0x500), sp: new Ptr(0x20000) } },
   ];
+  // Like Frida's Thread objects: hardware watchpoints are set per thread. What was
+  // set and unset is noted, as is the exception handler and the thread 'running'.
+  const cpu = { thread: 99, handler: null, handlers: 0, set: [], unset: [] };
+  const withWatchpoints = (t) => {
+    if (!t.setHardwareWatchpoint) {
+      t.setHardwareWatchpoint = (id, address, size, conditions) => { if ((over.hwRefuses || []).includes(t.id)) throw new Error('unable to set'); cpu.set.push([t.id, id, address.toString(), size, conditions]); };
+      t.unsetHardwareWatchpoint = (id) => { cpu.unset.push([t.id, id]); };
+    }
+    return t;
+  };
   const mods = () => [kernel, ...(over.modules || [])]; // read each time: modules can load later
   const Process = {
     enumerateModules: () => mods(),
@@ -63,9 +75,12 @@ function load(over = {}) {
     findModuleByAddress: (a) => mods().find((m) => a.v >= m.base.v && a.v < m.base.v + BigInt(m.size)) || null,
     // By default every address is inside one big readable range.
     findRangeByAddress: () => ({ base: new Ptr(0), size: 2 ** 40, protection: 'rw-' }),
-    enumerateThreads: () => threads,
-    getCurrentThreadId: () => 99,
+    enumerateThreads: () => (over.threads || threads).map(withWatchpoints),
+    getCurrentThreadId: () => cpu.thread,
     platform: 'linux',
+    arch: 'x64',
+    pointerSize: 8,
+    setExceptionHandler: (fn) => { cpu.handler = fn; cpu.handlers++; },
     enumerateRanges: (prot) => [
       { base: new Ptr(0x1000), size: 0x1000, protection: prot, file: { path: 'C:/a.dll' } },
       { base: new Ptr(0x9000), size: 0x2000, protection: prot },
@@ -112,7 +127,7 @@ function load(over = {}) {
   const hooked = {};
   let nextExport = 0x6000000;
   const exported = (name) => Object.assign(new Ptr(nextExport += 16), { exportName: name });
-  const ALLOCATORS = ['malloc', 'calloc', 'realloc', 'free', 'RtlAllocateHeap', 'RtlReAllocateHeap', 'RtlFreeHeap'];
+  const ALLOCATORS = ['malloc', 'calloc', 'realloc', 'free', 'aligned_alloc', 'memalign', 'posix_memalign', 'RtlAllocateHeap', 'RtlReAllocateHeap', 'RtlFreeHeap'].filter((n) => !(over.missing || []).includes(n));
   for (const m of mods()) if (!m.findExportByName) m.findExportByName = (n) => (!over.noAllocators && /^Rtl/.test(n) && m.name === 'ntdll.dll' ? exported(n) : null);
   const ctx = vm.createContext({
     Interceptor: { attach: (address, cbs) => { const h = { cbs, detached: false }; hooked[address.exportName] = h; return { detach: () => { h.detached = true; } }; } },
@@ -140,7 +155,7 @@ function load(over = {}) {
     Stalker: stalker, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].cancelled = true; },
   });
   vm.runInContext(SOURCE, ctx);
-  return Object.assign({ scans, stalker, timers, intervals, monitor, hooked }, ctx.rpc.exports);
+  return Object.assign({ scans, stalker, timers, intervals, monitor, hooked, cpu }, ctx.rpc.exports);
 }
 // Results cross rpc as JSON; compare them the same way.
 const j = (v) => JSON.parse(JSON.stringify(v));
@@ -744,7 +759,7 @@ const fire = (a, ms) => { const t = a.timers.filter((x) => x.ms === ms && !x.can
 
 test('watchStart: the bytes are armed and described', () => {
   const a = watchable();
-  assert.deepEqual(j(a.watchStart('0x500ff8', 8)), { watching: true, address: '0x500ff8', size: 8, pages: 1, pageSize: 4096, maxSeconds: 600, protection: 'rw-' });
+  assert.deepEqual(j(a.watchStart('0x500ff8', 8)), { watching: true, address: '0x500ff8', size: 8, mode: 'sampled', reason: 'hardware watchpoints are used on Windows only', threads: 0, pages: 1, pageSize: 4096, maxSeconds: 600, protection: 'rw-' });
   assert.deepEqual(a.monitor.armed.ranges, [['0x500ff8', 8]]);
   assert.equal(watchable().watchStart('0x500ffc', 8).pages, 2); // the bytes cross a page edge
   assert.equal(watchable().watchStart('0x600010', 4).protection, 'r--'); // constants can be watched too
@@ -817,7 +832,7 @@ test('watch: the page is armed again a moment after each access, and regularly i
 
 test('watchStop: the trap is removed, and the result stays until the next watch', () => {
   const a = watchable();
-  assert.deepEqual(j(a.watchHits()), { watching: false, endedBy: 'none', address: null, size: 0, seconds: 0, hits: 0, near: 0, places: 0, truncated: false, error: '', items: [] });
+  assert.deepEqual(j(a.watchHits()), { watching: false, endedBy: 'none', mode: '', address: null, size: 0, seconds: 0, hits: 0, near: 0, places: 0, truncated: false, error: '', items: [] });
   a.watchStart('0x500010', 8);
   access(a, 'write', 0x7ff123, 0x500010);
   const r = j(a.watchStop());
@@ -925,8 +940,10 @@ const NO_BLOCKS = { tracking: false, endedBy: 'none', seconds: 0, min: 0, max: 0
 test('heapStart: the allocator functions of the platform are hooked, and unhooked by heapStop', () => {
   const a = load();
   assert.deepEqual(j(a.heapStatus()), NO_BLOCKS);
-  assert.deepEqual(j(a.heapStart({ min: 0, max: 0 })), { tracking: true, functions: ['malloc', 'calloc', 'realloc', 'free'], min: 0, max: 0, maxSeconds: 600, maxLive: 200000, maxFreed: 20000 });
-  assert.deepEqual(Object.keys(a.hooked), ['malloc', 'calloc', 'realloc', 'free']);
+  assert.deepEqual(j(a.heapStart({ min: 0, max: 0 })), { tracking: true, functions: ['malloc', 'calloc', 'realloc', 'aligned_alloc', 'memalign', 'posix_memalign', 'free'], min: 0, max: 0, maxSeconds: 600, maxLive: 200000, maxFreed: 20000 });
+  assert.deepEqual(Object.keys(a.hooked), ['malloc', 'calloc', 'realloc', 'aligned_alloc', 'memalign', 'posix_memalign', 'free']);
+  // A C library without some of them (macOS has no memalign): the rest are hooked.
+  assert.deepEqual(j(load({ missing: ['memalign', 'aligned_alloc'] }).heapStart({ min: 0, max: 0 })).functions, ['malloc', 'calloc', 'realloc', 'posix_memalign', 'free']);
   assert.throws(() => a.heapStart({ min: 0, max: 0 }), /already being tracked/);
   const r = j(a.heapStop());
   assert.equal(r.tracking, false);
@@ -1094,4 +1111,163 @@ test('heap: a follow that needs a fresh agent is refused while the heap is track
   a.unfollow();
   a.heapStart({ min: 0, max: 0 });
   assert.throws(() => a.follow(11, { mode: 'all' }), /Heap tracking is running/);
+});
+
+// ---- watching memory exactly (hardware watchpoints, Windows) ----
+const exactable = (over = {}) => watchable({ ...over, Process: { platform: 'windows', arch: 'x64', ...(over.Process || {}) } });
+// A debug trap as the exception handler sees it. dr6 says which watchpoints fired.
+function trap(a, dr6, pc, tid = 11, type = 'single-step', offset = 0x68) {
+  let value = dr6;
+  const nativeContext = { add: (off) => ({ readU32: () => (off === offset ? value : 0xdead), writeU32: (v) => { if (off === offset) value = v; } }) };
+  a.cpu.thread = tid;
+  const handled = a.cpu.handler({ type, address: new Ptr(pc), context: { pc: new Ptr(pc) }, nativeContext });
+  a.cpu.thread = 99;
+  return { handled, dr6: value };
+}
+
+test('watchStart on Windows: a few aligned bytes get hardware watchpoints on every thread, and no page is trapped', () => {
+  const a = exactable();
+  assert.deepEqual(j(a.watchStart('0x500010', 8)), { watching: true, address: '0x500010', size: 8, mode: 'exact', reason: '', threads: 2, pages: 1, pageSize: 4096, maxSeconds: 600, protection: 'rw-' });
+  // Two per piece: one that fires on a write, one on any access, to tell the two apart.
+  assert.deepEqual(a.cpu.set, [[11, 0, '0x500010', 8, 'w'], [11, 1, '0x500010', 8, 'rw'], [12, 0, '0x500010', 8, 'w'], [12, 1, '0x500010', 8, 'rw']]);
+  assert.equal(a.monitor.enables, 0);
+  assert.equal(j(a.watchHits()).mode, 'exact');
+});
+
+test('watchStart: bytes are split into aligned pieces; what needs more than two is sampled, or refused when exact was asked for', () => {
+  const pieces = (address, size, arch = 'x64') => { const a = exactable({ Process: { arch } }); const r = a.watchStart(address, size); return r.mode === 'exact' ? a.cpu.set.filter((s) => s[0] === 11 && s[4] === 'w').map((s) => [s[1], s[2], s[3]]) : r.mode + ': ' + r.reason; };
+  assert.deepEqual(pieces('0x500014', 8), [[0, '0x500014', 4], [2, '0x500018', 4]]);
+  assert.deepEqual(pieces('0x500011', 3), [[0, '0x500011', 1], [2, '0x500012', 2]]);
+  assert.deepEqual(pieces('0x500010', 1), [[0, '0x500010', 1]]);
+  assert.deepEqual(pieces('0x500010', 8, 'ia32'), [[0, '0x500010', 4], [2, '0x500014', 4]]); // no 8-byte piece on 32-bit
+  assert.deepEqual(pieces('0x500010', 16), [[0, '0x500010', 8], [2, '0x500018', 8]]); // two whole pieces: the most there is
+  assert.match(pieces('0x500010', 24), /^sampled: .*two aligned pieces/);
+  assert.match(pieces('0x500011', 8), /^sampled: /);
+  assert.match(pieces('0x500010', 8, 'arm64'), /^sampled: /);
+  assert.throws(() => exactable().watchStart('0x500010', 24, 'exact'), /cannot be watched exactly/);
+  assert.equal(exactable().watchStart('0x500010', 8, 'sampled').mode, 'sampled');
+  const linux = watchable();
+  assert.match(linux.watchStart('0x500010', 8).reason, /Windows/);
+  assert.throws(() => watchable().watchStart('0x500010', 8, 'exact'), /cannot be watched exactly.*Windows/);
+  assert.throws(() => exactable().watchStart('0x500010', 8, 'fast'), /mode/);
+});
+
+test('exact watch: every access is counted, reads apart from writes, and only our own traps are taken', () => {
+  const a = exactable();
+  a.watchStart('0x500014', 8); // two pieces: slots 0,1 and 2,3
+  assert.deepEqual(trap(a, 0xffff0ff2, 0x7ff123, 11), { handled: true, dr6: 0xffff0ff0 }); // any-access only: a read
+  assert.equal(trap(a, 0xffff0ff2, 0x7ff123, 12).handled, true);
+  assert.equal(trap(a, 0xffff0ff3, 0x7ff200, 11).handled, true); // the write one fired too
+  assert.equal(trap(a, 0xffff0ffc, 0x7ff200, 11).handled, true); // a write to the second piece
+  assert.equal(trap(a, 0xffff0ff8, 0x7ff300, 11).handled, true); // a read of the second piece
+  // Not ours: a single step nobody's watchpoint caused, and other kinds of exception.
+  assert.deepEqual(trap(a, 0xffff4ff0, 0x7ff400), { handled: false, dr6: 0xffff4ff0 });
+  assert.equal(trap(a, 0xffff0ff2, 0x7ff400, 11, 'access-violation').handled, false);
+  const r = j(a.watchHits());
+  assert.deepEqual([r.hits, r.near, r.places, r.mode], [5, 0, 3, 'exact']);
+  assert.deepEqual(r.items.map((i) => [i.op, i.from, i.hits, i.last, i.threads]), [['read', '0x7ff123', 2, '0x500014', [11, 12]], ['write', '0x7ff200', 2, '0x500018', [11]], ['read', '0x7ff300', 1, '0x500018', [11]]]);
+  assert.equal(r.items[0].frames.length, 2); // call stack of the first access
+  a.watchStop();
+  assert.equal(trap(a, 0xffff0ff2, 0x7ff123).handled, false); // nothing is watched any more
+  assert.equal(j(a.watchHits()).hits, 5);
+});
+
+test('exact watch: 32-bit reads the debug status where a 32-bit context keeps it', () => {
+  const a = exactable({ Process: { arch: 'ia32', pointerSize: 4 } });
+  a.watchStart('0x500010', 4);
+  assert.equal(trap(a, 0x3, 0x7ff123, 11, 'single-step', 0x14).handled, true);
+  assert.equal(j(a.watchHits()).items[0].op, 'write');
+});
+
+test('exact watch: without the thread-start hook, threads that start later are picked up now and then; stopping takes every watchpoint off', () => {
+  const threads = [{ id: 11, context: { sp: new Ptr(0x10000) } }, { id: 99, context: {} }];
+  const a = exactable({ threads });
+  assert.equal(a.watchStart('0x500010', 8).threads, 1); // 99 is Frida's own thread
+  threads.push({ id: 13, context: {} });
+  const pick = a.intervals.find((i) => i.ms === 1000);
+  pick.fn();
+  pick.fn(); // not armed twice
+  assert.deepEqual(a.cpu.set.filter((s) => s[4] === 'w').map((s) => s[0]), [11, 13]);
+  threads.shift(); // thread 11 has ended meanwhile
+  a.watchStop();
+  assert.deepEqual(a.cpu.unset, [[13, 0], [13, 1]]);
+  assert.equal(pick.cancelled, true);
+  assert.equal(a.timers.filter((t) => !t.cancelled).length, 0);
+});
+
+test('exact watch: a stack is refused here too, and the Inspector can still read watched bytes', () => {
+  const a = exactable();
+  // Handling a trap uses the thread's stack: a watchpoint there fires inside its own handling.
+  assert.throws(() => a.watchStart('0x10010', 8), /stack of thread 11/);
+  assert.throws(() => a.watchStart('0x10010', 8, 'exact'), /stack of thread 11/);
+  assert.equal(a.cpu.set.length, 0);
+  a.watchStart('0x500010', 8);
+  assert.equal(j(a.read('0x500010', 8)).size, 8);
+});
+
+test('exact watch: threads that take no watchpoint are skipped; with none at all the page trap is used, or exact is refused', () => {
+  const some = exactable({ hwRefuses: [12] });
+  assert.equal(some.watchStart('0x500010', 8).threads, 1);
+  assert.deepEqual(some.cpu.unset, []); // thread 12 failed on its first slot: nothing to take back
+  const none = exactable({ hwRefuses: [11, 12] });
+  const r = none.watchStart('0x500010', 8);
+  assert.equal(r.mode, 'sampled');
+  assert.match(r.reason, /No thread/);
+  assert.equal(none.monitor.enables, 1);
+  assert.throws(() => exactable({ hwRefuses: [11, 12] }).watchStart('0x500010', 8, 'exact'), /No thread/);
+});
+
+test('exact watch: it ends at the hit limit, from outside the trap handler', () => {
+  const a = exactable();
+  a.watchStart('0x500010', 8);
+  for (let i = 0; i < 200000; i++) trap(a, 0x2, 0x7ff123);
+  assert.equal(j(a.watchHits()).watching, true);
+  const later = a.timers.filter((t) => t.ms === 0 && !t.cancelled).pop();
+  later.fn();
+  const r = j(a.watchHits());
+  assert.deepEqual([r.watching, r.endedBy, r.hits], [false, 'limit', 200000]);
+  assert.equal(a.cpu.unset.length, 4);
+});
+
+test('exact watch: a thread is given the watchpoints as it starts, before it runs any of the program', () => {
+  const threads = [{ id: 11, context: {} }, { id: 99, context: {} }];
+  const a = exactable({ threads, modules: [ntdll] });
+  a.watchStart('0x500010', 8);
+  assert.equal(a.intervals.length, 0); // nothing to poll for
+  threads.push({ id: 13, context: {} });
+  // The listener is a plain function (entry only): this function never returns,
+  // and a listener that traps the return there hangs the session on detach.
+  assert.equal(typeof a.hooked.RtlUserThreadStart.cbs, 'function');
+  a.hooked.RtlUserThreadStart.cbs.call({ threadId: 13 }, []);
+  a.hooked.RtlUserThreadStart.cbs.call({ threadId: 13 }, []); // not twice
+  a.hooked.RtlUserThreadStart.cbs.call({ threadId: 14 }, []); // not listed yet: left for later
+  assert.deepEqual(a.cpu.set.filter((s) => s[4] === 'w').map((s) => s[0]), [11, 13]);
+  a.watchStop();
+  assert.equal(a.hooked.RtlUserThreadStart.detached, true);
+  assert.deepEqual(a.cpu.unset.map((u) => u[0]), [11, 11, 13, 13]);
+});
+
+test('heap: aligned allocations are recorded too, whichever function made them', () => {
+  const a = load();
+  a.heapStart({ min: 0, max: 0 });
+  run(a, 'aligned_alloc', [64, 256], 0x930000);
+  run(a, 'memalign', [4096, 100], 0x931000);
+  // posix_memalign hands the block back through its first argument and returns 0.
+  Ptr.pointers['0x7000'] = 0x932000;
+  run(a, 'posix_memalign', [0x7000, 64, 512], 0);
+  Ptr.pointers['0x7008'] = 0x933000;
+  run(a, 'posix_memalign', [0x7008, 64, 512], 12); // ENOMEM: nothing was allocated
+  const s = j(a.heapStatus());
+  assert.deepEqual([s.allocs, s.live, s.liveBytes], [3, 3, 868]);
+  assert.equal(j(a.heapFind('0x9300ff')).live.size, 256);
+  assert.equal(j(a.heapFind('0x931010')).live.size, 100);
+  assert.equal(j(a.heapFind('0x932100')).live.size, 512);
+  assert.equal(j(a.heapFind('0x933000')).live, null);
+  run(a, 'free', [0x932000]);
+  assert.equal(j(a.heapFind('0x932100')).freed.length, 1);
+  // The size range applies to them as to any block.
+  const b = load();
+  b.heapStart({ min: 1000, max: 0 });
+  run(b, 'aligned_alloc', [64, 256], 0x930000);
+  assert.equal(j(b.heapStatus()).allocs, 0);
 });
