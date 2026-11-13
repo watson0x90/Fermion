@@ -30,13 +30,23 @@ const live = (win) => win.evaluate(() => {
   const opt = window.monaco.editor.EditorOption;
   return {
     editorFont: ed.getOption(opt.fontSize),
+    editorFamily: ed.getOption(opt.fontFamily).split(',')[0].replace(/"/g, ''),
+    numbers: ed.getOption(opt.lineNumbers).renderType !== 0,
+    tab: ed.getModel().getOptions().tabSize,
+    outputFamily: window.__fermion.terminal.getLook().fontFamily.split(',')[0].replace(/"/g, ''),
+    outputCursor: window.__fermion.terminal.getLook().cursorStyle,
+    dataFont: getComputedStyle(document.documentElement).getPropertyValue('--mono').split(',')[0].replace(/"/g, '').trim(),
     minimap: ed.getOption(opt.minimap).enabled,
     wrap: ed.getOption(opt.wordWrap),
     outputFont: window.__fermion.terminal.getFontSize(),
     catching: document.querySelector('[data-testid="child-gating"]')?.checked ?? null,
   };
 });
-const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const tab = (win, name) => win.click('[data-testid="settings-tab-' + name + '"]');
+// A fixed-width font this platform always has, to choose in the font lists.
+const FONT = process.platform === 'win32' ? 'Consolas' : process.platform === 'darwin' ? 'Menlo' : null;
+const sorted = (o) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
+const same = (a, b) => sorted(a) === sorted(b);
 
 (async () => {
   let app; let step = 'launch';
@@ -46,31 +56,68 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
     step = 'defaults';
     const before = await live(win);
-    const defaults = { editorFont: 14, minimap: true, wrap: 'off', outputFont: 13, catching: false };
+    const defaults = { editorFont: 14, editorFamily: 'IBM Plex Mono', numbers: true, tab: 4, minimap: true, wrap: 'off', outputFont: 13, outputFamily: 'IBM Plex Mono', outputCursor: 'bar', dataFont: 'IBM Plex Mono', catching: false };
     if (!same(before, defaults)) throw new Error('the app does not start with the defaults: ' + JSON.stringify(before));
 
     step = 'changing a preference takes effect at once';
     await win.click('[data-testid="open-settings"]');
     await win.waitForSelector('[data-testid="settings"]', T);
-    await win.fill('[data-testid="pref-editor-font"]', '18');
+    // A dialog in the middle of the window, not a menu in its corner.
+    const box = await win.evaluate(() => { const r = document.querySelector('[data-testid="settings"]').getBoundingClientRect(); return { cx: r.left + r.width / 2, w: r.width, h: r.height, vw: innerWidth }; });
+    if (Math.abs(box.cx - box.vw / 2) > 2 || box.w < 600 || box.h < 400) throw new Error('not a centred dialog: ' + JSON.stringify(box));
+    if (!(await win.evaluate(() => document.activeElement?.getAttribute('role') === 'tab'))) throw new Error('focus did not move into the dialog');
+    if (shot) await win.screenshot({ path: shot + '-appearance.png' });
+    await tab(win, 'editor');
+    await win.fill('[data-testid="pref-editor-font"]', '17');
+    await win.click('[data-testid="pref-editor-font-plus"]');
     await win.uncheck('[data-testid="pref-editor-minimap"]');
     await win.check('[data-testid="pref-editor-wrap"]');
+    await win.uncheck('[data-testid="pref-editor-numbers"]');
+    await win.click('[data-testid="pref-editor-tab-2"]');
+    if (FONT) {
+      // The font is offered because it was found installed, by measuring.
+      await win.selectOption('[data-testid="pref-editor-family"]', FONT);
+      await win.waitForFunction((f) => window.MonacoCodeEditor.getOption(window.monaco.editor.EditorOption.fontFamily).startsWith('"' + f + '"'), FONT, T);
+    }
+    if (shot) await win.screenshot({ path: shot + '-editor.png' });
+    await tab(win, 'output');
     await win.fill('[data-testid="pref-output-font"]', '16');
+    await win.click('[data-testid="pref-output-cursor-block"]');
+    // A family that is not installed is said so, and the built-in font stays in use.
+    await win.selectOption('[data-testid="pref-output-family"]', { label: 'Another installed font\u2026' });
+    await win.fill('[data-testid="pref-output-family-custom"]', 'No Such Font Xyzzy');
+    await win.press('[data-testid="pref-output-family-custom"]', 'Enter');
+    await win.waitForSelector('[data-testid="pref-output-family-missing"]', T);
+    if (shot) await win.screenshot({ path: shot + '-output.png' });
+    await win.click('[data-testid="pref-output-family-changed"]'); // the mark puts that one setting back
+    await win.waitForFunction(() => document.querySelector('[data-testid="pref-output-family"]').value === 'IBM Plex Mono', undefined, T);
+    await tab(win, 'inspector');
     await win.selectOption('[data-testid="pref-cover-scope"]', 'all');
     await win.selectOption('[data-testid="pref-watch-mode"]', 'sampled');
     await win.fill('[data-testid="pref-auto-refresh"]', '7');
+    await tab(win, 'session');
     await win.check('[data-testid="pref-catch-children"]');
+    await tab(win, 'appearance');
+    if (FONT) await win.selectOption('[data-testid="pref-data-font"]', FONT);
     await win.waitForFunction(() => window.MonacoCodeEditor.getOption(window.monaco.editor.EditorOption.fontSize) === 18 && window.__fermion.terminal.getFontSize() === 16, undefined, T);
     const changed = await live(win);
-    if (changed.minimap !== false || changed.wrap !== 'on') throw new Error('the editor did not follow: ' + JSON.stringify(changed));
-    if (shot) await win.screenshot({ path: shot + '-settings.png' });
+    const want = { ...defaults, editorFont: 18, numbers: false, tab: 2, minimap: false, wrap: 'on', outputFont: 16, outputCursor: 'block', editorFamily: FONT || 'IBM Plex Mono', dataFont: FONT || 'IBM Plex Mono' };
+    if (!same({ ...changed, catching: null }, { ...want, catching: null })) throw new Error('the app did not follow: ' + JSON.stringify(changed));
 
     step = 'a number out of range is brought into range';
+    await tab(win, 'editor');
     await win.fill('[data-testid="pref-editor-font"]', '300');
+    await win.press('[data-testid="pref-editor-font"]', 'Enter');
     await win.waitForFunction(() => window.MonacoCodeEditor.getOption(window.monaco.editor.EditorOption.fontSize) === 24, undefined, T);
     if ((await win.inputValue('[data-testid="pref-editor-font"]')) !== '24') throw new Error('the field still shows ' + await win.inputValue('[data-testid="pref-editor-font"]'));
     await win.fill('[data-testid="pref-editor-font"]', '18');
-    await win.click('[data-testid="settings-scrim"]');
+
+    step = 'Escape closes it, and Ctrl+, opens it where it was left';
+    await win.press('[data-testid="pref-editor-minimap"]', 'Escape');
+    await win.waitForSelector('[data-testid="settings"]', { state: 'detached', timeout: 5000 });
+    await win.keyboard.press(process.platform === 'darwin' ? 'Meta+,' : 'Control+,');
+    await win.waitForSelector('[data-testid="settings-pane-editor"]', T);
+    await win.click('[data-testid="settings-close"]');
     await sleep(300); // the save follows the change
 
     step = 'after a restart everything is as it was left';
@@ -78,15 +125,18 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     app = await launch();
     win = await ready(app);
     const after = await live(win);
-    const expected = { editorFont: 18, minimap: false, wrap: 'on', outputFont: 16, catching: true };
+    const expected = { ...want, catching: true };
     if (!same(after, expected)) throw new Error('after a restart: ' + JSON.stringify(after));
     await win.click('[data-testid="open-settings"]');
-    const shown = await win.evaluate(() => ({
-      font: document.querySelector('[data-testid="pref-editor-font"]').value,
+    await tab(win, 'editor');
+    const font = await win.inputValue('[data-testid="pref-editor-font"]');
+    await tab(win, 'inspector');
+    const shown = await win.evaluate((font) => ({
+      font,
       cover: document.querySelector('[data-testid="pref-cover-scope"]').value,
       watch: document.querySelector('[data-testid="pref-watch-mode"]').value,
       refresh: document.querySelector('[data-testid="pref-auto-refresh"]').value,
-    }));
+    }), font);
     if (!same(shown, { font: '18', cover: 'all', watch: 'sampled', refresh: '7' })) throw new Error('Settings shows: ' + JSON.stringify(shown));
 
     step = 'a damaged store gives the defaults, not a broken app';
@@ -98,13 +148,16 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
     step = 'reset';
     await win.click('[data-testid="open-settings"]');
+    await tab(win, 'output');
     await win.fill('[data-testid="pref-output-font"]', '20');
     await win.waitForFunction(() => window.__fermion.terminal.getFontSize() === 20, undefined, T);
     await win.click('[data-testid="pref-reset"]');
     await win.waitForFunction(() => window.__fermion.terminal.getFontSize() === 13, undefined, T);
     if (!(await win.isDisabled('[data-testid="pref-reset"]'))) throw new Error('Reset is still offered after resetting');
+    await win.click('[data-testid="pref-undo"]');
+    await win.waitForFunction(() => window.__fermion.terminal.getFontSize() === 20, undefined, T);
 
-    console.log('SETTINGS_OK defaults at first start + editor font, minimap, wrap and output font follow at once + out-of-range number clamped + all kept across a restart (incl. catch children, coverage scope, watch mode, refresh) + damaged store falls back to defaults + reset');
+    console.log('SETTINGS_OK defaults at first start + a centred dialog + ' + (FONT ? 'installed font ' + FONT + ' offered and applied' : 'no system font tried here') + ' + a missing font is said so + editor size, numbers, tab width, minimap, wrap and output size and cursor follow at once + Escape and Ctrl+, + undo of a reset + out-of-range number clamped + all kept across a restart (incl. catch children, coverage scope, watch mode, refresh) + damaged store falls back to defaults + reset');
     await app.close();
     process.exitCode = 0;
   } catch (e) {

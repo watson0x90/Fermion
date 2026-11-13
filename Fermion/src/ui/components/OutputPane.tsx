@@ -3,7 +3,7 @@ import { useAppSelector } from '../store';
 import { KINDS } from '../store/outputSlice';
 import { setTerminalSink } from '../bridge';
 import { applyTheme, loadSavedTheme } from '../theme/themeEngine';
-import { loadPrefs } from '../prefs';
+import { PREFS_KEY, applyPrefs, loadPrefs, outputLook } from '../prefs';
 import { OutputToolbar } from './OutputToolbar';
 // The existing xterm controller (reused, mounted imperatively).
 import { createTerminal } from '../../terminal.js';
@@ -33,7 +33,11 @@ export function OutputPane({ standalone = false }: { standalone?: boolean }) {
     (window as any).__fermion = { ...(window as any).__fermion, terminal: ctrl };
     // Theme the freshly-created terminal to match the active app theme.
     applyTheme(loadSavedTheme());
-    ctrl.setFontSize?.(loadPrefs().outputFontSize);
+    if (ctrl.setLook) ctrl.setLook(outputLook(loadPrefs()));
+    else ctrl.setFontSize?.(loadPrefs().outputFontSize);
+    // The detached window has no Settings of its own: it follows the main window's.
+    const onStorage = (e: StorageEvent) => { if (standalone && e.key === PREFS_KEY) applyPrefs(loadPrefs()); };
+    if (standalone) { applyPrefs(loadPrefs()); window.addEventListener('storage', onStorage); }
     ctrl.fit();
     // Throttle fit() to one call per frame. xterm's fit is synchronous and
     // reflows the terminal; running it on every resize event during a live drag
@@ -48,6 +52,7 @@ export function OutputPane({ standalone = false }: { standalone?: boolean }) {
     ro?.observe(hostRef.current);
     return () => {
       ro?.disconnect();
+      window.removeEventListener('storage', onStorage);
       window.removeEventListener('resize', onResize);
       if (raf) cancelAnimationFrame(raf);
       setTerminalSink(null);

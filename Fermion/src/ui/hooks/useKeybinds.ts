@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
 import { outputActions } from '../store/outputSlice';
+import { uiActions } from '../store/uiSlice';
 import { clearTerminal } from '../bridge';
 import { reloadFromEditor } from '../sessionOps';
 import { openScript, saveScript } from '../fileOps';
@@ -9,7 +10,7 @@ import { useStore } from 'react-redux';
 
 // Global editor/app keybindings, ported from the vanilla renderer so Phase 2
 // preserves them: Ctrl/Cmd-S save script, Ctrl/Cmd-O open file, Ctrl/Cmd-T
-// reload the attached script, Alt-C clear output, and F5 / Ctrl-R refresh
+// reload the attached script, Ctrl/Cmd-, Settings, Alt-C clear output, and F5 / Ctrl-R refresh
 // prevention. Mounted once from the Layout (always present).
 export function useKeybinds() {
   const dispatch = useAppDispatch();
@@ -43,6 +44,11 @@ export function useKeybinds() {
       if (mod(e) && (e.key === 't' || e.key === 'T')) {
         e.preventDefault();
         reloadScript();
+        return;
+      }
+      if (mod(e) && e.key === ',') {
+        e.preventDefault();
+        dispatch(uiActions.toggleSettings());
         return;
       }
       if (e.altKey && (e.key === 'c' || e.key === 'C')) {
