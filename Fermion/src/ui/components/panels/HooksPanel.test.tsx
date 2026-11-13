@@ -280,3 +280,77 @@ test('while detached, a hook can still be edited, switched off and removed witho
   expect(store.getState().hooks.hooks.length).toBe(0);
   for (const fn of [hooks.add, hooks.update, hooks.enable, hooks.remove]) expect(fn).not.toHaveBeenCalled();
 });
+
+// ---- presets ----
+// What a Windows process answers when asked for "module!function": kernelbase
+// has the file functions, ws2_32 is not loaded.
+function windowsSearch() {
+  const offsets: Record<string, number> = {};
+  let next = 0x100;
+  hooks.search = vi.fn(async (_kind: string, query: string) => {
+    const [module, fn] = query.split('!');
+    if (module !== 'kernelbase.dll' && module !== 'ntdll.dll') return { items: [], total: 0, truncated: false };
+    if (fn === 'CreateDirectoryW') return { items: [], total: 0, truncated: false }; // say it is missing
+    const key = module + '!' + fn;
+    offsets[key] = offsets[key] ?? (next += 0x10);
+    return { items: [
+      { name: 'KERNELBASE.dll!' + fn + 'Ex', module, offset: 0xfff0, address: '0x7ffff0' }, // a near miss the pattern search also returns
+      { name: (module === 'ntdll.dll' ? 'ntdll.dll!' : 'KERNELBASE.dll!') + fn, module, offset: offsets[key], address: '0x7ff' + offsets[key].toString(16) },
+    ], total: 2, truncated: false };
+  });
+}
+
+test('presets are offered with how many hooks each has; not attached, they cannot be added', () => {
+  setup({ attached: false });
+  const select = screen.getByTestId('hook-preset') as HTMLSelectElement;
+  expect(select).toBeDisabled();
+  expect([...select.options].map((o) => o.textContent)).toEqual([
+    'Add a preset…', 'Files (4)', 'Registry (6)', 'Processes and injection (6)', 'Network (9)', 'Driver requests (IOCTLs) (2)', 'Named pipes (5)', 'RPC (5)',
+  ]);
+});
+
+test('adding a preset hooks each function by its exact name, with the preset\'s handler, and says what happened', async () => {
+  const store = setup();
+  windowsSearch();
+  fireEvent.change(screen.getByTestId('hook-preset'), { target: { value: 'files' } });
+  await waitFor(() => expect(screen.getByTestId('hook-preset-note')).toHaveTextContent('Files: 3 hooks added; 1 not found in this process (CreateDirectoryW).'));
+  // kernelbase is asked first and has it, so kernel32 is never asked for those.
+  expect(hooks.search.mock.calls.map((c: any[]) => c[1])).toEqual([
+    'kernelbase.dll!CreateFileW', 'kernelbase.dll!DeleteFileW', 'kernelbase.dll!MoveFileExW', 'kernelbase.dll!CreateDirectoryW', 'kernel32.dll!CreateDirectoryW',
+  ]);
+  const placed = store.getState().hooks.hooks;
+  expect(placed.map((h) => [h.name, h.status])).toEqual([['KERNELBASE.dll!CreateFileW', 'on'], ['KERNELBASE.dll!DeleteFileW', 'on'], ['KERNELBASE.dll!MoveFileExW', 'on']]);
+  expect(placed[0].code).toContain("'CreateFileW('");
+  expect(hooks.add.mock.calls.map((c: any[]) => c[0].code)).toEqual(placed.map((h) => h.code));
+  expect((screen.getByTestId('hook-preset') as HTMLSelectElement).value).toBe(''); // ready for another
+});
+
+test('adding the same preset again adds nothing twice', async () => {
+  const store = setup();
+  windowsSearch();
+  fireEvent.change(screen.getByTestId('hook-preset'), { target: { value: 'ioctls' } });
+  await waitFor(() => expect(screen.getByTestId('hook-preset-note')).toHaveTextContent('Driver requests (IOCTLs): 2 hooks added.'));
+  fireEvent.change(screen.getByTestId('hook-preset'), { target: { value: 'ioctls' } });
+  await waitFor(() => expect(screen.getByTestId('hook-preset-note')).toHaveTextContent('Driver requests (IOCTLs): 2 already there.'));
+  expect(store.getState().hooks.hooks.length).toBe(2);
+  expect(hooks.add).toHaveBeenCalledTimes(2);
+});
+
+test('a preset whose functions are not in the process says so plainly', async () => {
+  const store = setup();
+  windowsSearch();
+  fireEvent.change(screen.getByTestId('hook-preset'), { target: { value: 'network' } });
+  await waitFor(() => expect(screen.getByTestId('hook-preset-note')).toHaveTextContent('Network: none of its functions are in this process. The presets are for Windows programs, and a module that is not loaded yet is skipped.'));
+  expect(store.getState().hooks.hooks.length).toBe(0);
+  fireEvent.click(screen.getByLabelText('Dismiss'));
+  expect(screen.queryByTestId('hook-preset-note')).toBeNull();
+});
+
+test('a preset hook that cannot be placed is reported and kept, like any other hook', async () => {
+  const store = setup();
+  windowsSearch();
+  hooks.add = vi.fn(async (spec: any) => { if (/NtFsControlFile/.test(spec.code)) throw new Error("Error invoking remote method 'fermion:invoke': Error: Could not hook 0x7ff130: already hooked"); return { id: spec.id, address: spec.address, enabled: true, calls: 0 }; });
+  fireEvent.change(screen.getByTestId('hook-preset'), { target: { value: 'ioctls' } });
+  await waitFor(() => expect(screen.getByTestId('hook-preset-note')).toHaveTextContent('Driver requests (IOCTLs): 1 hook added; 1 could not be placed (NtFsControlFile).'));
+  expect(store.getState().hooks.hooks.map((h) => h.status)).toEqual(['on', 'error']);
+});

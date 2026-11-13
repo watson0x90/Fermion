@@ -253,7 +253,29 @@ A new hook starts with a handler that prints the first four arguments and the re
 
 `log(…)` adds a line to Calls. `args[n]` and `retval` are pointers, so read what they point at (`args[0].readUtf16String()`, `retval.toInt32()`), and `retval.replace(x)` changes what the function returns. `this` is shared between `onEnter` and `onLeave`, so a value saved on entry is there on return. Everything in the [Frida API](https://frida.re/docs/javascript-api/) is available.
 
+### Presets for Windows programs
+
+**Add a preset…**, beside the search box, places a ready-made set of hooks in the attached process. Each hook comes with a handler that already decodes the arguments, so you get a readable log without writing anything:
+
+| Preset | What it shows |
+| --- | --- |
+| **Files** | Files and directories opened, created, deleted and renamed: `CreateFileW("C:\Users\me\a.txt", GENERIC_READ, OPEN_EXISTING) = handle 0x1a4` |
+| **Registry** | Keys opened and created, values read, written and deleted, with the root named (`HKLM`, `HKCU`) and string and number values shown. |
+| **Processes and injection** | Programs started (with the command line), processes opened (with the access asked for), memory allocated and written in another process, remote threads, libraries loaded. |
+| **Network** | Name lookups, connections with address and port, and HTTP requests made through WinHTTP and WinINet. |
+| **Driver requests (IOCTLs)** | Every control request sent to a driver or file system, with the control code taken apart (device, function, method, access) and the start of the input buffer. |
+| **Named pipes** | Pipes the program creates as a server (name, direction, instance limit, whether it set security) and waits on as a client. |
+| **RPC** | Remote procedure calls made and served, with the interface id and procedure number. Search for the interface id to find which service it is. |
+
 Things to know:
+
+- The hooks go on the functions most code ends up in (`kernelbase.dll` where Windows forwards there, `ntdll.dll` for driver requests, `rpcrt4.dll` for RPC), so calls made through `kernel32.dll` or `advapi32.dll` are seen too.
+- A function whose module is not loaded yet is skipped, and the line under the search box says which. A program that has not used the network yet may not have `winhttp.dll` loaded: add the preset again later. Adding a preset twice never adds a hook twice.
+- A preset hook is an ordinary hook. Open its **Handler** to see how the arguments are read, and change it: log more, filter by path, or replace a return value.
+- Programs that call the kernel directly, without going through these functions, are not seen by them.
+- The presets are for Windows targets. On another system none of the functions exist and nothing is added.
+
+### How hooks behave
 
 - Hooks live in their own helper script, so reloading or changing the script in the Editor does not remove them.
 - Hooks are remembered by module and offset. After a detach they wait, and are placed again when you attach, including to a new run of the program where the module sits at a different address.
@@ -461,7 +483,7 @@ From the `Fermion` folder:
 | `npm run test:unit` | Component tests (Vitest) |
 | `node --test src/*.test.js` | Main-process and agent unit tests |
 | `node scripts/ui-smoke.js` | Launches the real app and checks that it renders |
-| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
+| `node scripts/ui-test-*.js` | End-to-end tests that drive the real app (terminal, toolbar, dialogs, editor files, packages, TypeScript, coverage, hook presets, detach, process tree, REPL, hooks, inspector, graph, launch, child processes, saved hooks and bookmarks, attach), plus `ui-test-workflow.js`, one session that uses them together |
 | `node scripts/docs-screenshots.js` | Regenerates the screenshots in this README (Windows) |
 
 The end-to-end tests that attach to a process report `SKIP` where the operating system forbids attaching, which includes GitHub's Linux runners. They run in full on a machine that can attach.
